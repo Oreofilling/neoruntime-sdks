@@ -4,6 +4,10 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 build/
+build-*/
+out/
+compile_commands.json
+.cache/
 dist/
 *.egg-info/
 *.whl

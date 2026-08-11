@@ -1,0 +1,141 @@
+name: C++ SDK
+
+# CI for the C++ mirror of hailo_ipc_sdk (see cpp/README.md and the plan).
+#
+#   native       — x86_64 build of the static lib + examples, then the
+#                  daemon-independent GoogleTest suite via ctest. Runs on every
+#                  push / PR. This is the always-green gate.
+#   cross-compile — aarch64 (NE503 device target) build of lib + examples. It
+#                  needs a full aarch64 gRPC/opencv dependency set (vcpkg arm64
+#                  triplet or a Yocto sysroot), which is heavy, so it is OPT-IN
+#                  via the NE503_ENABLE_AARCH64 repository variable or manual
+#                  dispatch. Not run on every push by design.
+#
+# Faithfulness note: no job here is wired to report success it cannot achieve.
+# The native job builds and runs real tests; the aarch64 job only runs when its
+# dependency source is explicitly provisioned.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cpp/**"
+      - "proto/**"
+      - ".github/workflows/cpp.yml"
+  pull_request:
+    paths:
+      - "cpp/**"
+      - "proto/**"
+      - ".github/workflows/cpp.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpp-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Build & test (x86_64)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up vcpkg
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> "$GITHUB_ENV"
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/vcpkg/archives
+          key: vcpkg-x64-${{ runner.os }}-${{ hashFiles('cpp/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-x64-${{ runner.os }}-
+
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build-x64
+          key: cmake-x64-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            cmake-x64-${{ runner.os }}-
+
+      - name: Configure (vcpkg manifest mode)
+        run: |
+          set -euo pipefail
+          cmake -S cpp -B build-x64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DNE503_REGEN_PROTOS=ON \
+            -DNE503_BUILD_EXAMPLES=ON \
+            -DNE503_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build-x64 -j --config Release
+
+      - name: Test
+        run: ctest --test-dir build-x64 --build-config Release --output-on-failure
+
+  cross-compile:
+    name: Cross-compile (aarch64)
+    runs-on: ubuntu-24.04
+    # Opt-in: needs a provisioned aarch64 dependency source (vcpkg arm64
+    # triplet built with the aarch64 cross-toolchain, or a Yocto sysroot).
+    if: ${{ vars.NE503_ENABLE_AARCH64 == 'true' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install aarch64 cross-toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Set up vcpkg
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> "$GITHUB_ENV"
+
+      - name: Cache vcpkg binary cache (arm64)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/vcpkg/archives
+          key: vcpkg-arm64-${{ hashFiles('cpp/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-arm64-
+
+      - name: Configure (aarch64 toolchain + vcpkg arm64 triplet)
+        run: |
+          set -euo pipefail
+          cmake -S cpp -B build-arm64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$PWD/cpp/cmake/aarch64-toolchain.cmake" \
+            -DVCPKG_TARGET_TRIPLET=arm64-linux \
+            -DNE503_REGEN_PROTOS=ON \
+            -DNE503_BUILD_EXAMPLES=ON \
+            -DNE503_BUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build-arm64 -j
+
+      - name: Verify ELF architecture
+        run: |
+          set -euo pipefail
+          file build-arm64/examples/person_detection | tee /dev/stderr | grep -q 'ARM aarch64'
+          file build-arm64/libne503_aipc_sdk.a | grep -q 'archive'

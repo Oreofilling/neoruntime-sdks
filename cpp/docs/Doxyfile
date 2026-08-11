@@ -1,0 +1,53 @@
+# Doxyfile — Doxygen configuration for the NE503 AIPC C++ SDK.
+#
+# Generate HTML API docs (consumed by the cpp/en + cpp/zh Sphinx pages already
+# stubbed in docs/):
+#   doxygen cpp/docs/Doxyfile
+# Output lands in cpp/docs/html. The public API (cpp/include/hailo_ipc_sdk/*.hpp)
+# is the primary input; the internal src/detail/*.hpp helpers are included so
+# their doc comments render under a "detail" namespace page for contributors.
+# Run `doxygen -g cpp/docs/Doxyfile` to regenerate defaults if migrating.
+
+PROJECT_NAME           = "NE503 AIPC C++ SDK"
+PROJECT_NUMBER         = 0.1.0
+PROJECT_BRIEF          = "C++ client SDK for the NE503 AIPC edge-AI camera platform (full mirror of hailo_ipc_sdk)"
+
+# ---- Input / output --------------------------------------------------------
+INPUT                  = ../include ../src
+RECURSIVE              = YES
+OUTPUT_DIRECTORY       = .
+HTML_OUTPUT            = html
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_XML           = NO
+USE_MDFILES_AS_MAINPAGE = ../README.md
+
+# ---- Language / parsing ----------------------------------------------------
+OPTIMIZE_OUTPUT_FOR_C  = YES   # C-style structs/enums read better than Java-style
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+QUIET                  = NO
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+
+# Keep the PImpl `struct Impl;` forward decls out of noise, and skip generated
+# proto stubs (they live in the build tree, not under INPUT, so this is belt-
+# and-braces).
+EXCLUDE_SYMBOLS        = "*::Impl" "aipc" "google"
+
+# ---- Source browsing / cross-refs ------------------------------------------
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+SEARCHENGINE           = YES
+
+# ---- Modern Doxygen niceties ----------------------------------------------
+JAVADOC_AUTOBRIEF      = YES   # first // line becomes the brief
+QT_AUTOBRIEF           = YES
+MULTILINE_CPP_IS_BRIEF = NO
+EXTENSION_MAPPING      = hpp=C++ h=C++
+LOOKUP_CACHE_SIZE      = 2
