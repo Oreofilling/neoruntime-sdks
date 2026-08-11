@@ -4,6 +4,8 @@
 # They run on-device inside an app container; they are not built as tests.
 
 set(NE503_EXAMPLES
+    connectivity_smoke   # read-only gRPC round-trip smoke (safe on live hardware)
+    media_smoke          # raw-UDS media path (encoded H.264/H.265 + zero-copy DMA-BUF)
     person_detection
     event_subscriber
     perimeter_guard
