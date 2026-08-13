@@ -76,8 +76,8 @@ Build local documentation:
 
 ```bash
 python -m pip install -r python/docs/requirements.txt
-python -m sphinx -b html python/docs /tmp/ne503-sdk-docs/python/zh
-python -m sphinx -b html python/docs/en /tmp/ne503-sdk-docs/python/en
+python -m sphinx -b html python/docs /tmp/neoruntime-sdk-docs/python/zh
+python -m sphinx -b html python/docs/en /tmp/neoruntime-sdk-docs/python/en
 ```
 
 ## Protocol Sync

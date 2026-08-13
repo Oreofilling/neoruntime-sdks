@@ -18,8 +18,8 @@ Run these before opening a pull request:
 python -m pip install -e ./python
 python -m pytest -q python/tests
 python -m pip install -r python/docs/requirements.txt
-python -m sphinx -b html python/docs /tmp/ne503-sdk-docs/python/zh
-python -m sphinx -b html python/docs/en /tmp/ne503-sdk-docs/python/en
+python -m sphinx -b html python/docs /tmp/neoruntime-sdk-docs/python/zh
+python -m sphinx -b html python/docs/en /tmp/neoruntime-sdk-docs/python/en
 ```
 
 ## Pull Request Checklist

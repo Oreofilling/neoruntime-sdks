@@ -1,4 +1,4 @@
-# Doxyfile — Doxygen configuration for the NE503 AIPC C++ SDK.
+# Doxyfile — Doxygen configuration for the NeoRuntime C++ SDK.
 #
 # Generate HTML API docs (consumed by the cpp/en + cpp/zh Sphinx pages already
 # stubbed in docs/):
@@ -8,9 +8,9 @@
 # their doc comments render under a "detail" namespace page for contributors.
 # Run `doxygen -g cpp/docs/Doxyfile` to regenerate defaults if migrating.
 
-PROJECT_NAME           = "NE503 AIPC C++ SDK"
+PROJECT_NAME           = "NeoRuntime C++ SDK"
 PROJECT_NUMBER         = 0.1.0
-PROJECT_BRIEF          = "C++ client SDK for the NE503 AIPC edge-AI camera platform (full mirror of hailo_ipc_sdk)"
+PROJECT_BRIEF          = "C++ client SDK for the NeoRuntime edge-AI camera platform (full mirror of hailo_ipc_sdk)"
 
 # ---- Input / output --------------------------------------------------------
 INPUT                  = ../include ../src

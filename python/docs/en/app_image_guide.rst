@@ -91,7 +91,7 @@ Dockerfile
 
    LABEL maintainer="your@email.com"
 
-   # Install NE503 Python SDK from the public source repository.
+   # Install NeoRuntime Python SDK from the public source repository.
    # PyPI packages are not published yet.
    RUN apt-get update \
        && apt-get install -y --no-install-recommends git \
