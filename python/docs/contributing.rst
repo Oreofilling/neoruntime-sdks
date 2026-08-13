@@ -1,7 +1,7 @@
 贡献指南
 ========
 
-感谢你对 AIPC Platform Python SDK 的关注！
+感谢你对 NeoRuntime Platform Python SDK 的关注！
 
 开发环境设置
 ------------

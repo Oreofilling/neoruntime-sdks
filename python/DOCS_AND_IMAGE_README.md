@@ -1,4 +1,4 @@
-# AIPC Platform Python SDK - 文档和基础镜像
+# NeoRuntime Platform Python SDK - 文档和基础镜像
 
 ## 目录结构
 

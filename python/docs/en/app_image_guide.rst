@@ -4,7 +4,7 @@ Application Image Build and Import Guide
 Overview
 --------
 
-This guide describes how to build an application Docker image in your development environment and import it onto an AIPC device for deployment.
+This guide describes how to build an application Docker image in your development environment and import it onto an NeoRuntime device for deployment.
 
 The complete workflow includes:
 

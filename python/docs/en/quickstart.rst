@@ -1,12 +1,12 @@
 Quick Start
 ===========
 
-This guide will help you get started with the AIPC Platform Python SDK.
+This guide will help you get started with the NeoRuntime Platform Python SDK.
 
 Basic Concepts
 --------------
 
-AIPC Platform provides the following core services:
+NeoRuntime Platform provides the following core services:
 
 - **AI Runtime**: AI inference service with model registration and inference
 - **Event Bus**: Event bus with publish/subscribe pattern
