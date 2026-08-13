@@ -35,6 +35,9 @@ jobs:
           python -m pip install -e ./python
           python -m pip install -r python/docs/requirements.txt
 
+      - name: Install Doxygen
+        run: sudo apt-get update && sudo apt-get install -y doxygen
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
@@ -131,7 +134,7 @@ jobs:
                   </article>
                   <article class="sdk">
                     <h2>C++ SDK</h2>
-                    <p>Coming soon.</p>
+                    <p>C++ API reference (Doxygen) and guides.</p>
                     <div class="links">
                       <a href="./cpp/en/">English</a>
                       <a href="./cpp/zh/">中文</a>
@@ -229,6 +232,14 @@ jobs:
           </html>
           HTML
           touch _site/.nojekyll
+
+      - name: Build C++ Doxygen docs
+        run: |
+          # Doxyfile paths are relative to cpp/docs/, so run from there.
+          (cd cpp/docs && doxygen Doxyfile)
+          # Replace the C++ "coming soon" placeholder with the real API docs.
+          rm -rf _site/cpp/en
+          cp -r cpp/docs/html _site/cpp/en
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
