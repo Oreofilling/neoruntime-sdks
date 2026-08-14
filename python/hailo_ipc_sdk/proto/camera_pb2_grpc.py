@@ -175,6 +175,41 @@ class CameraControlStub(object):
                 request_serializer=camera__pb2.GetLedDutyRequest.SerializeToString,
                 response_deserializer=camera__pb2.LedStatus.FromString,
                 _registered_method=True)
+        self.SetImagingMode = channel.unary_unary(
+                '/aipc.camera.CameraControl/SetImagingMode',
+                request_serializer=camera__pb2.ImagingModeRequest.SerializeToString,
+                response_deserializer=camera__pb2.InfraredStatusResponse.FromString,
+                _registered_method=True)
+        self.GetInfraredStatus = channel.unary_unary(
+                '/aipc.camera.CameraControl/GetInfraredStatus',
+                request_serializer=camera__pb2.Empty.SerializeToString,
+                response_deserializer=camera__pb2.InfraredStatusResponse.FromString,
+                _registered_method=True)
+        self.SetInfraredSettings = channel.unary_unary(
+                '/aipc.camera.CameraControl/SetInfraredSettings',
+                request_serializer=camera__pb2.InfraredSettingsRequest.SerializeToString,
+                response_deserializer=camera__pb2.InfraredStatusResponse.FromString,
+                _registered_method=True)
+        self.ClearInfraredManual = channel.unary_unary(
+                '/aipc.camera.CameraControl/ClearInfraredManual',
+                request_serializer=camera__pb2.Empty.SerializeToString,
+                response_deserializer=camera__pb2.InfraredStatusResponse.FromString,
+                _registered_method=True)
+        self.ListIrPresets = channel.unary_unary(
+                '/aipc.camera.CameraControl/ListIrPresets',
+                request_serializer=camera__pb2.Empty.SerializeToString,
+                response_deserializer=camera__pb2.IrPresetListResponse.FromString,
+                _registered_method=True)
+        self.SaveIrPreset = channel.unary_unary(
+                '/aipc.camera.CameraControl/SaveIrPreset',
+                request_serializer=camera__pb2.IrPreset.SerializeToString,
+                response_deserializer=camera__pb2.IrPresetListResponse.FromString,
+                _registered_method=True)
+        self.DeleteIrPreset = channel.unary_unary(
+                '/aipc.camera.CameraControl/DeleteIrPreset',
+                request_serializer=camera__pb2.DeleteIrPresetRequest.SerializeToString,
+                response_deserializer=camera__pb2.IrPresetListResponse.FromString,
+                _registered_method=True)
         self.GetDeviceHardwareStatus = channel.unary_unary(
                 '/aipc.camera.CameraControl/GetDeviceHardwareStatus',
                 request_serializer=camera__pb2.Empty.SerializeToString,
@@ -314,6 +349,16 @@ class CameraControlStub(object):
                 '/aipc.camera.CameraControl/SetPrivacyMaskConfig',
                 request_serializer=camera__pb2.PrivacyMaskConfig.SerializeToString,
                 response_deserializer=camera__pb2.Status.FromString,
+                _registered_method=True)
+        self.SetConfigField = channel.unary_unary(
+                '/aipc.camera.CameraControl/SetConfigField',
+                request_serializer=camera__pb2.SetConfigFieldRequest.SerializeToString,
+                response_deserializer=camera__pb2.Status.FromString,
+                _registered_method=True)
+        self.GetConfigField = channel.unary_unary(
+                '/aipc.camera.CameraControl/GetConfigField',
+                request_serializer=camera__pb2.GetConfigFieldRequest.SerializeToString,
+                response_deserializer=camera__pb2.GetConfigFieldResponse.FromString,
                 _registered_method=True)
 
 
@@ -507,6 +552,49 @@ class CameraControlServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SetImagingMode(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetInfraredStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetInfraredSettings(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ClearInfraredManual(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListIrPresets(self, request, context):
+        """IR preset save/load (zoom + IR intensity snapshot)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SaveIrPreset(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteIrPreset(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetDeviceHardwareStatus(self, request, context):
         """Device status (sensors, MCU version, LED state)
         """
@@ -684,6 +772,19 @@ class CameraControlServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SetConfigField(self, request, context):
+        """Scalar profile-field runtime knobs (platform-owned config layer; allow-listed).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetConfigField(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_CameraControlServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -827,6 +928,41 @@ def add_CameraControlServicer_to_server(servicer, server):
                     request_deserializer=camera__pb2.GetLedDutyRequest.FromString,
                     response_serializer=camera__pb2.LedStatus.SerializeToString,
             ),
+            'SetImagingMode': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetImagingMode,
+                    request_deserializer=camera__pb2.ImagingModeRequest.FromString,
+                    response_serializer=camera__pb2.InfraredStatusResponse.SerializeToString,
+            ),
+            'GetInfraredStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetInfraredStatus,
+                    request_deserializer=camera__pb2.Empty.FromString,
+                    response_serializer=camera__pb2.InfraredStatusResponse.SerializeToString,
+            ),
+            'SetInfraredSettings': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetInfraredSettings,
+                    request_deserializer=camera__pb2.InfraredSettingsRequest.FromString,
+                    response_serializer=camera__pb2.InfraredStatusResponse.SerializeToString,
+            ),
+            'ClearInfraredManual': grpc.unary_unary_rpc_method_handler(
+                    servicer.ClearInfraredManual,
+                    request_deserializer=camera__pb2.Empty.FromString,
+                    response_serializer=camera__pb2.InfraredStatusResponse.SerializeToString,
+            ),
+            'ListIrPresets': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListIrPresets,
+                    request_deserializer=camera__pb2.Empty.FromString,
+                    response_serializer=camera__pb2.IrPresetListResponse.SerializeToString,
+            ),
+            'SaveIrPreset': grpc.unary_unary_rpc_method_handler(
+                    servicer.SaveIrPreset,
+                    request_deserializer=camera__pb2.IrPreset.FromString,
+                    response_serializer=camera__pb2.IrPresetListResponse.SerializeToString,
+            ),
+            'DeleteIrPreset': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteIrPreset,
+                    request_deserializer=camera__pb2.DeleteIrPresetRequest.FromString,
+                    response_serializer=camera__pb2.IrPresetListResponse.SerializeToString,
+            ),
             'GetDeviceHardwareStatus': grpc.unary_unary_rpc_method_handler(
                     servicer.GetDeviceHardwareStatus,
                     request_deserializer=camera__pb2.Empty.FromString,
@@ -966,6 +1102,16 @@ def add_CameraControlServicer_to_server(servicer, server):
                     servicer.SetPrivacyMaskConfig,
                     request_deserializer=camera__pb2.PrivacyMaskConfig.FromString,
                     response_serializer=camera__pb2.Status.SerializeToString,
+            ),
+            'SetConfigField': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetConfigField,
+                    request_deserializer=camera__pb2.SetConfigFieldRequest.FromString,
+                    response_serializer=camera__pb2.Status.SerializeToString,
+            ),
+            'GetConfigField': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetConfigField,
+                    request_deserializer=camera__pb2.GetConfigFieldRequest.FromString,
+                    response_serializer=camera__pb2.GetConfigFieldResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1736,6 +1882,195 @@ class CameraControl(object):
             _registered_method=True)
 
     @staticmethod
+    def SetImagingMode(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/SetImagingMode',
+            camera__pb2.ImagingModeRequest.SerializeToString,
+            camera__pb2.InfraredStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetInfraredStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/GetInfraredStatus',
+            camera__pb2.Empty.SerializeToString,
+            camera__pb2.InfraredStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetInfraredSettings(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/SetInfraredSettings',
+            camera__pb2.InfraredSettingsRequest.SerializeToString,
+            camera__pb2.InfraredStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ClearInfraredManual(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/ClearInfraredManual',
+            camera__pb2.Empty.SerializeToString,
+            camera__pb2.InfraredStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListIrPresets(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/ListIrPresets',
+            camera__pb2.Empty.SerializeToString,
+            camera__pb2.IrPresetListResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SaveIrPreset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/SaveIrPreset',
+            camera__pb2.IrPreset.SerializeToString,
+            camera__pb2.IrPresetListResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteIrPreset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/DeleteIrPreset',
+            camera__pb2.DeleteIrPresetRequest.SerializeToString,
+            camera__pb2.IrPresetListResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def GetDeviceHardwareStatus(request,
             target,
             options=(),
@@ -2481,6 +2816,60 @@ class CameraControl(object):
             '/aipc.camera.CameraControl/SetPrivacyMaskConfig',
             camera__pb2.PrivacyMaskConfig.SerializeToString,
             camera__pb2.Status.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetConfigField(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/SetConfigField',
+            camera__pb2.SetConfigFieldRequest.SerializeToString,
+            camera__pb2.Status.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetConfigField(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/GetConfigField',
+            camera__pb2.GetConfigFieldRequest.SerializeToString,
+            camera__pb2.GetConfigFieldResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -325,6 +325,62 @@ message LedStatus {
   uint32 duty_percent = 3;
 }
 
+message ImagingModeRequest {
+  string mode = 1; // day / infrared / auto
+}
+
+message InfraredSettingsRequest {
+  optional bool auto_follow = 1;
+  optional uint32 near_pwm = 2;
+  optional uint32 far_pwm = 3;
+  optional int32 night_enter = 4;  // light-sensor night threshold (auto mode)
+  optional int32 day_enter = 5;    // light-sensor day threshold (auto mode)
+}
+
+message InfraredStatusResponse {
+  bool success = 1;
+  string message = 2;
+  string mode = 3;
+  string transition = 4;
+  string output_source = 5;
+  bool auto_follow = 6;
+  bool follow_active = 7;
+  bool manual_override = 8;
+  bool degraded = 9;
+  uint32 requested_near_pwm = 10;
+  uint32 requested_far_pwm = 11;
+  uint32 applied_near_pwm = 12;
+  uint32 applied_far_pwm = 13;
+  float zoom_ratio = 14;
+  string active_profile = 15;
+  // Day/night auto (light-sensor) policy
+  string selected_mode = 16;   // operator selection: auto / day / infrared
+  int32 light_percent = 17;    // 0..100, endpoint-normalized
+  uint32 light_mv = 18;        // raw photodiode milli-volts
+  int32 light_milli = 19;      // raw scaled value
+  bool light_valid = 20;
+  int32 night_enter = 21;
+  int32 day_enter = 22;
+}
+
+// IR preset = snapshot of (zoom position + near/far IR intensity) for one-click recall.
+message IrPreset {
+  string name = 1;
+  float zoom_ratio = 2;   // 1.0 ~ 2.88 (optical zoom ratio)
+  uint32 near_pwm = 3;    // 0 ~ 100
+  uint32 far_pwm = 4;     // 0 ~ 100
+}
+
+message IrPresetListResponse {
+  bool success = 1;
+  string message = 2;
+  repeated IrPreset presets = 3;
+}
+
+message DeleteIrPresetRequest {
+  string name = 1;
+}
+
 // Device hardware status (sensor readings, MCU version, LED states)
 message DeviceHardwareStatus {
   bool success = 1;
@@ -446,6 +502,53 @@ message AutofocusStatusResponse {
   string message = 18;
 }
 
+// ===== Config-field patching (platform-owned scalar runtime knobs) =====
+//
+// set_config_field / get_config_field expose individual scalar fields of the
+// active media-library profile at runtime (HAL_MEDIA_OPS.set_config_field /
+// get_config_field). This is the platform-owned config layer: structured config
+// (streams / OSD / privacy polygons / ISP) still goes through its typed RPCs;
+// config_field is only for scalar knobs with no typed RPC (allow-listed by the
+// daemon), e.g. frontend.hailort.use-hailort-service. Mirrors HAL
+// HalConfigFieldType (hal_v2/include/media/hal_media.h).
+enum ConfigFieldType {
+  CONFIG_FIELD_BOOL = 0;
+  CONFIG_FIELD_INT32 = 1;
+  CONFIG_FIELD_UINT32 = 2;
+  CONFIG_FIELD_FLOAT64 = 3;
+  CONFIG_FIELD_STRING = 4;
+}
+
+message SetConfigFieldRequest {
+  string field_path = 1;          // dotted path, e.g. "frontend.hailort.use-hailort-service"
+  ConfigFieldType type = 2;       // how to interpret value
+  string value = 3;               // value encoded as a string (parsed per type)
+}
+
+message GetConfigFieldRequest {
+  string field_path = 1;
+}
+
+message GetConfigFieldResponse {
+  bool success = 1;
+  string message = 2;
+  ConfigFieldType type = 3;
+  string value = 4;               // current value encoded as a string
+}
+
+// Persisted scalar-config mirror (/data/aipc/etc/media_config_fields.json).
+// The platform layer owns the truth source; on boot each entry is replayed via
+// SetConfigField so it overrides the HAL profile default (replay-on-boot wins
+// over HAL's own profile persistence — resolves the two-writer ambiguity).
+message ConfigFieldValue {
+  ConfigFieldType type = 1;
+  string value = 2;
+}
+
+message MediaConfigFields {
+  map<string, ConfigFieldValue> fields = 1;
+}
+
 // Camera Control Service
 service CameraControl {
   rpc StartOneShotAutofocus(Empty) returns (AutofocusJobResponse);
@@ -511,6 +614,15 @@ service CameraControl {
   // LED / White Light / IR LED control
   rpc SetLedDuty(SetLedDutyRequest) returns (LedStatus);
   rpc GetLedDuty(GetLedDutyRequest) returns (LedStatus);
+  rpc SetImagingMode(ImagingModeRequest) returns (InfraredStatusResponse);
+  rpc GetInfraredStatus(Empty) returns (InfraredStatusResponse);
+  rpc SetInfraredSettings(InfraredSettingsRequest) returns (InfraredStatusResponse);
+  rpc ClearInfraredManual(Empty) returns (InfraredStatusResponse);
+
+  // IR preset save/load (zoom + IR intensity snapshot)
+  rpc ListIrPresets(Empty) returns (IrPresetListResponse);
+  rpc SaveIrPreset(IrPreset) returns (IrPresetListResponse);
+  rpc DeleteIrPreset(DeleteIrPresetRequest) returns (IrPresetListResponse);
 
   // Device status (sensors, MCU version, LED state)
   rpc GetDeviceHardwareStatus(Empty) returns (DeviceHardwareStatus);
@@ -557,6 +669,10 @@ service CameraControl {
   // Privacy mask
   rpc GetPrivacyMaskConfig(Empty) returns (PrivacyMaskConfig);
   rpc SetPrivacyMaskConfig(PrivacyMaskConfig) returns (Status);
+
+  // Scalar profile-field runtime knobs (platform-owned config layer; allow-listed).
+  rpc SetConfigField(SetConfigFieldRequest) returns (Status);
+  rpc GetConfigField(GetConfigFieldRequest) returns (GetConfigFieldResponse);
 }
 
 // Device capabilities auto-detected from loaded HAL modules
