@@ -14,3 +14,6 @@ dist/
 *.tar
 *.tar.*
 *.log
+
+# Doxygen HTML output (cpp/docs) — built in CI, never committed
+cpp/docs/html/
