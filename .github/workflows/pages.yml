@@ -35,6 +35,9 @@ jobs:
           python -m pip install -e ./python
           python -m pip install -r python/docs/requirements.txt
 
+      - name: Install Doxygen
+        run: sudo apt-get update && sudo apt-get install -y doxygen
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
@@ -131,7 +134,7 @@ jobs:
                   </article>
                   <article class="sdk">
                     <h2>C++ SDK</h2>
-                    <p>Coming soon.</p>
+                    <p>C++ API reference (Doxygen) and guides.</p>
                     <div class="links">
                       <a href="./cpp/en/">English</a>
                       <a href="./cpp/zh/">中文</a>
@@ -207,28 +210,18 @@ jobs:
             </body>
           </html>
           HTML
-          cat > _site/cpp/zh/index.html <<'HTML'
-          <!doctype html>
-          <html lang="zh-CN">
-            <head>
-              <meta charset="utf-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1">
-              <title>NeoRuntime C++ SDK</title>
-              <style>
-                body { background: #fcfcfc; color: #404040; font-family: Lato, "proxima-nova", "Helvetica Neue", Arial, sans-serif; line-height: 1.6; margin: 48px auto; max-width: 720px; padding: 0 16px; }
-                h1 { border-bottom: 1px solid #e1e4e5; padding-bottom: 12px; }
-                a { color: #2980b9; text-decoration: none; }
-                a:hover { text-decoration: underline; }
-              </style>
-            </head>
-            <body>
-              <p><a href="../../">全部 SDK</a> / <a href="../en/">English</a></p>
-              <h1>NeoRuntime C++ SDK</h1>
-              <p>C++ SDK 计划在后续版本发布。当前页面先保留稳定入口，方便后续补全文档。</p>
-            </body>
-          </html>
-          HTML
           touch _site/.nojekyll
+
+      - name: Build C++ Doxygen docs
+        run: |
+          # Doxyfile paths are relative to cpp/docs/, so run from there.
+          (cd cpp/docs && doxygen Doxyfile)
+          # Replace the C++ "coming soon" placeholder with the real API docs.
+          rm -rf _site/cpp/en
+          cp -r cpp/docs/html _site/cpp/en
+          # Chinese quick-start & module overview (narrative zh, links to the
+          # English Doxygen reference — same structure as the Python docs).
+          cp cpp/docs/zh/index.html _site/cpp/zh/index.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

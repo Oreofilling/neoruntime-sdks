@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NeoRuntime C++ SDK</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        background: #fcfcfc;
+        color: #404040;
+        font-family: Lato, "proxima-nova", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+        line-height: 1.7;
+        margin: 0 auto;
+        max-width: 760px;
+        padding: 48px 16px;
+      }
+      h1 {
+        border-bottom: 1px solid #e1e4e5;
+        font-size: 32px;
+        line-height: 1.2;
+        margin: 0 0 12px;
+        padding-bottom: 12px;
+      }
+      h2 {
+        border-bottom: 1px solid #e1e4e5;
+        font-size: 20px;
+        font-weight: 600;
+        margin: 36px 0 12px;
+        padding-bottom: 6px;
+      }
+      p, li { color: #555; }
+      a { color: #2980b9; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      code {
+        background: #f5f6f7;
+        border: 1px solid #e1e4e5;
+        border-radius: 3px;
+        font-family: "SF Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+        font-size: 13px;
+        padding: 1px 5px;
+      }
+      pre {
+        background: #f5f6f7;
+        border: 1px solid #e1e4e5;
+        border-radius: 3px;
+        overflow-x: auto;
+        padding: 12px 14px;
+      }
+      pre code { background: none; border: none; padding: 0; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td {
+        border-bottom: 1px solid #e1e4e5;
+        padding: 8px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th { color: #404040; font-weight: 600; }
+      .breadcrumb { color: #555; font-size: 14px; margin-bottom: 24px; }
+      .note {
+        border-left: 3px solid #2980b9;
+        background: #f5f6f7;
+        padding: 10px 14px;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { background: #111418; color: #f4f6f8; }
+        h1, h2, th { color: #f4f6f8; border-color: #2a2f36; }
+        p, td, li, .breadcrumb { color: #b8c0cc; }
+        a { color: #6bb4df; }
+        code, pre, .note { background: #1a1f26; border-color: #2a2f36; }
+      }
+    </style>
+  </head>
+  <body>
+    <p class="breadcrumb"><a href="../../">全部 SDK</a> / <a href="../en/">English</a></p>
+    <h1>NeoRuntime C++ SDK</h1>
+    <p>C++ 客户端 SDK,与 Python SDK(<code>python/hailo_ipc_sdk</code>)逐模块对等;图像与张量使用 OpenCV <code>cv::Mat</code>(对应 Python 侧的 numpy)。应用运行于设备端的应用容器内,通过本机 Unix Domain Socket 与平台守护进程通信。</p>
+
+    <h2>模块总览</h2>
+    <table>
+      <thead><tr><th>头文件</th><th>客户端</th><th>用途</th></tr></thead>
+      <tbody>
+        <tr><td><code>inference.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1InferenceClient.html"><code>InferenceClient</code></a></td><td>AI 推理:单帧 / 批量 / 流式订阅,模型注册与统计,GenAI(LLM/VLM)流式生成</td></tr>
+        <tr><td><code>device.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1DeviceClient.html"><code>DeviceClient</code></a></td><td>补光灯 / 红外 / IRCUT、PTZ / 变焦 / 对焦、GPIO、RS485、Wiegand、设备状态与事件</td></tr>
+        <tr><td><code>camera.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1CameraClient.html"><code>CameraClient</code></a></td><td>ISP / 编码器 / RTSP / OSD / 参数档位,相机状态</td></tr>
+        <tr><td><code>app.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1AppClient.html"><code>AppClient</code></a></td><td>应用容器生命周期、日志、统计</td></tr>
+        <tr><td><code>events.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1EventClient.html"><code>EventClient</code></a></td><td>事件总线:发布 / 订阅 / 批量 / 主题管理</td></tr>
+        <tr><td><code>media.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1FdMediaClient.html"><code>FdMediaClient</code></a></td><td>零拷贝 DMA-BUF 视频帧(fd 传递)</td></tr>
+        <tr><td><code>media.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1EncodedStreamClient.html"><code>EncodedStreamClient</code></a></td><td>H.264 / H.265 编码流</td></tr>
+        <tr><td><code>audio.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1AudioClient.html"><code>AudioClient</code></a></td><td>音频控制</td></tr>
+        <tr><td><code>audio_stream.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1AudioStreamClient.html"><code>AudioStreamClient</code></a></td><td>PCM / AAC 音频采集流</td></tr>
+        <tr><td><code>overlay.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1OverlayClient.html"><code>OverlayClient</code></a></td><td>视频叠加配置</td></tr>
+        <tr><td><code>plugin.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1PluginDiscovery.html"><code>PluginDiscovery</code></a> / <a href="../en/classhailo__ipc__sdk_1_1PluginServer.html"><code>PluginServer</code></a></td><td>插件端点发现与服务</td></tr>
+      </tbody>
+    </table>
+    <p>共享值类型位于 <code>types.hpp</code>;端点与环境变量配置位于 <a href="../en/classhailo__ipc__sdk_1_1Config.html"><code>config.hpp</code></a>。</p>
+
+    <h2>底层传输</h2>
+    <ul>
+      <li><strong>gRPC over UDS</strong> — 推理、设备、相机、应用、事件、叠加、插件发现。C++ 侧使用同步 stub;Python 版的后台 asyncio 线程机制未移植(同步 stub 本身即阻塞等待,无忙轮询)。</li>
+      <li><strong>裸 UDS + <code>SCM_RIGHTS</code> fd 传递</strong> — <code>FdMediaClient</code>。收到的 DMA-BUF 平面 fd 按平面 <code>mmap</code> 进 <code>cv::Mat</code>,实现真零拷贝。</li>
+      <li><strong>裸 UDS、长度前缀帧</strong> — <code>EncodedStreamClient</code>、<code>AudioStreamClient</code>。紧凑线格式结构与 Python 版逐字段对齐。</li>
+    </ul>
+
+    <h2>快速上手</h2>
+    <p>要求:C++17、CMake ≥ 3.20、vcpkg 清单模式(protobuf、grpc、opencv4 无界面构建、nlohmann-json)。</p>
+    <pre><code># 本机构建(x86_64 开发机 / CI)
+cmake -S cpp -B build-x64 -DCMAKE_BUILD_TYPE=Release
+cmake --build build-x64 -j &amp;&amp; ctest --test-dir build-x64
+
+# 交叉编译(aarch64 设备)
+cmake -S cpp -B build-arm64 \
+  -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+  -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$PWD/cpp/cmake/aarch64-toolchain.cmake \
+  -DVCPKG_TARGET_TRIPLET=arm64-linux
+cmake --build build-arm64 -j</code></pre>
+    <p>构建选项:<code>NE503_BUILD_EXAMPLES</code>(默认开)、<code>NE503_BUILD_TESTS</code>(默认开)、<code>NE503_REGEN_PROTOS</code>(默认开 — 构建时从仓库根共享的 <code>proto/</code> 重新生成 stub)。</p>
+
+    <h2>示例与测试</h2>
+    <p><code>examples/</code> 移植了全部 Python 示例:<code>person_detection</code>(流式推理 + 事件发布,入门示例)、<code>perimeter_guard</code>、<code>video_processor</code>、<code>event_subscriber</code>,以及 <code>connectivity_smoke</code> / <code>media_smoke</code> 两个设备端连通性冒烟检查。</p>
+    <p>GoogleTest 测试套件镜像 <code>python/tests/</code> 中不依赖守护进程的部分:环境变量配置、推理值类型、媒体/音频线格式结构、AudioFrame 解码,以 <code>ctest</code> 运行。</p>
+
+    <h2>API 参考</h2>
+    <p class="note">各模块完整的 API 参考(英文)见 <a href="../en/">Doxygen 文档</a>;本页为快速上手与模块总览,结构与 Python 中文文档一致 —— 叙述为中文,API 细节链接到英文参考。</p>
+  </body>
+</html>

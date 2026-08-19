@@ -1,7 +1,7 @@
-AIPC Platform Python SDK 文档
+NeoRuntime Platform Python SDK 文档
 ================================
 
-欢迎使用 AIPC Platform Python SDK！这是一个用于 AIPC 边缘 AI 计算平台的 Python 开发工具包。
+欢迎使用 NeoRuntime Platform Python SDK！这是一个用于 NeoRuntime 边缘 AI 计算平台的 Python 开发工具包。
 
 .. only:: html
 
@@ -16,7 +16,7 @@ AIPC Platform Python SDK 文档
 概述
 ----
 
-AIPC Platform Python SDK 提供了简洁的 API 来访问平台能力：
+NeoRuntime Platform Python SDK 提供了简洁的 API 来访问平台能力：
 
 - **视频流访问**: 原始视频流和编码视频流（零拷贝 SHM）
 - **AI 推理服务**: 模型注册、单次推理、流式推理

@@ -4,7 +4,7 @@ Application Image Build and Import Guide
 Overview
 --------
 
-This guide describes how to build an application Docker image in your development environment and import it onto an AIPC device for deployment.
+This guide describes how to build an application Docker image in your development environment and import it onto an NeoRuntime device for deployment.
 
 The complete workflow includes:
 
@@ -91,7 +91,7 @@ Dockerfile
 
    LABEL maintainer="your@email.com"
 
-   # Install NE503 Python SDK from the public source repository.
+   # Install NeoRuntime Python SDK from the public source repository.
    # PyPI packages are not published yet.
    RUN apt-get update \
        && apt-get install -y --no-install-recommends git \

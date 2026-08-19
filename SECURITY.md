@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-If you discover a security vulnerability in NE503, please report it privately:
+If you discover a security vulnerability in NeoRuntime, please report it privately:
 
 1. Email the maintainers (see the repo's security advisories tab, or the
    contact in the README).

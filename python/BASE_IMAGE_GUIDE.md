@@ -1,8 +1,8 @@
-# AIPC SDK Base Image - 使用指南
+# NeoRuntime SDK Base Image - 使用指南
 
 ## 概述
 
-这是 AIPC Platform Python SDK 的基础镜像，预装了 SDK 和常用依赖，供应用开发使用。
+这是 NeoRuntime Platform Python SDK 的基础镜像，预装了 SDK 和常用依赖，供应用开发使用。
 
 ## 镜像信息
 
@@ -173,7 +173,7 @@ CMD ["python3", "app.py"]
 ```python
 #!/usr/bin/env python3
 """
-AIPC 应用示例
+NeoRuntime 应用示例
 """
 
 from hailo_ipc_sdk import InferenceClient, EventClient, DeviceClient

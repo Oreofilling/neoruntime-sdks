@@ -1,0 +1,199 @@
+/* rtd-overrides.css — re-skin Doxygen output onto sphinx_rtd_theme tokens.
+ *
+ * The Python SDK docs (python/docs) render with sphinx_rtd_theme; this sheet
+ * maps the Doxygen pages onto the same palette so both SDKs read as one site.
+ * Tokens mirror the hand-written landing pages in .github/workflows/pages.yml:
+ *   text #404040 · muted #555 · border #e1e4e5 · bg #fcfcfc · link #2980b9
+ * No external font requests — same Lato-with-fallbacks policy as the landing
+ * pages (self-contained, works offline and under strict CSP).
+ */
+
+/* ---- Base ---------------------------------------------------------------- */
+body,
+table, div, p, dl {
+  font-family: Lato, "proxima-nova", "Helvetica Neue", Arial, sans-serif;
+  color: #404040;
+}
+
+body {
+  background-color: #fcfcfc;
+}
+
+div.contents {
+  margin: 0 auto;
+  max-width: 960px;
+  padding: 0 16px 24px;
+}
+
+a, a:visited, .contents a, .contents a:visited {
+  color: #2980b9;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+h1, h2, h3, h4 {
+  color: #404040;
+  font-weight: 700;
+}
+h2.groupheader {
+  border-bottom: 1px solid #e1e4e5;
+  padding-bottom: 8px;
+}
+
+/* ---- Top banner (project name strip, RTD keeps a slim header) ------------ */
+#titlearea {
+  background: #fcfcfc;
+  border-bottom: 1px solid #e1e4e5;
+  padding: 14px 16px;
+}
+#projectname {
+  color: #404040;
+  font-size: 24px;
+  font-weight: 700;
+}
+#projectbrief, #projectnumber {
+  color: #555;
+}
+
+/* ---- Sidebar tree: dark panel like the RTD theme's left nav -------------- */
+#side-nav {
+  background: #343131;
+  border-right: 1px solid #343131;
+}
+#nav-tree {
+  background: #343131;
+}
+#nav-tree-contents,
+#nav-tree .item {
+  background: transparent;
+}
+#nav-tree a, #nav-tree .label {
+  color: #d9d9d9;
+}
+#nav-tree .selected a, #nav-tree .selected .label {
+  color: #ffffff;
+  font-weight: 700;
+}
+#nav-tree a:hover {
+  color: #ffffff;
+}
+#nav-tree .arrow {
+  color: #9d9d9d;
+}
+#splitbar {
+  background-image: none;
+  background-color: #e1e4e5;
+}
+.ui-resizable-handle {
+  background-color: #e1e4e5;
+}
+
+/* ---- Breadcrumb strip ----------------------------------------------------- */
+#nav-path, .navpath {
+  background: #fcfcfc;
+  border-bottom: 1px solid #e1e4e5;
+  color: #555;
+}
+#nav-path a, .navpath li {
+  color: #555;
+}
+#nav-path a:hover {
+  color: #2980b9;
+}
+
+/* ---- Top nav / search box ------------------------------------------------- */
+#main-nav {
+  background: #fcfcfc;
+  border-bottom: 1px solid #e1e4e5;
+}
+.sm-dox {
+  background: transparent;
+}
+.sm-dox a, .sm-dox a:focus, .sm-dox a:hover, .sm-dox a:active {
+  color: #404040;
+  font-family: Lato, "proxima-nova", "Helvetica Neue", Arial, sans-serif;
+}
+.sm-dox a:hover, .sm-dox a:active {
+  color: #2980b9;
+}
+#MSearchField {
+  color: #404040;
+  border: 1px solid #e1e4e5;
+  border-radius: 3px;
+  font-family: inherit;
+}
+#MSearchBox .left, #MSearchBox .right {
+  background: transparent;
+}
+
+/* ---- Code blocks ---------------------------------------------------------- */
+pre.fragment, div.fragment, .line {
+  font-family: "SF Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+  font-size: 13px;
+}
+pre.fragment, div.fragment {
+  background: #f5f6f7;
+  border: 1px solid #e1e4e5;
+  border-radius: 3px;
+  color: #404040;
+}
+code, .paramname, .memname {
+  font-family: "SF Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+code {
+  color: #404040;
+}
+.lineno {
+  color: #9d9d9d;
+  border-right: 1px solid #e1e4e5;
+}
+
+/* ---- Member declaration tables -------------------------------------------- */
+table.memberdecls {
+  border: 1px solid #e1e4e5;
+  border-radius: 3px;
+}
+.memtitle {
+  background: #f5f6f7;
+  border-top: 1px solid #e1e4e5;
+  border-left: 1px solid #e1e4e5;
+  border-right: 1px solid #e1e4e5;
+  color: #404040;
+  font-weight: 700;
+}
+.memitem {
+  border: 1px solid #e1e4e5;
+}
+.memdoc {
+  border-bottom: 1px solid #e1e4e5;
+  border-left: 1px solid #e1e4e5;
+  border-right: 1px solid #e1e4e5;
+}
+.mdescLeft, .mdescRight, .memItemLeft, .memItemRight,
+.memTemplItemLeft, .memTemplItemRight, .memTemplParams {
+  background: #fcfcfc;
+  border: none;
+  color: #555;
+}
+
+/* ---- Tables / field docs --------------------------------------------------- */
+table.fieldtable {
+  border: 1px solid #e1e4e5;
+}
+.fieldtable td.fieldname, .fieldtable th {
+  border-bottom: 1px solid #e1e4e5;
+}
+caption {
+  color: #555;
+}
+
+/* ---- Footer ---------------------------------------------------------------- */
+.navpath ul, #nav-path ul.footer {
+  font-size: 12px;
+}
+.footer {
+  color: #555;
+  font-size: 12px;
+  border-top: 1px solid #e1e4e5;
+}

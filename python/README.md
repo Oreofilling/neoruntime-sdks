@@ -1,6 +1,6 @@
-# AIPC Platform Python SDK
+# NeoRuntime Platform Python SDK
 
-Python SDK for AIPC EdgeCam AI Platform
+Python SDK for NeoRuntime EdgeCam AI Platform
 
 ## Installation
 
