@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build NE503 AIPC Apps"
+  short_description: "Build apps with the NE503 SDK"
+  default_prompt: "Use $build-ne503-aipc-apps to create a Python app that uses NeoRuntime inference and events."

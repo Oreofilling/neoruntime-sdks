@@ -5,7 +5,7 @@
 FROM python:3.10-slim-bookworm
 
 LABEL maintainer="aipc@example.com" \
-      version="0.2.0" \
+      version="0.4.0" \
       description="AIPC Platform Python SDK Base Image" \
       architecture="arm64"
 
@@ -14,7 +14,7 @@ ARG TARGETPLATFORM=linux/arm64
 ARG BUILDPLATFORM
 
 # Metadata
-ENV SDK_VERSION=0.2.0 \
+ENV SDK_VERSION=0.4.0 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \

@@ -77,7 +77,7 @@ PyPI 和 tarball 包目前尚未发布。在正式公告前，不要使用
 
    import hailo_ipc_sdk
    print(hailo_ipc_sdk.__version__)
-   # 输出: 0.3.0
+   # 输出: 0.4.0
 
 开发环境安装
 ------------
@@ -115,8 +115,8 @@ Docker 环境
 .. code-block:: dockerfile
 
    FROM python:3.10-slim
-   COPY hailo_ipc_sdk-0.3.0-py3-none-any.whl /tmp/
-   RUN python -m pip install --no-cache-dir /tmp/hailo_ipc_sdk-0.3.0-py3-none-any.whl
+   COPY hailo_ipc_sdk-0.4.0-py3-none-any.whl /tmp/
+   RUN python -m pip install --no-cache-dir /tmp/hailo_ipc_sdk-0.4.0-py3-none-any.whl
    WORKDIR /app
    COPY app.py .
    CMD ["python3", "app.py"]

@@ -4,7 +4,7 @@
 set -e
 
 SDK_DIR="$(cd "$(dirname "$0")" && pwd)"
-PACKAGE_NAME="aipc-sdk-0.2.0-arm64"
+PACKAGE_NAME="aipc-sdk-0.4.0-arm64"
 OUTPUT_DIR="${SDK_DIR}/dist"
 
 echo "========================================="

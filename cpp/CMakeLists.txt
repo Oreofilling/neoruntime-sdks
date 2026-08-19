@@ -93,7 +93,12 @@ if(DEFINED NE503_GRPC_CPP_PLUGIN)
 elseif(NE503_GRPC_CONFIG AND TARGET gRPC::grpc_cpp_plugin)
     set(NE503_GRPC_PLUGIN_EXE "$<TARGET_FILE:gRPC::grpc_cpp_plugin>")
 else()
-    message(FATAL_ERROR "grpc_cpp_plugin not found. Set -DNE503_GRPC_CPP_PLUGIN=...")
+    find_program(NE503_GRPC_CPP_PLUGIN_EXE grpc_cpp_plugin)
+    if(NE503_GRPC_CPP_PLUGIN_EXE)
+        set(NE503_GRPC_PLUGIN_EXE "${NE503_GRPC_CPP_PLUGIN_EXE}")
+    else()
+        message(FATAL_ERROR "grpc_cpp_plugin not found. Set -DNE503_GRPC_CPP_PLUGIN=...")
+    endif()
 endif()
 
 # ---- Protobuf/gRPC code generation -----------------------------------------
