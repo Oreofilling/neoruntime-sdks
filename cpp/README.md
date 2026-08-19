@@ -68,6 +68,7 @@ stubs at build time from the shared root `proto/` directory).
 - `person_detection.cpp` — stream inference + event publishing (the canonical demo)
 - `perimeter_guard.cpp`, `video_processor.cpp`, `event_subscriber.cpp`
 - `connectivity_smoke.cpp`, `media_smoke.cpp` — on-device smoke checks
+- `api_tour.cpp` — one core call per client module (all 11), PASS/SKIP/FAIL summary
 
 ## Tests
 
