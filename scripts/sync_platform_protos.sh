@@ -57,7 +57,7 @@ PY
 if [ -n "$PLATFORM_WORKTREE" ]; then
     PLATFORM_DIR="$PLATFORM_WORKTREE"
 else
-    TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ne503-platform-protos.XXXXXX")"
+    TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/neoruntime-platform-protos.XXXXXX")"
     trap 'rm -rf "$TMP_DIR"' EXIT
 
     PLATFORM_DIR="$TMP_DIR/platform"

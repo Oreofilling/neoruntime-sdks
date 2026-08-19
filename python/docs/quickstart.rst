@@ -1,12 +1,12 @@
 快速开始
 ========
 
-本指南将帮助你快速上手 AIPC Platform Python SDK。
+本指南将帮助你快速上手 NeoRuntime Platform Python SDK。
 
 基本概念
 --------
 
-AIPC Platform 提供以下核心服务：
+NeoRuntime Platform 提供以下核心服务：
 
 - **AI Runtime**: AI 推理服务，支持模型注册和推理
 - **Event Bus**: 事件总线，支持发布/订阅模式

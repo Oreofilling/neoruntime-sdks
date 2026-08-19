@@ -1,0 +1,13 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# The SDK links gRPC, protobuf, and OpenCV; consumers need them too.
+find_dependency(Protobuf CONFIG)
+find_dependency(gRPC CONFIG)
+find_dependency(OpenCV COMPONENTS core imgproc imgcodecs)
+find_dependency(nlohmann_json CONFIG)
+
+include("${CMAKE_CURRENT_LIST_DIR}/ne503_aipc_sdkTargets.cmake")
+
+check_required_components(ne503_aipc_sdk)

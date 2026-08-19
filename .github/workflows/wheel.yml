@@ -1,4 +1,4 @@
-name: Build Python SDK wheel
+name: Build SDK release artifacts
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: Create or update a GitHub Release with the built wheel.
+        description: Create or update a GitHub Release with the built SDK artifacts.
         required: false
         type: boolean
         default: false
@@ -107,8 +107,56 @@ jobs:
           path: python/dist/*.whl
           if-no-files-found: error
 
+  build-cpp-tarball:
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install aarch64 cross-toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Set up vcpkg
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> "$GITHUB_ENV"
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/vcpkg/archives
+          key: vcpkg-release-arm64-${{ hashFiles('cpp/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-release-arm64-
+
+      - name: Build C++ SDK tarball
+        run: |
+          set -euo pipefail
+          PACKAGE_ARCH=arm64 \
+          BUILD_DIR="$PWD/build-arm64-package" \
+          CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$PWD/cpp/cmake/aarch64-toolchain.cmake -DVCPKG_TARGET_TRIPLET=arm64-linux" \
+            scripts/package_cpp_sdk.sh
+
+      - name: Upload C++ SDK tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-sdk-tarball
+          path: dist/ne503-aipc-cpp-sdk-*.tar.gz
+          if-no-files-found: error
+
   release:
-    needs: build-wheel
+    needs:
+      - build-wheel
+      - build-cpp-tarball
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     runs-on: ubuntu-latest
     permissions:
@@ -121,12 +169,19 @@ jobs:
           name: python-sdk-wheel
           path: dist
 
+      - name: Download C++ SDK tarball artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cpp-sdk-tarball
+          path: dist
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           wheel="$(ls dist/hailo_ipc_sdk-*.whl | head -1)"
+          cpp_tarball="$(ls dist/ne503-aipc-cpp-sdk-*.tar.gz | head -1)"
           version="$(basename "$wheel" | sed -E 's/^hailo_ipc_sdk-([^-]+)-.*/\1/')"
 
           tag_name="$GITHUB_REF_NAME"
@@ -147,13 +202,13 @@ jobs:
           fi
 
           if gh release view "$tag_name" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag_name" "$wheel" \
+            gh release upload "$tag_name" "$wheel" "$cpp_tarball" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
           else
-            gh release create "$tag_name" "$wheel" \
+            gh release create "$tag_name" "$wheel" "$cpp_tarball" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "$tag_name" \
-              --notes "Python SDK wheel release $tag_name"
+              --notes "SDK release $tag_name: Python wheel and C++ SDK tarball."
           fi

@@ -2,7 +2,7 @@
 
 ## 概述
 
-SDK文档构建已集成到AIPC平台的打包和部署流程中。文档通过Sphinx自动生成，作为静态HTML文件部署到设备的 `/opt/aipc/web/docs/` 目录。
+SDK文档构建已集成到NeoRuntime平台的打包和部署流程中。文档通过Sphinx自动生成，作为静态HTML文件部署到设备的 `/opt/aipc/web/docs/` 目录。
 
 ## 架构
 
@@ -34,7 +34,7 @@ SDK文档构建已集成到AIPC平台的打包和部署流程中。文档通过S
 **打包时自动包含SDK文档：**
 
 ```bash
-cd /home/work/ne503
+cd /home/work/neoruntime
 ./scripts/pack_release.sh --sdk-path /path/to/hailo-sdk
 
 # 生成的tarball会包含:

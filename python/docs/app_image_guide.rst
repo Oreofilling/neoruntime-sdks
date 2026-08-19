@@ -4,7 +4,7 @@
 概述
 ----
 
-本指南介绍如何在开发环境中制作应用 Docker 镜像，并将镜像导入到 AIPC 设备上运行。
+本指南介绍如何在开发环境中制作应用 Docker 镜像，并将镜像导入到 NeoRuntime 设备上运行。
 
 完整流程包括：
 
@@ -92,7 +92,7 @@ Dockerfile
 
    LABEL maintainer="your@email.com"
 
-   # 从公开源码仓库安装 NE503 Python SDK。
+   # 从公开源码仓库安装 NeoRuntime Python SDK。
    # SDK 暂未发布到 PyPI。
    RUN apt-get update \
        && apt-get install -y --no-install-recommends git \

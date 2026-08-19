@@ -1,6 +1,6 @@
-# AIPC Platform Python SDK
+# NeoRuntime Platform Python SDK
 
-Python SDK for AIPC EdgeCam AI Platform
+Python SDK for NeoRuntime EdgeCam AI Platform
 
 ## Installation
 
@@ -455,14 +455,16 @@ To create or update a GitHub Release, either push a version tag or run the
 workflow manually with release publishing enabled:
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
-The release tag version must match the package version in `setup.py`.
+The release tag version must match the package version in `setup.py`. On release
+tags, the repository-level workflow also attaches the C++ SDK tarball to the
+same GitHub Release.
 
-PyPI and tarball packages are not published yet. Until they are available, use
-source installs, local wheels, or GitHub Actions wheel artifacts.
+PyPI packages are not published yet. Until they are available, use source
+installs, local wheels, or GitHub Release artifacts.
 
 ## License
 

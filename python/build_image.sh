@@ -5,7 +5,7 @@ set -e
 
 SDK_DIR="$(cd "$(dirname "$0")" && pwd)"
 IMAGE_NAME="aipc-sdk"
-IMAGE_TAG="0.2.0-arm64"
+IMAGE_TAG="0.4.0-arm64"
 
 echo "========================================="
 echo "AIPC Platform SDK - ARM64 Docker Build"

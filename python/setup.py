@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NE503 Platform Python SDK
+NeoRuntime Platform Python SDK
 """
 
 from setuptools import setup, find_packages
@@ -10,10 +10,10 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="hailo-ipc-sdk",
-    version="0.3.0",
-    author="NE503 Team",
+    version="0.4.0",
+    author="NeoRuntime Team",
     author_email="opensource@camthink.ai",
-    description="NE503 EdgeCam AI Platform Python SDK",
+    description="NeoRuntime AI Platform Python SDK",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/camthink-ai/neoruntime-sdks/tree/main/python",

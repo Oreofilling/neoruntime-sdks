@@ -1,4 +1,4 @@
-# AIPC Platform Python SDK - 文档和基础镜像
+# NeoRuntime Platform Python SDK - 文档和基础镜像
 
 ## 目录结构
 
@@ -71,7 +71,7 @@ IMAGE_NAME=my-registry/aipc-sdk IMAGE_TAG=1.0.0 ./build_base_image.sh
 创建应用 Dockerfile:
 
 ```dockerfile
-FROM registry.local/aipc-sdk:0.2.0
+FROM registry.local/aipc-sdk:0.4.0
 
 # 安装额外依赖（如果需要）
 USER root
@@ -149,7 +149,7 @@ docker build -t registry.local/my-app:1.0.0 .
 - **大小**: ~200MB (优化后)
 - **安全**: 非 root 用户运行
 - **预装**:
-  - hailo-ipc-sdk 0.2.0
+  - hailo-ipc-sdk 0.4.0
   - numpy
   - Pillow
   - opencv-python-headless
@@ -158,7 +158,7 @@ docker build -t registry.local/my-app:1.0.0 .
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| SDK_VERSION | 0.2.0 | SDK 版本 |
+| SDK_VERSION | 0.4.0 | SDK 版本 |
 | APP_ID | unknown | 应用 ID |
 | DEBUG | 0 | 调试模式 |
 | LOG_LEVEL | INFO | 日志级别 |
@@ -182,12 +182,12 @@ docker build -t registry.local/my-app:1.0.0 .
 # 1. 构建并推送基础镜像（由 SDK 维护者）
 cd sdk/python
 ./build_base_image.sh
-docker push registry.local/aipc-sdk:0.2.0
+docker push registry.local/aipc-sdk:0.4.0
 
 # 2. 开发者使用基础镜像
 cd apps/my-app
 cat > Dockerfile <<EOF
-FROM registry.local/aipc-sdk:0.2.0
+FROM registry.local/aipc-sdk:0.4.0
 COPY app.py app.yaml ./
 CMD ["python3", "app.py"]
 EOF
@@ -231,7 +231,7 @@ docker run -it --rm \
     -v /run/aipc:/run/aipc \
     -e APP_ID=dev_app \
     -e DEBUG=1 \
-    registry.local/aipc-sdk:0.2.0 \
+    registry.local/aipc-sdk:0.4.0 \
     bash
 
 # 在容器内测试代码
@@ -258,11 +258,11 @@ cd sdk/python
 ./build_base_image.sh
 
 # 4. 测试镜像
-docker run --rm registry.local/aipc-sdk:0.2.0 \
+docker run --rm registry.local/aipc-sdk:0.4.0 \
     python3 -c "import hailo_ipc_sdk; print(hailo_ipc_sdk.__version__)"
 
 # 5. 推送到仓库
-docker push registry.local/aipc-sdk:0.2.0
+docker push registry.local/aipc-sdk:0.4.0
 docker push registry.local/aipc-sdk:latest
 
 # 6. 发布文档（可选）
@@ -290,8 +290,8 @@ docker push registry.local/aipc-sdk:latest
 - **SDK 版本**: 遵循语义化版本 (SemVer)
 - **镜像标签**:
   - `latest` - 最新稳定版
-  - `0.2.0` - 具体版本
-  - `0.2.0-arm64` - 架构特定版本
+  - `0.4.0` - 具体版本
+  - `0.4.0-arm64` - 架构特定版本
 
 ## 故障排除
 
@@ -325,15 +325,15 @@ docker builder prune -af
 
 ```bash
 # 检查 SDK 安装
-docker run --rm registry.local/aipc-sdk:0.2.0 \
+docker run --rm registry.local/aipc-sdk:0.4.0 \
     python3 -c "import hailo_ipc_sdk; print(hailo_ipc_sdk.__version__)"
 
 # 检查权限
-docker run --rm registry.local/aipc-sdk:0.2.0 \
+docker run --rm registry.local/aipc-sdk:0.4.0 \
     ls -la /app
 
 # 调试模式
-docker run --rm -e DEBUG=1 registry.local/aipc-sdk:0.2.0 \
+docker run --rm -e DEBUG=1 registry.local/aipc-sdk:0.4.0 \
     python3 app.py
 ```
 

@@ -1,11 +1,11 @@
-AIPC Platform Python SDK Documentation
+NeoRuntime Platform Python SDK Documentation
 =======================================
 
-Welcome to the AIPC Platform Python SDK! This is a Python development toolkit for the AIPC Edge AI Computing Platform.
+Welcome to the NeoRuntime Platform Python SDK! This is a Python development toolkit for the NeoRuntime Edge AI Computing Platform.
 
 .. only:: html
 
-   .. image:: https://img.shields.io/badge/version-0.3.0-blue.svg
+   .. image:: https://img.shields.io/badge/version-0.4.0-blue.svg
       :target: https://github.com/camthink-ai/neoruntime-sdks
       :alt: Version
 
@@ -16,7 +16,7 @@ Welcome to the AIPC Platform Python SDK! This is a Python development toolkit fo
 Overview
 --------
 
-The AIPC Platform Python SDK provides clean APIs to access platform capabilities:
+The NeoRuntime Platform Python SDK provides clean APIs to access platform capabilities:
 
 - **Video Stream Access**: Raw and encoded video streams (zero-copy SHM)
 - **AI Inference Service**: Model registration, single-shot and streaming inference

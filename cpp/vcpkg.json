@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "ne503-aipc-sdk",
+  "version-string": "0.1.0",
+  "description": "C++ SDK for the NeoRuntime AI platform (inference, media, device/camera control, events, audio).",
+  "homepage": "https://github.com/camthink-ai/neoruntime-sdks",
+  "license": "MIT",
+  "dependencies": [
+    "protobuf",
+    "grpc",
+    {
+      "name": "grpc",
+      "host": true,
+      "$comment": "Host-triplet gRPC provides protoc + grpc_cpp_plugin for cross-compile codegen"
+    },
+    {
+      "name": "opencv4",
+      "default-features": false,
+      "$comment": "Headless: client SDK only needs cv::Mat (core), cv::cvtColor (imgproc), cv::imwrite (imgcodecs) + codecs. Disabling default features drops gtk/highgui/cairo/dnn/v4l — the whole GUI stack, which also dodges a known cairo arm64 cross-compile failure.",
+      "features": [
+        "jpeg",
+        "png",
+        "tiff"
+      ]
+    },
+    "nlohmann-json"
+  ]
+}

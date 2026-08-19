@@ -1,7 +1,7 @@
 Contributing Guide
 ==================
 
-Thank you for your interest in the AIPC Platform Python SDK!
+Thank you for your interest in the NeoRuntime Platform Python SDK!
 
 Development Environment Setup
 -----------------------------
