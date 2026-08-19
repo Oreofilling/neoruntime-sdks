@@ -4,7 +4,7 @@
 FROM python:3.10-slim-bookworm
 
 LABEL maintainer="aipc@example.com"
-LABEL version="0.2.0"
+LABEL version="0.4.0"
 LABEL description="AIPC Platform Python SDK - ARM64"
 LABEL architecture="arm64"
 

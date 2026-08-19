@@ -59,8 +59,8 @@ except Exception:
 project = 'AIPC Platform Python SDK'
 copyright = '2025-2026, CamThink'
 author = 'CamThink'
-release = '0.3.0'
-version = '0.3.0'
+release = '0.4.0'
+version = '0.4.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

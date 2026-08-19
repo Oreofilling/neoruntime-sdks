@@ -79,7 +79,7 @@ Verify Installation
 
    import hailo_ipc_sdk
    print(hailo_ipc_sdk.__version__)
-   # Output: 0.3.0
+   # Output: 0.4.0
 
 Development Environment
 -----------------------
@@ -117,8 +117,8 @@ Or build your own image:
 .. code-block:: dockerfile
 
    FROM python:3.10-slim
-   COPY hailo_ipc_sdk-0.3.0-py3-none-any.whl /tmp/
-   RUN python -m pip install --no-cache-dir /tmp/hailo_ipc_sdk-0.3.0-py3-none-any.whl
+   COPY hailo_ipc_sdk-0.4.0-py3-none-any.whl /tmp/
+   RUN python -m pip install --no-cache-dir /tmp/hailo_ipc_sdk-0.4.0-py3-none-any.whl
    WORKDIR /app
    COPY app.py .
    CMD ["python3", "app.py"]

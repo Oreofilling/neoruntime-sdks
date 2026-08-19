@@ -5,7 +5,7 @@ Welcome to the NeoRuntime Platform Python SDK! This is a Python development tool
 
 .. only:: html
 
-   .. image:: https://img.shields.io/badge/version-0.3.0-blue.svg
+   .. image:: https://img.shields.io/badge/version-0.4.0-blue.svg
       :target: https://github.com/camthink-ai/neoruntime-sdks
       :alt: Version
 

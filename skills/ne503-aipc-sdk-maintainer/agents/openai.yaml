@@ -1,0 +1,4 @@
+interface:
+  display_name: "NE503 AIPC SDK Maintainer"
+  short_description: "Maintain the NE503 Python and C++ SDKs"
+  default_prompt: "Use $ne503-aipc-sdk-maintainer to plan and validate an SDK change in this repository."

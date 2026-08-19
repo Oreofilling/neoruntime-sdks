@@ -6,7 +6,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SDK_DIR="${SCRIPT_DIR}"
 IMAGE_NAME="${IMAGE_NAME:-registry.local/aipc-sdk}"
-IMAGE_TAG="${IMAGE_TAG:-0.2.0}"
+IMAGE_TAG="${IMAGE_TAG:-0.4.0}"
 PLATFORM="${PLATFORM:-linux/arm64}"
 
 echo "========================================="

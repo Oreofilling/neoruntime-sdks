@@ -8,7 +8,7 @@
 
 - **基础镜像**: python:3.10-slim-bookworm
 - **架构**: linux/arm64 (支持 Hailo-15, RK3588, Jetson)
-- **SDK 版本**: 0.2.0
+- **SDK 版本**: 0.4.0
 - **预装依赖**:
   - hailo-ipc-sdk
   - numpy
@@ -40,7 +40,7 @@ cd sdk/python
 # ARM64
 docker buildx build \
     --platform linux/arm64 \
-    --tag registry.local/aipc-sdk:0.2.0 \
+    --tag registry.local/aipc-sdk:0.4.0 \
     --tag registry.local/aipc-sdk:latest \
     --file Dockerfile.base \
     --load \
@@ -48,7 +48,7 @@ docker buildx build \
 
 # AMD64（开发测试）
 docker build \
-    --tag registry.local/aipc-sdk:0.2.0-amd64 \
+    --tag registry.local/aipc-sdk:0.4.0-amd64 \
     --file Dockerfile.base \
     .
 ```
@@ -59,7 +59,7 @@ docker build \
 
 ```dockerfile
 # apps/my-app/Dockerfile
-FROM registry.local/aipc-sdk:0.2.0
+FROM registry.local/aipc-sdk:0.4.0
 
 # 复制应用代码
 COPY app.py app.yaml ./
@@ -71,7 +71,7 @@ CMD ["python3", "app.py"]
 ### 示例 2: 带额外依赖的应用
 
 ```dockerfile
-FROM registry.local/aipc-sdk:0.2.0
+FROM registry.local/aipc-sdk:0.4.0
 
 # 切换到 root 安装依赖
 USER root
@@ -97,7 +97,7 @@ CMD ["python3", "app.py"]
 ### 示例 3: 多文件应用
 
 ```dockerfile
-FROM registry.local/aipc-sdk:0.2.0
+FROM registry.local/aipc-sdk:0.4.0
 
 USER root
 
@@ -126,7 +126,7 @@ CMD ["python3", "app.py"]
 # ============================================
 # Stage 1: Dependencies (optional)
 # ============================================
-FROM registry.local/aipc-sdk:0.2.0 AS builder
+FROM registry.local/aipc-sdk:0.4.0 AS builder
 
 USER root
 
@@ -142,7 +142,7 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 # ============================================
 # Stage 2: Runtime
 # ============================================
-FROM registry.local/aipc-sdk:0.2.0
+FROM registry.local/aipc-sdk:0.4.0
 
 USER root
 
@@ -260,7 +260,7 @@ docker push registry.local/my-app:1.0.0
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `SDK_VERSION` | 0.2.0 | SDK 版本 |
+| `SDK_VERSION` | 0.4.0 | SDK 版本 |
 | `APP_ID` | unknown | 应用 ID |
 | `DEBUG` | 0 | 调试模式 |
 | `LOG_LEVEL` | INFO | 日志级别 |
@@ -292,11 +292,11 @@ docker push registry.local/my-app:1.0.0
 docker login registry.local
 
 # 推送镜像
-docker push registry.local/aipc-sdk:0.2.0
+docker push registry.local/aipc-sdk:0.4.0
 docker push registry.local/aipc-sdk:latest
 
 # 在其他机器拉取
-docker pull registry.local/aipc-sdk:0.2.0
+docker pull registry.local/aipc-sdk:0.4.0
 ```
 
 ## 故障排除
@@ -318,10 +318,10 @@ docker builder prune -af
 
 ```bash
 # 检查镜像
-docker run --rm registry.local/aipc-sdk:0.2.0 python3 -c "import hailo_ipc_sdk; print(hailo_ipc_sdk.__version__)"
+docker run --rm registry.local/aipc-sdk:0.4.0 python3 -c "import hailo_ipc_sdk; print(hailo_ipc_sdk.__version__)"
 
 # 进入容器调试
-docker run --rm -it registry.local/aipc-sdk:0.2.0 /bin/bash
+docker run --rm -it registry.local/aipc-sdk:0.4.0 /bin/bash
 
 # 查看日志
 docker logs <container_id>
