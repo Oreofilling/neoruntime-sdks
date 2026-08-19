@@ -26,6 +26,8 @@ struct AudioFrame {
     std::uint32_t sample_rate = 0;
     std::uint32_t channels = 0;
     std::uint32_t bits_per_sample = 0;
+    std::uint64_t dts_ns = 0;        // decode timestamp; set only when the daemon
+                                     // sends the video-style header tail (0 otherwise)
     std::string data;                // raw payload bytes
 
     bool is_keyframe() const noexcept { return (flags & 0x01) != 0; }

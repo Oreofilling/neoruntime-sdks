@@ -273,10 +273,19 @@ int main() {
     try {
         AudioStreamClient audio_stream;
         if (auto frame = audio_stream.get_frame(2000)) {
+            std::string fmt;
+            if (frame->sample_rate == 0) {
+                // Current daemon sends the video-layout header on this socket:
+                // format fields are unknown (0), dts_ns carries the timestamp.
+                fmt = "format unknown (video-layout header, dts " +
+                      std::to_string(frame->dts_ns) + ")";
+            } else {
+                fmt = std::to_string(frame->sample_rate) + "Hz " +
+                      std::to_string(frame->channels) + "ch " +
+                      std::to_string(frame->bits_per_sample) + "bit";
+            }
             report("audio_stream", Status::Pass,
-                   frame->codec_name() + " " + std::to_string(frame->sample_rate) + "Hz " +
-                   std::to_string(frame->channels) + "ch " +
-                   std::to_string(frame->bits_per_sample) + "bit, " +
+                   frame->codec_name() + " " + fmt + ", " +
                    std::to_string(frame->data.size()) + "B");
         } else {
             report("audio_stream", Status::Skip, "no frame within 2s (capture idle?)");

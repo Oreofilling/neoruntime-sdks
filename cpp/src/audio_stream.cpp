@@ -90,9 +90,11 @@ struct AudioStreamClient::Impl {
         f.codec = hdr.codec;
         f.flags = hdr.flags;
         f.pts_ns = hdr.pts_ns;
-        f.sample_rate = hdr.sample_rate;
-        f.channels = hdr.channels;
-        f.bits_per_sample = hdr.bits_per_sample;
+        const detail::AudioFormatFields fmt = detail::decode_audio_format(hdr, payload_size);
+        f.sample_rate = fmt.sample_rate;
+        f.channels = fmt.channels;
+        f.bits_per_sample = fmt.bits_per_sample;
+        f.dts_ns = fmt.dts_ns;
         if (payload_size > 0) {
             f.data.resize(static_cast<std::size_t>(payload_size));
             if (!detail::recv_exact(fd, f.data.data(), f.data.size())) return std::nullopt;

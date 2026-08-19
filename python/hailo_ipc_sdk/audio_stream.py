@@ -4,6 +4,10 @@ Audio Stream Client
 Reads encoded audio frames from the camera-daemon EncodedPublisher UDS socket.
 Uses the same 30-byte header protocol as the video encoded publisher.
 
+NOTE: the current platform daemon writes the VIDEO header layout on this
+socket (see decode_audio_format below); the audio-specific format fields are
+auto-detected and reported as 0/unknown until the daemon fills them.
+
 Socket path: /run/aipc/encoded/audio_capture.sock
 """
 
@@ -27,8 +31,51 @@ logger = logging.getLogger("hailo_ipc_sdk.audio_stream")
 # [18:22] uint32  channels
 # [22:26] uint32  bits_per_sample
 # [26:30] uint32  frame_size (payload bytes)
+#
+# The daemon observed on-device (2026-08) actually sends the VIDEO layout
+# "<I BB Q II Q" (width[14:18]=0, height[18:22]=0, dts_ns[22:30]==pts) and
+# never fills the audio fields above. decode_audio_format() therefore
+# validates the tail for audio plausibility and falls back to the video view.
 _HEADER_SIZE = 30
 _HEADER_FMT = "<I BB Q III I"
+
+# Plausibility bounds for the audio-layout tail (a frame passing all of these
+# is treated as a genuine audio header; anything else is a video-layout tail).
+_AUDIO_RATE_MIN = 8000
+_AUDIO_RATE_MAX = 192000
+
+
+def _audio_layout_plausible(rate: int, channels: int, bits: int,
+                            frame_size: int, payload_size: int) -> bool:
+    return (
+        frame_size == payload_size
+        and _AUDIO_RATE_MIN <= rate <= _AUDIO_RATE_MAX
+        and 1 <= channels <= 8
+        and 8 <= bits <= 32
+        and bits % 8 == 0
+    )
+
+
+def decode_audio_format(header: bytes, payload_size: int) -> tuple:
+    """Decode the format fields of a 30-byte audio-capture header.
+
+    The platform daemon currently writes the VIDEO EncHeader layout on
+    audio_capture.sock (width/height at [14:22] = 0, dts at [22:30]) instead
+    of the documented audio layout, so the tail [14:30] is first validated for
+    audio plausibility; when that fails it is re-read as the video tail
+    (width, height, dts_ns) and the format parameters are reported as unknown
+    (0). A future daemon that fills the audio layout is picked up
+    automatically, with no client change.
+
+    Returns (sample_rate, channels, bits_per_sample, dts_ns); dts_ns is 0
+    unless the video-layout fallback was taken.
+    """
+    rate, channels, bits, frame_size = struct.unpack("<IIII", header[14:30])
+    if _audio_layout_plausible(rate, channels, bits, frame_size, payload_size):
+        return rate, channels, bits, 0
+    # Video-layout tail: [22:30] is a full 64-bit dts timestamp.
+    dts = bits | (frame_size << 32)
+    return 0, 0, 0, dts
 
 
 @dataclass
@@ -41,6 +88,8 @@ class AudioFrame:
     channels: int
     bits_per_sample: int
     data: bytes         # Raw audio payload
+    dts_ns: int = 0     # Decode timestamp; set only when the daemon sends the
+                        # video-style header tail (0 otherwise)
 
     @property
     def is_keyframe(self) -> bool:
@@ -128,15 +177,14 @@ class AudioStreamClient:
         codec = values[1]
         flags = values[2]
         pts_ns = values[3]
-        sample_rate = values[4]
-        channels = values[5]
-        bits_per_sample = values[6]
-        _frame_size = values[7]
 
         payload_size = total_size - _HEADER_SIZE
         if payload_size < 0 or payload_size > 10 * 1024 * 1024:
             logger.warning("AudioStreamClient: bogus payload_size=%d, skipping", payload_size)
             return None
+
+        sample_rate, channels, bits_per_sample, dts_ns = decode_audio_format(
+            header_data, payload_size)
 
         try:
             payload = self._recv_exact(sock, payload_size) if payload_size > 0 else b""
@@ -151,6 +199,7 @@ class AudioStreamClient:
             channels=channels,
             bits_per_sample=bits_per_sample,
             data=payload,
+            dts_ns=dts_ns,
         )
 
     def _reconnect(self) -> socket.socket:
