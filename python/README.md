@@ -455,8 +455,8 @@ To create or update a GitHub Release, either push a version tag or run the
 workflow manually with release publishing enabled:
 
 ```bash
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 The release tag version must match the package version in `setup.py`. On release

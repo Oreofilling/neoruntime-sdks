@@ -67,14 +67,14 @@ tag follows the Python SDK version; the C++ SDK keeps its own package version in
 the tarball filename.
 
 ```bash
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 The GitHub Release assets are:
 
-- `neoruntime_ipc_sdk-0.4.0-py3-none-any.whl`
-- `ne503-aipc-cpp-sdk-0.1.0-linux-arm64.tar.gz`
+- `neoruntime_ipc_sdk-0.5.0-py3-none-any.whl`
+- `ne503-aipc-cpp-sdk-0.2.0-linux-arm64.tar.gz`
 
 PyPI packages are not published yet. Until that channel is available, use
 source installs, local wheels, or GitHub Release artifacts.

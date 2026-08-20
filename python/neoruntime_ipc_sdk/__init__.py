@@ -12,7 +12,7 @@ Provides clean API to access platform capabilities:
 - AI overlay control (detection boxes on RTSP/Web)
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from .app import (
     AppClient,

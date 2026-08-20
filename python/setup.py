@@ -10,7 +10,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="neoruntime-ipc-sdk",
-    version="0.4.0",
+    version="0.5.0",
     author="NeoRuntime Team",
     author_email="opensource@camthink.ai",
     description="NeoRuntime AI Platform Python SDK",

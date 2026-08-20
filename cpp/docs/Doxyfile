@@ -9,7 +9,7 @@
 # Run `doxygen -g cpp/docs/Doxyfile` to regenerate defaults if migrating.
 
 PROJECT_NAME           = "NeoRuntime C++ SDK"
-PROJECT_NUMBER         = 0.1.0
+PROJECT_NUMBER         = 0.2.0
 PROJECT_BRIEF          = "C++ client SDK for the NeoRuntime edge-AI camera platform (full mirror of neoruntime_ipc_sdk)"
 
 # ---- Input / output --------------------------------------------------------
