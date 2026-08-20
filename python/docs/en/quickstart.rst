@@ -22,7 +22,7 @@ Create a simple person detection application:
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import InferenceClient, EventClient
+   from neoruntime_ipc_sdk import InferenceClient, EventClient
    import time
 
    def main():
@@ -75,7 +75,7 @@ Or configure in code:
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import Config
+   from neoruntime_ipc_sdk import Config
 
    config = Config(
        app_id="my_app",
@@ -94,7 +94,7 @@ Single-shot Inference
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import InferenceClient
+   from neoruntime_ipc_sdk import InferenceClient
    import numpy as np
 
    inf = InferenceClient()
@@ -144,7 +144,7 @@ Publish Events
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import EventClient
+   from neoruntime_ipc_sdk import EventClient
 
    events = EventClient()
 
@@ -187,7 +187,7 @@ Light Control
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import DeviceClient, IrCutMode
+   from neoruntime_ipc_sdk import DeviceClient, IrCutMode
 
    dev = DeviceClient()
 
@@ -231,7 +231,7 @@ Video Stream Access
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import MediaClient, PixelFormat
+   from neoruntime_ipc_sdk import MediaClient, PixelFormat
 
    media = MediaClient()
 
@@ -252,7 +252,7 @@ The SDK uses standard Python exceptions:
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import InferenceClient
+   from neoruntime_ipc_sdk import InferenceClient
    from grpc import RpcError
 
    inf = InferenceClient()
@@ -279,7 +279,7 @@ The SDK uses the Python standard logging module:
    logging.basicConfig(level=logging.DEBUG)
 
    # Or set SDK logging only
-   logger = logging.getLogger('hailo_ipc_sdk')
+   logger = logging.getLogger('neoruntime_ipc_sdk')
    logger.setLevel(logging.DEBUG)
 
 Next Steps

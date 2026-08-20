@@ -16,7 +16,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 // An event: a JSON payload routed under a topic. Outbound events auto-fill
 // `source` (from APP_ID) and `timestamp_ns` (now) when left empty, matching
@@ -134,4 +134,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

@@ -1,7 +1,7 @@
 Configuration API
 =================
 
-.. automodule:: hailo_ipc_sdk.config
+.. automodule:: neoruntime_ipc_sdk.config
    :members:
    :undoc-members:
    :show-inheritance:
@@ -10,7 +10,7 @@ Configuration API
 Config
 ------
 
-.. autoclass:: hailo_ipc_sdk.Config
+.. autoclass:: neoruntime_ipc_sdk.Config
    :members:
    :undoc-members:
    :show-inheritance:
@@ -23,7 +23,7 @@ Static Methods
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import Config
+   from neoruntime_ipc_sdk import Config
 
    # Get application ID
    app_id = Config.get_app_id()
@@ -57,7 +57,7 @@ The SDK automatically reads configuration from environment variables:
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import Config
+   from neoruntime_ipc_sdk import Config
 
    # Automatically loaded from environment variables
    print(Config.get_app_id())  # Output: my_app

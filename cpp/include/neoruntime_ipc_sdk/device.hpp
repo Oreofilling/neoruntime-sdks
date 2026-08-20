@@ -14,7 +14,7 @@
 #include <string>
 #include <string_view>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 // IR-cut filter mode. Values match aipc.device.IrCutMode (IRCUT_AUTO/DAY/NIGHT).
 enum class IrCutMode : int {
@@ -168,4 +168,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

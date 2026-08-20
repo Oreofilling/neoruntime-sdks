@@ -55,11 +55,11 @@ jobs:
       - name: Detect changes
         id: changes
         run: |
-          if git diff --quiet -- proto python/hailo_ipc_sdk/proto; then
+          if git diff --quiet -- proto python/neoruntime_ipc_sdk/proto; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            git diff --stat -- proto python/hailo_ipc_sdk/proto
+            git diff --stat -- proto python/neoruntime_ipc_sdk/proto
           fi
 
       - name: Create sync pull request
@@ -78,7 +78,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add proto python/hailo_ipc_sdk/proto
+          git add proto python/neoruntime_ipc_sdk/proto
           git commit -m "chore: sync platform protobuf definitions" \
             -m "Source: camthink-ai/neoruntime@${SOURCE_SHA:-$PLATFORM_REF}"
           git push --force-with-lease origin "$branch"

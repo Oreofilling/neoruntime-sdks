@@ -10,7 +10,7 @@ import pytest
 import numpy as np
 from unittest.mock import Mock, patch, MagicMock
 
-from hailo_ipc_sdk import InferenceClient, BoundingBox, DetectedObject, InferenceResult
+from neoruntime_ipc_sdk import InferenceClient, BoundingBox, DetectedObject, InferenceResult
 
 
 class TestBoundingBox:
@@ -103,8 +103,8 @@ class TestInferenceClient:
         with InferenceClient() as client:
             assert client.channel is not None
     
-    @patch('hailo_ipc_sdk.inference.inference_pb2_grpc.InferenceServiceStub')
-    @patch('hailo_ipc_sdk.inference.grpc.aio.insecure_channel')
+    @patch('neoruntime_ipc_sdk.inference.inference_pb2_grpc.InferenceServiceStub')
+    @patch('neoruntime_ipc_sdk.inference.grpc.aio.insecure_channel')
     def test_connect(self, mock_channel, mock_stub):
         class FakeAioChannel:
             async def close(self):
@@ -120,7 +120,7 @@ class TestInferenceClient:
         client.close()
     
     def test_numpy_to_tensor(self):
-        from hailo_ipc_sdk.proto import inference_pb2
+        from neoruntime_ipc_sdk.proto import inference_pb2
         client = InferenceClient()
         arr = np.zeros((100, 100, 3), dtype=np.uint8)
         
@@ -132,7 +132,7 @@ class TestInferenceClient:
     def test_dtype_conversion(self):
         client = InferenceClient()
         
-        from hailo_ipc_sdk.proto import inference_pb2
+        from neoruntime_ipc_sdk.proto import inference_pb2
         
         assert client._dtype_str_to_enum("uint8") == inference_pb2.UINT8
         assert client._dtype_str_to_enum("float32") == inference_pb2.FLOAT32

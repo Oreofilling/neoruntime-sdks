@@ -1,7 +1,7 @@
 Video Stream API
 ================
 
-.. automodule:: hailo_ipc_sdk.media
+.. automodule:: neoruntime_ipc_sdk.media
    :members:
    :undoc-members:
    :show-inheritance:
@@ -10,7 +10,7 @@ Video Stream API
 FdMediaClient
 -------------
 
-.. autoclass:: hailo_ipc_sdk.FdMediaClient
+.. autoclass:: neoruntime_ipc_sdk.FdMediaClient
    :members:
    :undoc-members:
    :show-inheritance:
@@ -22,7 +22,7 @@ Data Types
 Frame
 ~~~~~
 
-.. autoclass:: hailo_ipc_sdk.Frame
+.. autoclass:: neoruntime_ipc_sdk.Frame
    :members:
    :undoc-members:
    :no-index:
@@ -30,14 +30,14 @@ Frame
 StreamInfo
 ~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.StreamInfo
+.. autoclass:: neoruntime_ipc_sdk.StreamInfo
    :members:
    :undoc-members:
 
 PixelFormat
 ~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.PixelFormat
+.. autoclass:: neoruntime_ipc_sdk.PixelFormat
    :members:
    :undoc-members:
 
@@ -49,7 +49,7 @@ Getting Raw Video Stream
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import MediaClient
+   from neoruntime_ipc_sdk import MediaClient
    import cv2
 
    media = MediaClient()

@@ -16,7 +16,7 @@
    实时检测视频流中的人员，当检测到人员时发送告警事件
    """
 
-   from hailo_ipc_sdk import InferenceClient, EventClient
+   from neoruntime_ipc_sdk import InferenceClient, EventClient
    import time
    import logging
 
@@ -83,7 +83,7 @@
    统计通过检测线的车辆数量
    """
 
-   from hailo_ipc_sdk import InferenceClient, EventClient
+   from neoruntime_ipc_sdk import InferenceClient, EventClient
    import logging
 
    logging.basicConfig(level=logging.INFO)
@@ -170,7 +170,7 @@
    根据人员检测和环境光自动控制补光灯
    """
 
-   from hailo_ipc_sdk import DeviceClient, EventClient, IrCutMode
+   from neoruntime_ipc_sdk import DeviceClient, EventClient, IrCutMode
    import logging
    import time
 
@@ -255,7 +255,7 @@
    当检测到告警事件时自动录制视频片段
    """
 
-   from hailo_ipc_sdk import MediaClient, EventClient
+   from neoruntime_ipc_sdk import MediaClient, EventClient
    import cv2
    import time
    import logging
@@ -354,7 +354,7 @@
    结合人员检测、人脸识别和行为分析
    """
 
-   from hailo_ipc_sdk import InferenceClient, EventClient
+   from neoruntime_ipc_sdk import InferenceClient, EventClient
    import logging
 
    logging.basicConfig(level=logging.INFO)

@@ -9,7 +9,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="hailo-ipc-sdk",
+    name="neoruntime-ipc-sdk",
     version="0.4.0",
     author="NeoRuntime Team",
     author_email="opensource@camthink.ai",

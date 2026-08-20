@@ -7,10 +7,10 @@
 ## 镜像信息
 
 - **基础镜像**: python:3.10-slim-bookworm
-- **架构**: linux/arm64 (支持 Hailo-15, RK3588, Jetson)
+- **架构**: linux/arm64 (支持 NE503, RK3588, Jetson)
 - **SDK 版本**: 0.4.0
 - **预装依赖**:
-  - hailo-ipc-sdk
+  - neoruntime-ipc-sdk
   - numpy
   - Pillow
   - opencv-python-headless
@@ -176,7 +176,7 @@ CMD ["python3", "app.py"]
 NeoRuntime 应用示例
 """
 
-from hailo_ipc_sdk import InferenceClient, EventClient, DeviceClient
+from neoruntime_ipc_sdk import InferenceClient, EventClient, DeviceClient
 import logging
 import signal
 import sys
@@ -318,7 +318,7 @@ docker builder prune -af
 
 ```bash
 # 检查镜像
-docker run --rm registry.local/aipc-sdk:0.4.0 python3 -c "import hailo_ipc_sdk; print(hailo_ipc_sdk.__version__)"
+docker run --rm registry.local/aipc-sdk:0.4.0 python3 -c "import neoruntime_ipc_sdk; print(neoruntime_ipc_sdk.__version__)"
 
 # 进入容器调试
 docker run --rm -it registry.local/aipc-sdk:0.4.0 /bin/bash

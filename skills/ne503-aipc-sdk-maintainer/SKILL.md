@@ -1,6 +1,6 @@
 ---
 name: ne503-aipc-sdk-maintainer
-description: Maintain and evolve the NE503/NeoRuntime AIPC SDK repository. Use when Codex needs to change, review, debug, document, release, or validate the Python SDK under python/hailo_ipc_sdk, the C++ SDK under cpp/, shared protobuf interfaces under proto/, examples, tests, packaging, docs, or platform proto sync workflows.
+description: Maintain and evolve the NE503/NeoRuntime AIPC SDK repository. Use when Codex needs to change, review, debug, document, release, or validate the Python SDK under python/neoruntime_ipc_sdk, the C++ SDK under cpp/, shared protobuf interfaces under proto/, examples, tests, packaging, docs, or platform proto sync workflows.
 ---
 
 # NE503 AIPC SDK Maintainer
@@ -15,8 +15,8 @@ description: Maintain and evolve the NE503/NeoRuntime AIPC SDK repository. Use w
 ## Repository Rules
 
 - Treat `proto/` as shared interface source copied from the platform repository.
-- Do not hand-edit `python/hailo_ipc_sdk/proto/*_pb2*.py`; regenerate those stubs through `scripts/sync_platform_protos.sh`.
-- When adding or changing public Python APIs, update implementation, tests, docs/examples when relevant, and `python/hailo_ipc_sdk/__init__.py` exports if the symbol is public.
+- Do not hand-edit `python/neoruntime_ipc_sdk/proto/*_pb2*.py`; regenerate those stubs through `scripts/sync_platform_protos.sh`.
+- When adding or changing public Python APIs, update implementation, tests, docs/examples when relevant, and `python/neoruntime_ipc_sdk/__init__.py` exports if the symbol is public.
 - When adding or changing public C++ APIs, update the public header, source file, examples/tests when relevant, and keep C++17 compatibility.
 - Keep daemon-independent tests runnable on a development host. Anything requiring live UDS sockets, camera hardware, DMA-BUF fds, or platform daemons belongs in smoke/integration guidance rather than normal unit tests.
 - Keep default endpoints and environment-variable behavior aligned between Python `config.py` and C++ config code.
@@ -70,7 +70,7 @@ python -m sphinx -b html python/docs /tmp/neoruntime-sdk-docs/python/zh
 python -m sphinx -b html python/docs/en /tmp/neoruntime-sdk-docs/python/en
 ```
 
-- Keep release version values aligned between `python/setup.py`, `python/hailo_ipc_sdk/__init__.py`, README release examples, and tags such as `v0.4.0`.
+- Keep release version values aligned between `python/setup.py`, `python/neoruntime_ipc_sdk/__init__.py`, README release examples, and tags such as `v0.4.0`.
 - Release tags follow the Python SDK version. GitHub Release assets include the Python wheel and the independently versioned C++ SDK tarball.
 
 ## Validation Matrix

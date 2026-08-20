@@ -19,11 +19,11 @@
 #include <string>
 #include <vector>
 
-#include "hailo_ipc_sdk/config.hpp"
-#include "hailo_ipc_sdk/media.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/media.hpp"
 
 int main() {
-    using namespace hailo_ipc_sdk;
+    using namespace neoruntime_ipc_sdk;
 
     std::printf("=== NE503 C++ SDK media-path smoke ===\n");
     std::printf("encoded dir : %s\n", Config::get_encoded_socket_dir().c_str());

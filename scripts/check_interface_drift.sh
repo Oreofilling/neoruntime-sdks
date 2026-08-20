@@ -18,11 +18,11 @@ fi
 
 "$SCRIPT_DIR/sync_platform_protos.sh"
 
-if git diff --quiet -- proto python/hailo_ipc_sdk/proto; then
+if git diff --quiet -- proto python/neoruntime_ipc_sdk/proto; then
     echo "Interface check passed: SDK proto files match the platform repository."
     exit 0
 fi
 
 echo "ERROR: SDK proto files drifted from the platform repository." >&2
-git diff --stat -- proto python/hailo_ipc_sdk/proto >&2
+git diff --stat -- proto python/neoruntime_ipc_sdk/proto >&2
 exit 1

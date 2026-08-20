@@ -73,7 +73,7 @@ git push origin v0.4.0
 
 The GitHub Release assets are:
 
-- `hailo_ipc_sdk-0.4.0-py3-none-any.whl`
+- `neoruntime_ipc_sdk-0.4.0-py3-none-any.whl`
 - `ne503-aipc-cpp-sdk-0.1.0-linux-arm64.tar.gz`
 
 PyPI packages are not published yet. Until that channel is available, use

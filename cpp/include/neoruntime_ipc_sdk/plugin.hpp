@@ -22,7 +22,7 @@
 #include <thread>
 #include <vector>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 inline constexpr const char* kPluginDiscoveryDir = "/run/aipc/plugins";
 inline constexpr const char* kPluginDiscoveryFile = "discovery.json";
@@ -102,4 +102,4 @@ private:
     std::string socket_path_;
 };
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

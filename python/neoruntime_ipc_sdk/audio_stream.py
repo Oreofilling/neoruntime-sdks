@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Iterator, Optional
 
-logger = logging.getLogger("hailo_ipc_sdk.audio_stream")
+logger = logging.getLogger("neoruntime_ipc_sdk.audio_stream")
 
 # EncodedPublisher frame header: 30 bytes, all little-endian
 # [0:4]   uint32  total_size (header + payload)

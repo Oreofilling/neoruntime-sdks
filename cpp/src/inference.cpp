@@ -6,7 +6,7 @@
 //   * sync stubs for every RPC;
 //   * std::async for infer_async()/infer_batch_async() — the task captures its
 //     own channel/stub so it is safe even if the client is destroyed first.
-#include "hailo_ipc_sdk/inference.hpp"
+#include "neoruntime_ipc_sdk/inference.hpp"
 
 #include <grpcpp/grpcpp.h>
 
@@ -16,14 +16,14 @@
 #include <stdexcept>
 #include <utility>
 
-#include "hailo_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
 
 #include "detail/grpc_channel.hpp"
 #include "detail/tensor_io.hpp"
 #include "ai-runtime/inference.grpc.pb.h"
 #include "ai-runtime/inference.pb.h"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 namespace pb = aipc::inference;
 
@@ -719,4 +719,4 @@ void InferenceClient::genai_abort(const std::string& session_id) {
     detail::check_grpc(impl_->stub->GenaiAbort(&ctx, req, &resp), "GenaiAbort");
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

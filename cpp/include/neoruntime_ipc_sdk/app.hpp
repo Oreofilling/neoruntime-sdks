@@ -14,7 +14,7 @@
 #include <string_view>
 #include <vector>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 // Application information (mirrors app.py AppInfo / proto AppInfo).
 struct AppInfo {
@@ -109,4 +109,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

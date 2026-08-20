@@ -2,7 +2,7 @@
 //
 // Shares the camera-daemon CameraControl service (pb = aipc::camera). overlay.py
 // is a thin wrapper over the single UpdateAiOverlay(AiOverlayConfig) RPC.
-#include "hailo_ipc_sdk/overlay.hpp"
+#include "neoruntime_ipc_sdk/overlay.hpp"
 
 #include <grpcpp/grpcpp.h>
 
@@ -14,7 +14,7 @@
 #include "camera-daemon/camera.grpc.pb.h"
 #include "camera-daemon/camera.pb.h"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 namespace pb = aipc::camera;
 
@@ -110,4 +110,4 @@ void OverlayClient::apply(const OverlayConfig& config) {
     detail::require_success(resp.success(), resp.message(), "UpdateAiOverlay");
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

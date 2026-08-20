@@ -19,7 +19,7 @@
 
 #include "detail/fd_protocol.hpp"
 
-using namespace hailo_ipc_sdk::detail;
+using namespace neoruntime_ipc_sdk::detail;
 
 // ---- sizes -----------------------------------------------------------------
 TEST(WireProtocol, StructSizesMatchDeviceHeader) {

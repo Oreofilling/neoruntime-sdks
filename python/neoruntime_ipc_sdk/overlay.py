@@ -17,7 +17,7 @@ import grpc
 
 from .proto import camera_pb2, camera_pb2_grpc
 
-logger = logging.getLogger("hailo_ipc_sdk.overlay")
+logger = logging.getLogger("neoruntime_ipc_sdk.overlay")
 
 
 @dataclass
@@ -55,7 +55,7 @@ class OverlayClient:
 
     Usage::
 
-        from hailo_ipc_sdk import OverlayClient
+        from neoruntime_ipc_sdk import OverlayClient
 
         oc = OverlayClient()
 

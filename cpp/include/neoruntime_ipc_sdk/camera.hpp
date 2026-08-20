@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 // ISP image-pipeline settings. Int fields use -1 = "no change" (mirrors app.py).
 // manual_mode / auto_exposure are truly optional (proto3 optional bool).
@@ -246,4 +246,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

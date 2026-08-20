@@ -35,7 +35,7 @@ SDK文档构建已集成到NeoRuntime平台的打包和部署流程中。文档�
 
 ```bash
 cd /home/work/neoruntime
-./scripts/pack_release.sh --sdk-path /path/to/hailo-sdk
+./scripts/pack_release.sh --sdk-path /path/to/neoruntime-sdk
 
 # 生成的tarball会包含:
 # - opt/aipc/web/           # Web控制台
@@ -46,12 +46,12 @@ cd /home/work/neoruntime
 
 ```bash
 # 复制到设备
-scp build/release/aipc-hailo15-*.tar.gz root@<device>:/tmp/
+scp build/release/aipc-ne503-*.tar.gz root@<device>:/tmp/
 
 # 在设备上执行
 ssh root@<device>
-cd /tmp && tar xzf aipc-hailo15-*.tar.gz
-cd aipc-hailo15-*
+cd /tmp && tar xzf aipc-ne503-*.tar.gz
+cd aipc-ne503-*
 ./deploy.sh
 
 # 文档自动部署到 /opt/aipc/web/docs/

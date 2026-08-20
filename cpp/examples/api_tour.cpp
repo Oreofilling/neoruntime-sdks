@@ -33,17 +33,17 @@
 #include <thread>
 #include <vector>
 
-#include "hailo_ipc_sdk/app.hpp"
-#include "hailo_ipc_sdk/audio.hpp"
-#include "hailo_ipc_sdk/audio_stream.hpp"
-#include "hailo_ipc_sdk/camera.hpp"
-#include "hailo_ipc_sdk/config.hpp"
-#include "hailo_ipc_sdk/device.hpp"
-#include "hailo_ipc_sdk/events.hpp"
-#include "hailo_ipc_sdk/inference.hpp"
-#include "hailo_ipc_sdk/media.hpp"
-#include "hailo_ipc_sdk/overlay.hpp"
-#include "hailo_ipc_sdk/plugin.hpp"
+#include "neoruntime_ipc_sdk/app.hpp"
+#include "neoruntime_ipc_sdk/audio.hpp"
+#include "neoruntime_ipc_sdk/audio_stream.hpp"
+#include "neoruntime_ipc_sdk/camera.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/device.hpp"
+#include "neoruntime_ipc_sdk/events.hpp"
+#include "neoruntime_ipc_sdk/inference.hpp"
+#include "neoruntime_ipc_sdk/media.hpp"
+#include "neoruntime_ipc_sdk/overlay.hpp"
+#include "neoruntime_ipc_sdk/plugin.hpp"
 
 namespace {
 
@@ -81,7 +81,7 @@ std::string f1(float v) {
 }  // namespace
 
 int main() {
-    using namespace hailo_ipc_sdk;
+    using namespace neoruntime_ipc_sdk;
     std::printf("=== NE503 C++ SDK API tour ===\n");
 
     // ---- Config (static; no RPC) ------------------------------------------

@@ -14,13 +14,13 @@
 #include <exception>
 #include <string>
 
-#include "hailo_ipc_sdk/config.hpp"
-#include "hailo_ipc_sdk/inference.hpp"
-#include "hailo_ipc_sdk/events.hpp"
-#include "hailo_ipc_sdk/device.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/inference.hpp"
+#include "neoruntime_ipc_sdk/events.hpp"
+#include "neoruntime_ipc_sdk/device.hpp"
 
 int main() {
-    using namespace hailo_ipc_sdk;
+    using namespace neoruntime_ipc_sdk;
 
     std::printf("=== NE503 C++ SDK connectivity smoke ===\n");
     std::printf("app_id    : %s\n", Config::get_app_id().c_str());

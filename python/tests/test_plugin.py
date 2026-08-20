@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 
-from hailo_ipc_sdk import PluginDiscovery, PluginServer, PluginEndpoint
+from neoruntime_ipc_sdk import PluginDiscovery, PluginServer, PluginEndpoint
 
 
 class TestPluginEndpoint:

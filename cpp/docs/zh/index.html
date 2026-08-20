@@ -74,26 +74,26 @@
   <body>
     <p class="breadcrumb"><a href="../../">全部 SDK</a> / <a href="../en/">English</a></p>
     <h1>NeoRuntime C++ SDK</h1>
-    <p>C++ 客户端 SDK,与 Python SDK(<code>python/hailo_ipc_sdk</code>)逐模块对等;图像与张量使用 OpenCV <code>cv::Mat</code>(对应 Python 侧的 numpy)。应用运行于设备端的应用容器内,通过本机 Unix Domain Socket 与平台守护进程通信。</p>
+    <p>C++ 客户端 SDK,与 Python SDK(<code>python/neoruntime_ipc_sdk</code>)逐模块对等;图像与张量使用 OpenCV <code>cv::Mat</code>(对应 Python 侧的 numpy)。应用运行于设备端的应用容器内,通过本机 Unix Domain Socket 与平台守护进程通信。</p>
 
     <h2>模块总览</h2>
     <table>
       <thead><tr><th>头文件</th><th>客户端</th><th>用途</th></tr></thead>
       <tbody>
-        <tr><td><code>inference.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1InferenceClient.html"><code>InferenceClient</code></a></td><td>AI 推理:单帧 / 批量 / 流式订阅,模型注册与统计,GenAI(LLM/VLM)流式生成</td></tr>
-        <tr><td><code>device.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1DeviceClient.html"><code>DeviceClient</code></a></td><td>补光灯 / 红外 / IRCUT、PTZ / 变焦 / 对焦、GPIO、RS485、Wiegand、设备状态与事件</td></tr>
-        <tr><td><code>camera.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1CameraClient.html"><code>CameraClient</code></a></td><td>ISP / 编码器 / RTSP / OSD / 参数档位,相机状态</td></tr>
-        <tr><td><code>app.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1AppClient.html"><code>AppClient</code></a></td><td>应用容器生命周期、日志、统计</td></tr>
-        <tr><td><code>events.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1EventClient.html"><code>EventClient</code></a></td><td>事件总线:发布 / 订阅 / 批量 / 主题管理</td></tr>
-        <tr><td><code>media.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1FdMediaClient.html"><code>FdMediaClient</code></a></td><td>零拷贝 DMA-BUF 视频帧(fd 传递)</td></tr>
-        <tr><td><code>media.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1EncodedStreamClient.html"><code>EncodedStreamClient</code></a></td><td>H.264 / H.265 编码流</td></tr>
-        <tr><td><code>audio.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1AudioClient.html"><code>AudioClient</code></a></td><td>音频控制</td></tr>
-        <tr><td><code>audio_stream.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1AudioStreamClient.html"><code>AudioStreamClient</code></a></td><td>PCM / AAC 音频采集流</td></tr>
-        <tr><td><code>overlay.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1OverlayClient.html"><code>OverlayClient</code></a></td><td>视频叠加配置</td></tr>
-        <tr><td><code>plugin.hpp</code></td><td><a href="../en/classhailo__ipc__sdk_1_1PluginDiscovery.html"><code>PluginDiscovery</code></a> / <a href="../en/classhailo__ipc__sdk_1_1PluginServer.html"><code>PluginServer</code></a></td><td>插件端点发现与服务</td></tr>
+        <tr><td><code>inference.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1InferenceClient.html"><code>InferenceClient</code></a></td><td>AI 推理:单帧 / 批量 / 流式订阅,模型注册与统计,GenAI(LLM/VLM)流式生成</td></tr>
+        <tr><td><code>device.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1DeviceClient.html"><code>DeviceClient</code></a></td><td>补光灯 / 红外 / IRCUT、PTZ / 变焦 / 对焦、GPIO、RS485、Wiegand、设备状态与事件</td></tr>
+        <tr><td><code>camera.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1CameraClient.html"><code>CameraClient</code></a></td><td>ISP / 编码器 / RTSP / OSD / 参数档位,相机状态</td></tr>
+        <tr><td><code>app.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1AppClient.html"><code>AppClient</code></a></td><td>应用容器生命周期、日志、统计</td></tr>
+        <tr><td><code>events.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1EventClient.html"><code>EventClient</code></a></td><td>事件总线:发布 / 订阅 / 批量 / 主题管理</td></tr>
+        <tr><td><code>media.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1FdMediaClient.html"><code>FdMediaClient</code></a></td><td>零拷贝 DMA-BUF 视频帧(fd 传递)</td></tr>
+        <tr><td><code>media.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1EncodedStreamClient.html"><code>EncodedStreamClient</code></a></td><td>H.264 / H.265 编码流</td></tr>
+        <tr><td><code>audio.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1AudioClient.html"><code>AudioClient</code></a></td><td>音频控制</td></tr>
+        <tr><td><code>audio_stream.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1AudioStreamClient.html"><code>AudioStreamClient</code></a></td><td>PCM / AAC 音频采集流</td></tr>
+        <tr><td><code>overlay.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1OverlayClient.html"><code>OverlayClient</code></a></td><td>视频叠加配置</td></tr>
+        <tr><td><code>plugin.hpp</code></td><td><a href="../en/classneoruntime__ipc__sdk_1_1PluginDiscovery.html"><code>PluginDiscovery</code></a> / <a href="../en/classneoruntime__ipc__sdk_1_1PluginServer.html"><code>PluginServer</code></a></td><td>插件端点发现与服务</td></tr>
       </tbody>
     </table>
-    <p>共享值类型位于 <code>types.hpp</code>;端点与环境变量配置位于 <a href="../en/classhailo__ipc__sdk_1_1Config.html"><code>config.hpp</code></a>。</p>
+    <p>共享值类型位于 <code>types.hpp</code>;端点与环境变量配置位于 <a href="../en/classneoruntime__ipc__sdk_1_1Config.html"><code>config.hpp</code></a>。</p>
 
     <h2>底层传输</h2>
     <ul>

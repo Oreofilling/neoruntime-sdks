@@ -10,7 +10,7 @@
 #include <memory>
 #include <string>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 // AI overlay appearance. Field defaults mirror overlay.py OverlayConfig.
 struct OverlayConfig {
@@ -53,4 +53,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

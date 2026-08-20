@@ -16,7 +16,7 @@ Real-time detection of persons in a video stream with alert publishing.
    Real-time detection of persons in a video stream, sending alerts when persons are detected
    """
 
-   from hailo_ipc_sdk import InferenceClient, EventClient
+   from neoruntime_ipc_sdk import InferenceClient, EventClient
    import time
    import logging
 
@@ -83,7 +83,7 @@ Count vehicles entering and exiting.
    Count vehicles crossing a detection line
    """
 
-   from hailo_ipc_sdk import InferenceClient, EventClient
+   from neoruntime_ipc_sdk import InferenceClient, EventClient
    import logging
 
    logging.basicConfig(level=logging.INFO)
@@ -165,7 +165,7 @@ Automatically control lighting based on detection results and ambient light.
    Automatically control fill lights based on person detection and ambient light
    """
 
-   from hailo_ipc_sdk import DeviceClient, EventClient, IrCutMode
+   from neoruntime_ipc_sdk import DeviceClient, EventClient, IrCutMode
    import logging
    import time
 
@@ -248,7 +248,7 @@ Automatically record video when specific events are detected.
    Automatically record video clips when alert events are detected
    """
 
-   from hailo_ipc_sdk import MediaClient, EventClient
+   from neoruntime_ipc_sdk import MediaClient, EventClient
    import cv2
    import time
    import logging
@@ -345,7 +345,7 @@ Combine multiple AI models for comprehensive analysis.
    Combining person detection, face recognition, and behavior analysis
    """
 
-   from hailo_ipc_sdk import InferenceClient, EventClient
+   from neoruntime_ipc_sdk import InferenceClient, EventClient
    import logging
 
    logging.basicConfig(level=logging.INFO)

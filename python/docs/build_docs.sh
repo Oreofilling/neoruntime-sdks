@@ -23,7 +23,7 @@ fi
 echo "Installing documentation dependencies..."
 pip install -q -r "${DOCS_DIR}/requirements.txt"
 
-# Install SDK dependencies (required for autodoc to import hailo_ipc_sdk)
+# Install SDK dependencies (required for autodoc to import neoruntime_ipc_sdk)
 echo "Installing SDK dependencies..."
 pip install -q -e "${SCRIPT_DIR}/.."
 

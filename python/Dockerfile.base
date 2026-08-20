@@ -1,6 +1,6 @@
 # AIPC Platform SDK Base Image
 # Optimized base image for application development
-# Platform: linux/arm64 (Hailo-15, RK3588, Jetson)
+# Platform: linux/arm64 (NE503, RK3588, Jetson)
 
 FROM python:3.10-slim-bookworm
 
@@ -42,13 +42,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /tmp/sdk-install
 
 # Copy SDK source files
-COPY hailo_ipc_sdk ./hailo_ipc_sdk
+COPY neoruntime_ipc_sdk ./neoruntime_ipc_sdk
 COPY setup.py README.md requirements.txt ./
 
 # Install SDK
 RUN pip install --no-cache-dir . && \
     # Verify installation
-    python3 -c "import hailo_ipc_sdk; print(f'SDK version: {hailo_ipc_sdk.__version__}')" && \
+    python3 -c "import neoruntime_ipc_sdk; print(f'SDK version: {neoruntime_ipc_sdk.__version__}')" && \
     # Cleanup
     cd / && rm -rf /tmp/sdk-install
 
@@ -81,7 +81,7 @@ ENV APP_ID=unknown \
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python3 -c "import hailo_ipc_sdk; import sys; sys.exit(0)" || exit 1
+    CMD python3 -c "import neoruntime_ipc_sdk; import sys; sys.exit(0)" || exit 1
 
 # Switch to non-root user
 USER appuser

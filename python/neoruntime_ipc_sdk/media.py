@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional
 
 import numpy as np
 
-logger = logging.getLogger("hailo_ipc_sdk.media")
+logger = logging.getLogger("neoruntime_ipc_sdk.media")
 
 
 class PixelFormat(IntEnum):

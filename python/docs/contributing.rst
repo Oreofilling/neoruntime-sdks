@@ -40,13 +40,13 @@
 .. code-block:: bash
 
    # 格式化代码
-   black hailo_ipc_sdk tests
+   black neoruntime_ipc_sdk tests
 
    # 代码检查
-   flake8 hailo_ipc_sdk tests
+   flake8 neoruntime_ipc_sdk tests
 
    # 类型检查
-   mypy hailo_ipc_sdk
+   mypy neoruntime_ipc_sdk
 
 测试
 ----
@@ -67,7 +67,7 @@
 
 .. code-block:: bash
 
-   pytest --cov=hailo_ipc_sdk --cov-report=html tests/
+   pytest --cov=neoruntime_ipc_sdk --cov-report=html tests/
 
 提交代码
 --------

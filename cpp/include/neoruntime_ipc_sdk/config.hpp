@@ -1,6 +1,6 @@
 // config.hpp — SDK configuration from environment variables.
 //
-// 1:1 port of python/hailo_ipc_sdk/config.py. All accessors are static and
+// 1:1 port of python/neoruntime_ipc_sdk/config.py. All accessors are static and
 // read the same environment variables as the Python SDK, so a deployment can
 // configure both runtimes identically. Endpoint strings keep the gRPC
 // `unix:///path` (triple-slash) form that the C-core resolver accepts and
@@ -10,7 +10,7 @@
 #include <string>
 #include <string_view>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 class Config {
 public:
@@ -43,4 +43,4 @@ private:
     static std::string env(const char* var, std::string_view fallback);
 };
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

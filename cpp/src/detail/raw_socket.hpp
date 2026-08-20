@@ -12,7 +12,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-namespace hailo_ipc_sdk::detail {
+namespace neoruntime_ipc_sdk::detail {
 
 // Connect a blocking SOCK_STREAM to a Unix domain socket `path`. Throws
 // std::runtime_error on failure. Returns the fd (caller owns it).
@@ -78,4 +78,4 @@ inline bool set_recv_timeout(int fd, int timeout_ms) {
     return ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0;
 }
 
-}  // namespace hailo_ipc_sdk::detail
+}  // namespace neoruntime_ipc_sdk::detail

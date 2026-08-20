@@ -1,7 +1,7 @@
 插件系统 API
 ============
 
-.. automodule:: hailo_ipc_sdk.plugin
+.. automodule:: neoruntime_ipc_sdk.plugin
    :members:
    :undoc-members:
    :show-inheritance:
@@ -10,7 +10,7 @@
 PluginDiscovery
 ----------------
 
-.. autoclass:: hailo_ipc_sdk.PluginDiscovery
+.. autoclass:: neoruntime_ipc_sdk.PluginDiscovery
    :members:
    :undoc-members:
    :show-inheritance:
@@ -19,7 +19,7 @@ PluginDiscovery
 PluginServer
 ------------
 
-.. autoclass:: hailo_ipc_sdk.PluginServer
+.. autoclass:: neoruntime_ipc_sdk.PluginServer
    :members:
    :undoc-members:
    :show-inheritance:
@@ -31,7 +31,7 @@ PluginServer
 PluginEndpoint
 ~~~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.PluginEndpoint
+.. autoclass:: neoruntime_ipc_sdk.PluginEndpoint
    :members:
    :undoc-members:
 
@@ -43,7 +43,7 @@ PluginEndpoint
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import PluginDiscovery
+   from neoruntime_ipc_sdk import PluginDiscovery
 
    discovery = PluginDiscovery()
 
@@ -72,7 +72,7 @@ PluginEndpoint
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import PluginDiscovery
+   from neoruntime_ipc_sdk import PluginDiscovery
 
    discovery = PluginDiscovery()
 
@@ -88,7 +88,7 @@ PluginEndpoint
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import PluginDiscovery
+   from neoruntime_ipc_sdk import PluginDiscovery
 
    discovery = PluginDiscovery()
 
@@ -109,7 +109,7 @@ PluginEndpoint
 .. code-block:: python
 
    import grpc
-   from hailo_ipc_sdk import PluginDiscovery
+   from neoruntime_ipc_sdk import PluginDiscovery
 
    # 发现插件
    discovery = PluginDiscovery()
@@ -135,7 +135,7 @@ PluginEndpoint
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import PluginServer
+   from neoruntime_ipc_sdk import PluginServer
    from concurrent import futures
    import grpc
 
@@ -173,7 +173,7 @@ PluginEndpoint
 .. code-block:: python
 
    # my_plugin.py
-   from hailo_ipc_sdk import PluginServer, EventClient
+   from neoruntime_ipc_sdk import PluginServer, EventClient
    from my_plugin_pb2_grpc import MyPluginServiceServicer
    import logging
 
@@ -226,7 +226,7 @@ PluginEndpoint
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import PluginDiscovery
+   from neoruntime_ipc_sdk import PluginDiscovery
    import grpc
 
    # 运行时发现依赖的插件
@@ -248,7 +248,7 @@ PluginEndpoint
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import PluginDiscovery
+   from neoruntime_ipc_sdk import PluginDiscovery
 
    discovery = PluginDiscovery()
 
@@ -267,7 +267,7 @@ PluginEndpoint
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import PluginDiscovery
+   from neoruntime_ipc_sdk import PluginDiscovery
 
    discovery = PluginDiscovery()
 

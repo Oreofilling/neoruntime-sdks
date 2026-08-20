@@ -9,7 +9,7 @@
 
 #include <gtest/gtest.h>
 
-#include "hailo_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
 
 namespace {
 
@@ -42,118 +42,118 @@ private:
 // ---- app id ----------------------------------------------------------------
 TEST(Config, AppIdDefault) {
     EnvScope scope("APP_ID");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_app_id(), "unknown");
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_app_id(), "unknown");
 }
 
 TEST(Config, AppIdFromEnv) {
     EnvScope scope("APP_ID");
     scope.set("my-test-app");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_app_id(), "my-test-app");
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_app_id(), "my-test-app");
 }
 
 // Empty-string env values are treated as unset (matches Config::env contract).
 TEST(Config, AppIdEmptyEnvFallsBack) {
     EnvScope scope("APP_ID");
     scope.set("");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_app_id(), "unknown");
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_app_id(), "unknown");
 }
 
 // ---- endpoints -------------------------------------------------------------
 TEST(Config, InferenceEndpointDefault) {
     EnvScope scope("AI_RUNTIME_ENDPOINT");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_inference_endpoint(),
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_inference_endpoint(),
               "unix:///run/aipc/ai-runtime.sock");
 }
 
 TEST(Config, InferenceEndpointFromEnv) {
     EnvScope scope("AI_RUNTIME_ENDPOINT");
     scope.set("unix:///custom/ai-runtime.sock");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_inference_endpoint(),
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_inference_endpoint(),
               "unix:///custom/ai-runtime.sock");
 }
 
 TEST(Config, EventBusEndpointDefault) {
     EnvScope scope("EVENT_BUS_ENDPOINT");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_event_bus_endpoint(),
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_event_bus_endpoint(),
               "unix:///run/aipc/event-bus.sock");
 }
 
 TEST(Config, DeviceControlEndpointDefault) {
     EnvScope scope("DEVICE_CONTROL_ENDPOINT");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_device_control_endpoint(),
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_device_control_endpoint(),
               "unix:///run/aipc/device-control.sock");
 }
 
 TEST(Config, CameraControlEndpointDefault) {
     EnvScope scope("CAMERA_CONTROL_ENDPOINT");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_camera_control_endpoint(),
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_camera_control_endpoint(),
               "unix:///run/aipc/camera-control.sock");
 }
 
 TEST(Config, AppManagerEndpointDefault) {
     EnvScope scope("APP_MANAGER_ENDPOINT");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_app_manager_endpoint(),
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_app_manager_endpoint(),
               "unix:///run/aipc/app-manager.sock");
 }
 
 // ---- filesystem paths ------------------------------------------------------
 TEST(Config, ShmBasePathDefault) {
     EnvScope scope("SHM_BASE_PATH");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_shm_base_path(), "/run/aipc/shm");
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_shm_base_path(), "/run/aipc/shm");
 }
 
 TEST(Config, EncodedSocketDirDefault) {
     EnvScope scope("ENCODED_SOCKET_DIR");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_encoded_socket_dir(), "/run/aipc/encoded");
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_encoded_socket_dir(), "/run/aipc/encoded");
 }
 
 // ---- path translation ------------------------------------------------------
 TEST(Config, TranslateOptAipcToHost) {
     EnvScope scope("AIPC_HOST_PREFIX");
     scope.set("/data/aipc");
-    EXPECT_EQ(hailo_ipc_sdk::Config::translate_path_to_host("/opt/aipc/models/foo"),
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::translate_path_to_host("/opt/aipc/models/foo"),
               "/data/aipc/models/foo");
 }
 
 TEST(Config, TranslateDataAipcToHost) {
     EnvScope scope("AIPC_HOST_PREFIX");
     scope.set("/data/aipc");
-    EXPECT_EQ(hailo_ipc_sdk::Config::translate_path_to_host("/data/aipc/run/bar.sock"),
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::translate_path_to_host("/data/aipc/run/bar.sock"),
               "/data/aipc/run/bar.sock");
 }
 
 TEST(Config, TranslateUnknownPrefixUnchanged) {
     EnvScope scope("AIPC_HOST_PREFIX");
     scope.set("/data/aipc");
-    EXPECT_EQ(hailo_ipc_sdk::Config::translate_path_to_host("/tmp/elsewhere"),
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::translate_path_to_host("/tmp/elsewhere"),
               "/tmp/elsewhere");
 }
 
 // ---- debug / log level -----------------------------------------------------
 TEST(Config, IsDebugDefaultFalse) {
     EnvScope scope("DEBUG");
-    EXPECT_FALSE(hailo_ipc_sdk::Config::is_debug());
+    EXPECT_FALSE(neoruntime_ipc_sdk::Config::is_debug());
 }
 
 TEST(Config, IsDebugTrueWhenOne) {
     EnvScope scope("DEBUG");
     scope.set("1");
-    EXPECT_TRUE(hailo_ipc_sdk::Config::is_debug());
+    EXPECT_TRUE(neoruntime_ipc_sdk::Config::is_debug());
 }
 
 TEST(Config, IsDebugFalseWhenNotOne) {
     EnvScope scope("DEBUG");
     scope.set("true");  // only literal "1" is truthy, mirroring the Python check
-    EXPECT_FALSE(hailo_ipc_sdk::Config::is_debug());
+    EXPECT_FALSE(neoruntime_ipc_sdk::Config::is_debug());
 }
 
 TEST(Config, LogLevelDefault) {
     EnvScope scope("LOG_LEVEL");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_log_level(), "INFO");
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_log_level(), "INFO");
 }
 
 TEST(Config, LogLevelFromEnv) {
     EnvScope scope("LOG_LEVEL");
     scope.set("DEBUG");
-    EXPECT_EQ(hailo_ipc_sdk::Config::get_log_level(), "DEBUG");
+    EXPECT_EQ(neoruntime_ipc_sdk::Config::get_log_level(), "DEBUG");
 }

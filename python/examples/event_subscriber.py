@@ -11,7 +11,7 @@
 import time
 import signal
 import threading
-from hailo_ipc_sdk import EventClient, DeviceClient, Config, Event
+from neoruntime_ipc_sdk import EventClient, DeviceClient, Config, Event
 
 
 class EventSubscriberApp:

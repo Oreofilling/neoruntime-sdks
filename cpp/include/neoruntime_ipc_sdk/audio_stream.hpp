@@ -16,7 +16,7 @@
 #include <string>
 #include <thread>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 // One audio frame from the capture pipeline (mirrors audio_stream.py AudioFrame).
 struct AudioFrame {
@@ -63,4 +63,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

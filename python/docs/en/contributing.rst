@@ -40,13 +40,13 @@ Run checks:
 .. code-block:: bash
 
    # Format code
-   black hailo_ipc_sdk tests
+   black neoruntime_ipc_sdk tests
 
    # Lint code
-   flake8 hailo_ipc_sdk tests
+   flake8 neoruntime_ipc_sdk tests
 
    # Type check
-   mypy hailo_ipc_sdk
+   mypy neoruntime_ipc_sdk
 
 Testing
 -------
@@ -67,7 +67,7 @@ Generate coverage report:
 
 .. code-block:: bash
 
-   pytest --cov=hailo_ipc_sdk --cov-report=html tests/
+   pytest --cov=neoruntime_ipc_sdk --cov-report=html tests/
 
 Submitting Code
 ---------------

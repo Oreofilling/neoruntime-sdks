@@ -18,7 +18,7 @@ Or build and install a local wheel:
 cd neoruntime-sdks/python
 python -m pip install --upgrade build
 python -m build --wheel
-python -m pip install dist/hailo_ipc_sdk-*.whl
+python -m pip install dist/neoruntime_ipc_sdk-*.whl
 ```
 
 ## Quick Start
@@ -26,7 +26,7 @@ python -m pip install dist/hailo_ipc_sdk-*.whl
 ### 1. AI Inference
 
 ```python
-from hailo_ipc_sdk import InferenceClient
+from neoruntime_ipc_sdk import InferenceClient
 
 # Create inference client
 inf = InferenceClient()
@@ -48,7 +48,7 @@ for frame_seq, result in inf.subscribe(stream="cam0_main", model="person_v1", fp
 ### 2. Event Bus
 
 ```python
-from hailo_ipc_sdk import EventClient
+from neoruntime_ipc_sdk import EventClient
 
 events = EventClient()
 
@@ -74,7 +74,7 @@ events.on_event("app/alert", on_alert)
 ### 3. Device Control
 
 ```python
-from hailo_ipc_sdk import DeviceClient, IrCutMode
+from neoruntime_ipc_sdk import DeviceClient, IrCutMode
 
 dev = DeviceClient()
 
@@ -116,7 +116,7 @@ print(f"White light level: {status.white_light_level}")
 ### 4. Video Stream Access
 
 ```python
-from hailo_ipc_sdk import MediaClient
+from neoruntime_ipc_sdk import MediaClient
 
 media = MediaClient()
 
@@ -145,7 +145,7 @@ media.on_frame("cam0_main", process)
 ### 5. Plugin System
 
 ```python
-from hailo_ipc_sdk import PluginDiscovery, PluginServer
+from neoruntime_ipc_sdk import PluginDiscovery, PluginServer
 
 # Discover plugins
 discovery = PluginDiscovery()
@@ -169,7 +169,7 @@ grpc_server.start()
 ### 6. Complete Example: AI + Device Linkage
 
 ```python
-from hailo_ipc_sdk import InferenceClient, DeviceClient, EventClient
+from neoruntime_ipc_sdk import InferenceClient, DeviceClient, EventClient
 
 # Initialize clients
 inf = InferenceClient()
@@ -394,7 +394,7 @@ SDK automatically reads configuration from environment variables:
 
 ### Protobuf Stubs
 
-The generated protobuf stubs in `hailo_ipc_sdk/proto/` (`*_pb2.py` / `*_pb2_grpc.py`)
+The generated protobuf stubs in `neoruntime_ipc_sdk/proto/` (`*_pb2.py` / `*_pb2_grpc.py`)
 are **committed to the repo** so the SDK imports cleanly on a fresh clone, editable
 install, and inside packaged wheels. They are re-included via `sdk/python/.gitignore`
 and do not affect the global "no generated artifacts" policy for Go services.
@@ -404,7 +404,7 @@ If you change any `.proto` source, regenerate and re-commit them:
 ```bash
 make sdk-proto           # regenerate stubs (inference/event/device/app/camera)
 make sdk-proto-check     # verify committed stubs match .proto sources
-git add sdk/python/hailo_ipc_sdk/proto/*_pb2*.py
+git add sdk/python/neoruntime_ipc_sdk/proto/*_pb2*.py
 ```
 
 ### Run Tests
@@ -434,7 +434,7 @@ ls dist/*.whl
 The generated wheel is written to `dist/`, for example:
 
 ```bash
-pip install dist/hailo_ipc_sdk-*.whl
+pip install dist/neoruntime_ipc_sdk-*.whl
 ```
 
 For older tooling, this also works:

@@ -1,7 +1,7 @@
 // encoded_stream_client.cpp — EncodedStreamClient + EncodedStream.
 // Port of media.py EncodedStreamClient. Raw UDS, 30-byte little-endian header +
 // length-prefixed NALU payload (H.264/H.265).
-#include "hailo_ipc_sdk/media.hpp"
+#include "neoruntime_ipc_sdk/media.hpp"
 
 #include <chrono>
 #include <cstring>
@@ -13,7 +13,7 @@
 #include "detail/fd_protocol.hpp"
 #include "detail/raw_socket.hpp"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 using detail::EncHeader;
 using detail::connect_unix;
@@ -201,4 +201,4 @@ std::thread EncodedStreamClient::on_frame(std::function<void(const EncodedFrame&
     });
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 # ============================================================================
 # NE503 AIPC C++ SDK
 #
-# Full mirror of python/hailo_ipc_sdk. gRPC clients use sync stubs over UDS;
+# Full mirror of python/neoruntime_ipc_sdk. gRPC clients use sync stubs over UDS;
 # media/audio clients use raw UDS + SCM_RIGHTS fd-passing. See cpp/README.md.
 #
 # Native build (x86 dev host / CI):

@@ -14,7 +14,7 @@ import grpc
 from .config import Config
 from .proto import camera_pb2, camera_pb2_grpc
 
-logger = logging.getLogger("hailo_ipc_sdk.camera")
+logger = logging.getLogger("neoruntime_ipc_sdk.camera")
 
 
 # -- Data classes --

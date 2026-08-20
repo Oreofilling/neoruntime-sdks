@@ -21,9 +21,9 @@
 #include <utility>
 #include <vector>
 
-#include "hailo_ipc_sdk/types.hpp"
+#include "neoruntime_ipc_sdk/types.hpp"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 // A detected object. Bounding box is in normalized [0,1] coordinates.
 struct DetectedObject {
@@ -320,4 +320,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

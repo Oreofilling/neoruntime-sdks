@@ -9,7 +9,7 @@ import os
 import json
 from unittest.mock import Mock, patch
 
-from hailo_ipc_sdk import Frame, PixelFormat
+from neoruntime_ipc_sdk import Frame, PixelFormat
 
 
 class TestFrame:

@@ -41,7 +41,7 @@ done
 echo "=== 构建 AIPC 基础镜像 ==="
 
 # 检查 SDK wheel 是否存在
-SDK_WHEEL=$(ls "$DIST_DIR"/hailo_ipc_sdk-*.whl 2>/dev/null | head -1 || true)
+SDK_WHEEL=$(ls "$DIST_DIR"/neoruntime_ipc_sdk-*.whl 2>/dev/null | head -1 || true)
 if [ -z "$SDK_WHEEL" ]; then
     echo "错误: 未找到 SDK wheel 文件"
     echo "请先运行: ./scripts/build_sdk_wheel.sh"

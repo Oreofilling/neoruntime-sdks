@@ -22,11 +22,11 @@ PACKAGE_DIR="${TEMP_DIR}/${PACKAGE_NAME}"
 echo "Packaging to: ${PACKAGE_DIR}"
 
 # Copy files
-mkdir -p "${PACKAGE_DIR}/hailo_ipc_sdk"
+mkdir -p "${PACKAGE_DIR}/neoruntime_ipc_sdk"
 mkdir -p "${PACKAGE_DIR}/examples"
 mkdir -p "${PACKAGE_DIR}/tests"
 
-cp -r "${SDK_DIR}/hailo_ipc_sdk/"* "${PACKAGE_DIR}/hailo_ipc_sdk/"
+cp -r "${SDK_DIR}/neoruntime_ipc_sdk/"* "${PACKAGE_DIR}/neoruntime_ipc_sdk/"
 cp -r "${SDK_DIR}/examples/"* "${PACKAGE_DIR}/examples/"
 cp -r "${SDK_DIR}/tests/"* "${PACKAGE_DIR}/tests/"
 

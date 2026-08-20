@@ -47,7 +47,7 @@ verify the artifact:
 
 .. code-block:: bash
 
-   python -m pip install dist/hailo_ipc_sdk-*.whl
+   python -m pip install dist/neoruntime_ipc_sdk-*.whl
 
 GitHub Actions Wheel Artifacts
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -63,22 +63,22 @@ Planned Package Channels
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 PyPI and tarball packages are not published yet. Do not use
-``pip install hailo-ipc-sdk`` or tarball URLs until those release channels are
+``pip install neoruntime-ipc-sdk`` or tarball URLs until those release channels are
 announced.
 
 When PyPI publishing is enabled, installation will use:
 
 .. code-block:: bash
 
-   python -m pip install hailo-ipc-sdk
+   python -m pip install neoruntime-ipc-sdk
 
 Verify Installation
 -------------------
 
 .. code-block:: python
 
-   import hailo_ipc_sdk
-   print(hailo_ipc_sdk.__version__)
+   import neoruntime_ipc_sdk
+   print(neoruntime_ipc_sdk.__version__)
    # Output: 0.4.0
 
 Development Environment
@@ -117,8 +117,8 @@ Or build your own image:
 .. code-block:: dockerfile
 
    FROM python:3.10-slim
-   COPY hailo_ipc_sdk-0.4.0-py3-none-any.whl /tmp/
-   RUN python -m pip install --no-cache-dir /tmp/hailo_ipc_sdk-0.4.0-py3-none-any.whl
+   COPY neoruntime_ipc_sdk-0.4.0-py3-none-any.whl /tmp/
+   RUN python -m pip install --no-cache-dir /tmp/neoruntime_ipc_sdk-0.4.0-py3-none-any.whl
    WORKDIR /app
    COPY app.py .
    CMD ["python3", "app.py"]

@@ -26,9 +26,9 @@
 #include <thread>
 #include <vector>
 
-#include "hailo_ipc_sdk/types.hpp"
+#include "neoruntime_ipc_sdk/types.hpp"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 // One decoded video frame. `image` is a cv::Mat whose layout depends on `format`
 // (e.g. NV12 is H*3/2 x W single-channel; RGB is H x W x 3). to_rgb() converts to
@@ -176,4 +176,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

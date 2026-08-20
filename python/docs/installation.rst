@@ -46,7 +46,7 @@ SDK 暂未发布到 PyPI。当前请从公开仓库源码安装：
 
 .. code-block:: bash
 
-   python -m pip install dist/hailo_ipc_sdk-*.whl
+   python -m pip install dist/neoruntime_ipc_sdk-*.whl
 
 GitHub Actions Wheel Artifact
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -62,21 +62,21 @@ GitHub Actions Wheel Artifact
 ~~~~~~~~~~~~~~~~
 
 PyPI 和 tarball 包目前尚未发布。在正式公告前，不要使用
-``pip install hailo-ipc-sdk`` 或 tarball URL。
+``pip install neoruntime-ipc-sdk`` 或 tarball URL。
 
 后续启用 PyPI 发布后，安装方式会是：
 
 .. code-block:: bash
 
-   python -m pip install hailo-ipc-sdk
+   python -m pip install neoruntime-ipc-sdk
 
 验证安装
 --------
 
 .. code-block:: python
 
-   import hailo_ipc_sdk
-   print(hailo_ipc_sdk.__version__)
+   import neoruntime_ipc_sdk
+   print(neoruntime_ipc_sdk.__version__)
    # 输出: 0.4.0
 
 开发环境安装
@@ -115,8 +115,8 @@ Docker 环境
 .. code-block:: dockerfile
 
    FROM python:3.10-slim
-   COPY hailo_ipc_sdk-0.4.0-py3-none-any.whl /tmp/
-   RUN python -m pip install --no-cache-dir /tmp/hailo_ipc_sdk-0.4.0-py3-none-any.whl
+   COPY neoruntime_ipc_sdk-0.4.0-py3-none-any.whl /tmp/
+   RUN python -m pip install --no-cache-dir /tmp/neoruntime_ipc_sdk-0.4.0-py3-none-any.whl
    WORKDIR /app
    COPY app.py .
    CMD ["python3", "app.py"]

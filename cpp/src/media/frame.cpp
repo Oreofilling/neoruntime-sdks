@@ -1,6 +1,6 @@
 // frame.cpp — Frame color conversions and persistence.
 // Port of media.py Frame.to_rgb() / Frame.save().
-#include "hailo_ipc_sdk/media.hpp"
+#include "neoruntime_ipc_sdk/media.hpp"
 
 #include <stdexcept>
 #include <string>
@@ -8,7 +8,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 cv::Mat Frame::to_rgb() const {
     if (image.empty()) {
@@ -85,4 +85,4 @@ std::string EncodedFrame::codec_name() const {
     }
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

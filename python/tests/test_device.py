@@ -5,7 +5,7 @@ Tests for DeviceClient
 import pytest
 from unittest.mock import Mock, patch
 
-from hailo_ipc_sdk import DeviceClient, IrCutMode
+from neoruntime_ipc_sdk import DeviceClient, IrCutMode
 
 
 class TestIrCutMode:
@@ -28,7 +28,7 @@ class TestDeviceClient:
         with DeviceClient() as client:
             assert client.channel is not None
     
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_connect(self, mock_channel):
         client = DeviceClient()
         client.connect()
@@ -38,7 +38,7 @@ class TestDeviceClient:
 
 
 class TestDeviceClientLight:
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_set_white_light(self, mock_channel):
         mock_stub = Mock()
         mock_stub.SetWhiteLight.return_value = Mock(success=True, message="")
@@ -52,7 +52,7 @@ class TestDeviceClientLight:
         call_args = mock_stub.SetWhiteLight.call_args
         assert call_args[0][0].level == 80
     
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_set_ir_led(self, mock_channel):
         mock_stub = Mock()
         mock_stub.SetIrLed.return_value = Mock(success=True, message="")
@@ -66,7 +66,7 @@ class TestDeviceClientLight:
         call_args = mock_stub.SetIrLed.call_args
         assert call_args[0][0].on is True
     
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_set_ircut(self, mock_channel):
         mock_stub = Mock()
         mock_stub.SetIrCut.return_value = Mock(success=True, message="")
@@ -82,7 +82,7 @@ class TestDeviceClientLight:
 
 
 class TestDeviceClientPTZ:
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_pan_left(self, mock_channel):
         mock_stub = Mock()
         mock_stub.Pan.return_value = Mock(success=True, message="")
@@ -94,7 +94,7 @@ class TestDeviceClientPTZ:
         
         mock_stub.Pan.assert_called_once()
     
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_tilt_up(self, mock_channel):
         mock_stub = Mock()
         mock_stub.Tilt.return_value = Mock(success=True, message="")
@@ -106,7 +106,7 @@ class TestDeviceClientPTZ:
         
         mock_stub.Tilt.assert_called_once()
     
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_ptz_stop(self, mock_channel):
         mock_stub = Mock()
         mock_stub.PTZStop.return_value = Mock(success=True, message="")
@@ -118,7 +118,7 @@ class TestDeviceClientPTZ:
         
         mock_stub.PTZStop.assert_called_once()
     
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_save_preset(self, mock_channel):
         mock_stub = Mock()
         mock_stub.SavePreset.return_value = Mock(success=True, message="")
@@ -132,7 +132,7 @@ class TestDeviceClientPTZ:
         call_args = mock_stub.SavePreset.call_args
         assert call_args[0][0].preset_id == 5
     
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_call_preset(self, mock_channel):
         mock_stub = Mock()
         mock_stub.CallPreset.return_value = Mock(success=True, message="")
@@ -148,7 +148,7 @@ class TestDeviceClientPTZ:
 
 
 class TestDeviceClientLens:
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_zoom_in(self, mock_channel):
         mock_stub = Mock()
         mock_stub.Zoom.return_value = Mock(success=True, message="")
@@ -162,7 +162,7 @@ class TestDeviceClientLens:
         call_args = mock_stub.Zoom.call_args
         assert call_args[0][0].speed == 50
     
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_zoom_out(self, mock_channel):
         mock_stub = Mock()
         mock_stub.Zoom.return_value = Mock(success=True, message="")
@@ -176,7 +176,7 @@ class TestDeviceClientLens:
         call_args = mock_stub.Zoom.call_args
         assert call_args[0][0].speed == -30
     
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_focus_auto(self, mock_channel):
         mock_stub = Mock()
         mock_stub.SetAutofocus.return_value = Mock(success=True, message="")
@@ -190,7 +190,7 @@ class TestDeviceClientLens:
 
 
 class TestDeviceClientGPIO:
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_gpio_set(self, mock_channel):
         mock_stub = Mock()
         mock_stub.GPIOWrite.return_value = Mock(success=True, message="")
@@ -205,7 +205,7 @@ class TestDeviceClientGPIO:
         assert call_args[0][0].pin == 10
         assert call_args[0][0].value is True
     
-    @patch('hailo_ipc_sdk.device.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
     def test_gpio_get(self, mock_channel):
         mock_stub = Mock()
         mock_stub.GPIORead.return_value = Mock(

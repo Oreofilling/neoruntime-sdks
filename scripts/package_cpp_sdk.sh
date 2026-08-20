@@ -61,7 +61,7 @@ cat > "$doc_dir/VERSION" <<EOF
 name=ne503-aipc-cpp-sdk
 version=$CPP_VERSION
 platform=$PACKAGE_PLATFORM
-mirrored_python_sdk=$(sed -n 's/.*kMirroredPythonSdk\[\] = "\([^"]*\)".*/\1/p' "$REPO_ROOT/cpp/include/hailo_ipc_sdk/version.hpp" | head -1)
+mirrored_python_sdk=$(sed -n 's/.*kMirroredPythonSdk\[\] = "\([^"]*\)".*/\1/p' "$REPO_ROOT/cpp/include/neoruntime_ipc_sdk/version.hpp" | head -1)
 EOF
 
 tarball="$OUTPUT_DIR/$PACKAGE_NAME.tar.gz"

@@ -180,9 +180,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          wheel="$(ls dist/hailo_ipc_sdk-*.whl | head -1)"
+          wheel="$(ls dist/neoruntime_ipc_sdk-*.whl | head -1)"
           cpp_tarball="$(ls dist/ne503-aipc-cpp-sdk-*.tar.gz | head -1)"
-          version="$(basename "$wheel" | sed -E 's/^hailo_ipc_sdk-([^-]+)-.*/\1/')"
+          version="$(basename "$wheel" | sed -E 's/^neoruntime_ipc_sdk-([^-]+)-.*/\1/')"
 
           tag_name="$GITHUB_REF_NAME"
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then

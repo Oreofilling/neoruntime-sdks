@@ -11,10 +11,10 @@
 #include <string>
 #include <string_view>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 // Pixel formats used by the video media path. Mirrors
-// python/hailo_ipc_sdk/media.py PixelFormat exactly (do not renumber).
+// python/neoruntime_ipc_sdk/media.py PixelFormat exactly (do not renumber).
 enum class PixelFormat : int {
     NV12  = 0,
     NV21  = 1,
@@ -85,4 +85,4 @@ inline constexpr const char* data_type_name(DataType dt) noexcept {
     return "unknown";
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

@@ -4,7 +4,7 @@
 // discovery.json is re-parsed on demand. The only gRPC touchpoints are
 // PluginEndpoint::connect() (builds a Channel to a plugin's UDS) and
 // PluginServer::build_and_start() (binds a Server on the plugin's UDS).
-#include "hailo_ipc_sdk/plugin.hpp"
+#include "neoruntime_ipc_sdk/plugin.hpp"
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/server_builder.h>
@@ -28,7 +28,7 @@
 #include "detail/endpoint.hpp"
 #include "detail/grpc_channel.hpp"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 namespace {
 
@@ -264,4 +264,4 @@ void PluginServer::cleanup(const std::string& socket_path) {
     ::unlink(socket_path.c_str());
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

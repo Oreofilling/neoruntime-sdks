@@ -3,14 +3,14 @@
 # Generate HTML API docs (consumed by the cpp/en + cpp/zh Sphinx pages already
 # stubbed in docs/):
 #   doxygen cpp/docs/Doxyfile
-# Output lands in cpp/docs/html. The public API (cpp/include/hailo_ipc_sdk/*.hpp)
+# Output lands in cpp/docs/html. The public API (cpp/include/neoruntime_ipc_sdk/*.hpp)
 # is the primary input; the internal src/detail/*.hpp helpers are included so
 # their doc comments render under a "detail" namespace page for contributors.
 # Run `doxygen -g cpp/docs/Doxyfile` to regenerate defaults if migrating.
 
 PROJECT_NAME           = "NeoRuntime C++ SDK"
 PROJECT_NUMBER         = 0.1.0
-PROJECT_BRIEF          = "C++ client SDK for the NeoRuntime edge-AI camera platform (full mirror of hailo_ipc_sdk)"
+PROJECT_BRIEF          = "C++ client SDK for the NeoRuntime edge-AI camera platform (full mirror of neoruntime_ipc_sdk)"
 
 # ---- Input / output --------------------------------------------------------
 INPUT                  = ../include ../src

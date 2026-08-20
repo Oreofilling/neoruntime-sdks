@@ -1,6 +1,6 @@
 name: C++ SDK
 
-# CI for the C++ mirror of hailo_ipc_sdk (see cpp/README.md and the plan).
+# CI for the C++ mirror of neoruntime_ipc_sdk (see cpp/README.md and the plan).
 #
 #   native       — x86_64 build of the static lib + examples, then the
 #                  daemon-independent GoogleTest suite via ctest. Runs on every

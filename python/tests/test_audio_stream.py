@@ -5,7 +5,7 @@ AudioFrame.
 
 import struct
 
-from hailo_ipc_sdk.audio_stream import AudioFrame, decode_audio_format
+from neoruntime_ipc_sdk.audio_stream import AudioFrame, decode_audio_format
 
 
 # Raw 30-byte header of frame 0 captured on a live NE503 (192.168.93.72,

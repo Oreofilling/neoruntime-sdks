@@ -5,7 +5,7 @@
 // the client and the platform daemon run on the same aarch64 host (both LE), so a
 // plain memcpy is correct — there is no cross-endian exchange over a UDS.
 //
-// Faithful to python/hailo_ipc_sdk/media.py struct format strings:
+// Faithful to python/neoruntime_ipc_sdk/media.py struct format strings:
 //   _HDR_FMT   "<II"                 -> FdPubMsgHeader       (8 B)
 //   _SUB_FMT   "<II I 64s"           -> FdPubSubscribeMsg    (76 B)
 //   _FRAME_FMT "<II QQQ IIII 3I 3I I 4x" -> FdPubFrameMsg    (80 B, incl. 4 pad)
@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-namespace hailo_ipc_sdk::detail {
+namespace neoruntime_ipc_sdk::detail {
 
 // ---- FdPublisher protocol message types (must match fd_protocol.h) ----------
 inline constexpr std::uint32_t FD_PUB_MSG_SUBSCRIBE   = 1;
@@ -117,7 +117,7 @@ static_assert(sizeof(AudioEncHeader) == 30, "wire layout: AudioEncHeader");
 // the tail for audio plausibility and, when that fails, re-reads it as the
 // video tail and reports format parameters as unknown (0). A future daemon that
 // fills the audio layout is picked up automatically. Mirrors
-// python/hailo_ipc_sdk/audio_stream.py decode_audio_format().
+// python/neoruntime_ipc_sdk/audio_stream.py decode_audio_format().
 
 struct AudioFormatFields {
     std::uint32_t sample_rate = 0;      // 0 = unknown (video-layout fallback)
@@ -151,4 +151,4 @@ inline AudioFormatFields decode_audio_format(const AudioEncHeader& hdr,
                 (static_cast<std::uint64_t>(hdr.frame_size) << 32)};
 }
 
-}  // namespace hailo_ipc_sdk::detail
+}  // namespace neoruntime_ipc_sdk::detail

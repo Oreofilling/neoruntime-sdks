@@ -22,7 +22,7 @@ NeoRuntime Platform 提供以下核心服务：
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import InferenceClient, EventClient
+   from neoruntime_ipc_sdk import InferenceClient, EventClient
    import time
 
    def main():
@@ -75,7 +75,7 @@ SDK 通过环境变量配置连接参数：
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import Config
+   from neoruntime_ipc_sdk import Config
 
    config = Config(
        app_id="my_app",
@@ -94,7 +94,7 @@ AI 推理
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import InferenceClient
+   from neoruntime_ipc_sdk import InferenceClient
    import numpy as np
 
    inf = InferenceClient()
@@ -144,7 +144,7 @@ AI 推理
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import EventClient
+   from neoruntime_ipc_sdk import EventClient
 
    events = EventClient()
 
@@ -187,7 +187,7 @@ AI 推理
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import DeviceClient, IrCutMode
+   from neoruntime_ipc_sdk import DeviceClient, IrCutMode
 
    dev = DeviceClient()
 
@@ -231,7 +231,7 @@ GPIO 控制
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import MediaClient, PixelFormat
+   from neoruntime_ipc_sdk import MediaClient, PixelFormat
 
    media = MediaClient()
 
@@ -252,7 +252,7 @@ SDK 使用标准的 Python 异常：
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import InferenceClient
+   from neoruntime_ipc_sdk import InferenceClient
    from grpc import RpcError
 
    inf = InferenceClient()
@@ -279,7 +279,7 @@ SDK 使用 Python 标准 logging 模块：
    logging.basicConfig(level=logging.DEBUG)
 
    # 或者只设置 SDK 日志
-   logger = logging.getLogger('hailo_ipc_sdk')
+   logger = logging.getLogger('neoruntime_ipc_sdk')
    logger.setLevel(logging.DEBUG)
 
 下一步

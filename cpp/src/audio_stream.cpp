@@ -2,7 +2,7 @@
 //
 // Port of audio_stream.py. Raw UDS reader using the shared detail raw-socket
 // helpers and the AudioEncHeader packed struct (30-byte audio frame header).
-#include "hailo_ipc_sdk/audio_stream.hpp"
+#include "neoruntime_ipc_sdk/audio_stream.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -23,7 +23,7 @@
 #include "detail/fd_protocol.hpp"
 #include "detail/raw_socket.hpp"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 namespace {
 
@@ -183,4 +183,4 @@ void AudioStreamClient::close() {
     }
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

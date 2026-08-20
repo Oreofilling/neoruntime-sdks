@@ -1,4 +1,4 @@
-"""Test suite for hailo_ipc_sdk"""
+"""Test suite for neoruntime_ipc_sdk"""
 
 from .test_inference import *
 from .test_events import *
