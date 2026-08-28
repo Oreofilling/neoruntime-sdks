@@ -4,7 +4,21 @@ Python SDK for NeoRuntime EdgeCam AI Platform
 
 ## Installation
 
-The SDK is not published to PyPI yet. Install it from this repository:
+Install from PyPI:
+
+```bash
+python -m pip install neoruntime-ipc-sdk
+```
+
+Pre-release builds are staged on TestPyPI for validation (dependencies still
+come from PyPI):
+
+```bash
+python -m pip install --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ neoruntime-ipc-sdk
+```
+
+Install from source:
 
 ```bash
 git clone https://github.com/camthink-ai/neoruntime-sdks.git

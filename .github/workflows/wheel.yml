@@ -18,6 +18,16 @@ on:
         description: Release tag to publish. Defaults to v<python/setup.py version>.
         required: false
         type: string
+      publish_testpypi:
+        description: Upload the built Python distributions to TestPyPI via Trusted Publishing.
+        required: false
+        type: boolean
+        default: false
+      publish_pypi:
+        description: Upload the built Python distributions to PyPI (requires pypi environment approval).
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -61,6 +71,16 @@ jobs:
               sys.exit("Could not find version in python/setup.py")
 
           package_version = match.group(1)
+
+          init_py = pathlib.Path("python/neoruntime_ipc_sdk/__init__.py").read_text(encoding="utf-8")
+          init_match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', init_py)
+          if not init_match:
+              sys.exit("Could not find __version__ in python/neoruntime_ipc_sdk/__init__.py")
+          if init_match.group(1) != package_version:
+              sys.exit(
+                  f"python/neoruntime_ipc_sdk/__init__.py version {init_match.group(1)} "
+                  f"does not match python/setup.py version {package_version}"
+              )
           release_tag = os.environ.get("RELEASE_TAG", "").strip()
           if not release_tag and os.environ.get("GITHUB_REF_TYPE") == "tag":
               release_tag = os.environ["GITHUB_REF_NAME"]
@@ -77,34 +97,44 @@ jobs:
           print(f"Release tag: {release_tag}")
           PY
 
-      - name: Build wheel
+      - name: Build distributions
         run: |
+          rm -rf python/dist
           cd python
-          python -m build --wheel
+          python -m build
 
-      - name: Inspect wheel
+      - name: Inspect distributions
         run: |
           python - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile
 
-          wheels = list(Path("python/dist").glob("*.whl"))
-          if len(wheels) != 1:
-              raise SystemExit(f"Expected one wheel, found {len(wheels)}")
+          dist = Path("python/dist")
+          wheels = list(dist.glob("*.whl"))
+          sdists = list(dist.glob("*.tar.gz"))
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(
+                  f"Expected one wheel and one sdist, found {len(wheels)} wheel(s) and {len(sdists)} sdist(s)"
+              )
 
           with ZipFile(wheels[0]) as wheel:
               names = wheel.namelist()
           if any(name.startswith("tests/") for name in names):
               raise SystemExit("Wheel unexpectedly contains tests/")
+          if not any(name.startswith("neoruntime_ipc_sdk/proto/") for name in names):
+              raise SystemExit("Wheel is missing neoruntime_ipc_sdk/proto/")
 
           print(wheels[0])
+          print(sdists[0])
           PY
 
-      - name: Upload wheel artifact
+      - name: Upload Python distributions
         uses: actions/upload-artifact@v4
         with:
-          name: python-sdk-wheel
-          path: python/dist/*.whl
+          name: python-sdk-dist
+          path: |
+            python/dist/*.whl
+            python/dist/*.tar.gz
           if-no-files-found: error
 
   build-cpp-tarball:
@@ -163,10 +193,10 @@ jobs:
       contents: write
 
     steps:
-      - name: Download wheel artifact
+      - name: Download Python distributions
         uses: actions/download-artifact@v4
         with:
-          name: python-sdk-wheel
+          name: python-sdk-dist
           path: dist
 
       - name: Download C++ SDK tarball artifact
@@ -181,6 +211,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           wheel="$(ls dist/neoruntime_ipc_sdk-*.whl | head -1)"
+          sdist="$(ls dist/neoruntime_ipc_sdk-*.tar.gz | head -1)"
           cpp_tarball="$(ls dist/ne503-aipc-cpp-sdk-*.tar.gz | head -1)"
           version="$(basename "$wheel" | sed -E 's/^neoruntime_ipc_sdk-([^-]+)-.*/\1/')"
 
@@ -202,13 +233,104 @@ jobs:
           fi
 
           if gh release view "$tag_name" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag_name" "$wheel" "$cpp_tarball" \
+            gh release upload "$tag_name" "$wheel" "$sdist" "$cpp_tarball" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
           else
-            gh release create "$tag_name" "$wheel" "$cpp_tarball" \
+            gh release create "$tag_name" "$wheel" "$sdist" "$cpp_tarball" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "$tag_name" \
-              --notes "SDK release $tag_name: Python wheel and C++ SDK tarball."
+              --notes "SDK release $tag_name: Python distributions (wheel + sdist) and C++ SDK tarball."
           fi
+
+  publish-testpypi:
+    needs:
+      - build-wheel
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_testpypi)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: testpypi
+
+    steps:
+      - name: Download Python distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdk-dist
+          path: dist
+          if-no-files-found: error
+
+      - name: Verify distributions
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          if [ "${#wheels[@]}" -ne 1 ] || [ "${#sdists[@]}" -ne 1 ]; then
+            echo "Expected exactly one wheel and one sdist in dist/" >&2
+            ls -la dist >&2
+            exit 1
+          fi
+          version="$(basename "${wheels[0]}" | sed -E 's/^neoruntime_ipc_sdk-([^-]+)-.*/\1/')"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+              echo "Tag $GITHUB_REF_NAME does not match wheel version $version" >&2
+              exit 1
+            fi
+          fi
+          echo "Publishing neoruntime-ipc-sdk $version to TestPyPI"
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          print-hash: true
+
+  publish-pypi:
+    needs:
+      - build-wheel
+      - publish-testpypi
+    if: ${{ !cancelled() && !failure() && ((startsWith(github.ref, 'refs/tags/v') && needs.publish-testpypi.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.publish_pypi)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: pypi
+
+    steps:
+      - name: Download Python distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdk-dist
+          path: dist
+          if-no-files-found: error
+
+      - name: Verify distributions
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          if [ "${#wheels[@]}" -ne 1 ] || [ "${#sdists[@]}" -ne 1 ]; then
+            echo "Expected exactly one wheel and one sdist in dist/" >&2
+            ls -la dist >&2
+            exit 1
+          fi
+          version="$(basename "${wheels[0]}" | sed -E 's/^neoruntime_ipc_sdk-([^-]+)-.*/\1/')"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+              echo "Tag $GITHUB_REF_NAME does not match wheel version $version" >&2
+              exit 1
+            fi
+          fi
+          echo "Publishing neoruntime-ipc-sdk $version to PyPI"
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://upload.pypi.org/legacy/
+          print-hash: true

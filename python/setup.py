@@ -17,6 +17,11 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/camthink-ai/neoruntime-sdks/tree/main/python",
+    project_urls={
+        "Source": "https://github.com/camthink-ai/neoruntime-sdks",
+        "Bug Tracker": "https://github.com/camthink-ai/neoruntime-sdks/issues",
+        "Documentation": "https://camthink-ai.github.io/neoruntime-sdks/python/en/",
+    },
     packages=find_packages(exclude=("tests", "tests.*")),
     classifiers=[
         "Development Status :: 3 - Alpha",
