@@ -10,9 +10,11 @@ Provides clean API to access platform capabilities:
 - Camera control (ISP, encoder, RTSP, OSD, profiles)
 - App container management
 - AI overlay control (detection boxes on RTSP/Web)
+- App toolkit: frame crop/resize/JPEG, detection drawing, TS/HLS
+  recording, MJPEG serving
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 from .app import (
     AppClient,
@@ -35,18 +37,29 @@ from .camera import (
     EncoderReconfigResult,
     EnvStatus,
     HardwareStatus,
+    InfraredStatus,
+    IrPreset,
     ISPConfig,
     PipelineStreamConfig,
+    PrivacyMaskSettings,
     SensorInfo,
     StreamStatus,
     TransformConfig,
 )
 from .config import Config
 from .device import (
+    AfJob,
+    AfMeasurement,
+    AfStatus,
     DeviceClient,
     DeviceEvent,
     DeviceStatus,
     IrCutMode,
+)
+from .draw import (
+    draw_boxes,
+    draw_detections,
+    draw_text,
 )
 from .events import (
     Event,
@@ -81,6 +94,16 @@ from .overlay import (
     OverlayConfig,
 )
 from .plugin import PluginDiscovery, PluginEndpoint, PluginServer
+from .recording import (
+    HlsWriter,
+    PrerollBuffer,
+    TsWriter,
+)
+from .web import (
+    MjpegServer,
+    MjpegStream,
+    mjpeg_wsgi_app,
+)
 
 __all__ = [
     # Version
@@ -115,6 +138,20 @@ __all__ = [
     "DeviceStatus",
     "DeviceEvent",
     "IrCutMode",
+    # Autofocus (device)
+    "AfJob",
+    "AfStatus",
+    "AfMeasurement",
+    # App toolkit: draw / recording / web
+    "draw_boxes",
+    "draw_text",
+    "draw_detections",
+    "TsWriter",
+    "HlsWriter",
+    "PrerollBuffer",
+    "MjpegStream",
+    "mjpeg_wsgi_app",
+    "MjpegServer",
     # Config & Plugin
     "Config",
     "PluginDiscovery",
@@ -146,4 +183,8 @@ __all__ = [
     "HardwareStatus",
     "PipelineStreamConfig",
     "EnvStatus",
+    # Imaging / infrared / privacy mask (camera)
+    "InfraredStatus",
+    "IrPreset",
+    "PrivacyMaskSettings",
 ]

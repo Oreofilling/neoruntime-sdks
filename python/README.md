@@ -211,6 +211,43 @@ for frame_seq, result in inf.subscribe(stream="cam0_main", model="person_v1"):
         dev.set_white_light(0)
 ```
 
+### 7. App Toolkit: Drawing, Recording, and Web Streaming
+
+Detection visualization on a live frame (pure numpy/PIL, cv2 optional):
+
+```python
+from neoruntime_ipc_sdk import FdMediaClient, draw_detections
+
+frame = FdMediaClient().get_frame("main")
+img = frame.crop(0, 0, 1920, 1080).resize(960, 540).to_rgb()
+
+for seq, result in inf.subscribe(stream="cam0_main", model="person_v1"):
+    annotated = draw_detections(img, result)      # boxes + labels + scores
+    break
+```
+
+HLS recording from the encoded stream — no ffmpeg on the device needed:
+
+```python
+from neoruntime_ipc_sdk import EncodedStreamClient, HlsWriter
+
+with HlsWriter("/srv/hls", segment_seconds=4.0, window=5) as hls:
+    for frame in EncodedStreamClient("/run/aipc/encoded/main.sock").subscribe():
+        hls.write(frame)                          # cuts on keyframes
+# serve /srv/hls/ over HTTP and point hls.js at index.m3u8
+```
+
+MJPEG preview page — one WSGI app (mount in Flask) or a standalone server:
+
+```python
+from neoruntime_ipc_sdk import FdMediaClient, MjpegServer, MjpegStream
+
+source = MjpegStream()
+MjpegServer(port=8080, source=source).start()     # http://device:8080/
+for frame in FdMediaClient().subscribe("sub"):
+    source.push_frame(frame.resize(640, 360))     # slow clients just drop frames
+```
+
 ## API Reference
 
 ### InferenceClient
@@ -295,6 +332,21 @@ Device control client for controlling camera peripherals.
 - `set_iris_target(target: int)` - Set iris target value
 - `get_lens_status()` - Get lens status dict (positions, states, limits)
 
+**Autofocus (native jobs):**
+- `start_oneshot_af()` - Start a one-shot AF job, returns `AfJob`
+- `start_zoom_follow(ratio: float)` - Start continuous AF following a zoom ratio, returns `AfJob`
+- `get_autofocus_status()` - Poll the AF engine, returns `AfStatus(state, progress, busy, ...)`
+- `cancel_autofocus(job_id: int = 0)` - Cancel a running AF job
+- `set_af_windows(enabled, windows, stream_id: str = "main")` - Restrict AF metering to windows
+- `get_af_measurement()` - Read AF statistics, returns `AfMeasurement(focus_energy, mean_luma, ...)`
+
+> **Known device limitation:** on current firmware (verified on
+> 192.168.93.72, 2026-08) the lens HAL bridge rejects `set_af_windows`
+> and `get_af_measurement` with *"not yet supported"*. The SDK-side
+> plumbing is complete; both calls will start working once the device
+> firmware adds bridge support. Oneshot, zoom-follow, status, and cancel
+> all work today.
+
 **GPIO:**
 - `gpio_set(pin: int, value: bool)` - GPIO output
 - `gpio_get(pin: int)` - GPIO input
@@ -354,8 +406,35 @@ Video stream client for accessing video frames from shared memory.
 **Data Classes:**
 
 - `Frame`: sequence, timestamp_ns, width, height, format, image, metadata
+- `Frame.crop(x, y, w, h)` - New cropped Frame (NV12 needs even x/y/w/h)
+- `Frame.resize(width, height, mode="letterbox", pad_value=114)` - New resized Frame (`stretch` / `letterbox` / `crop`)
+- `Frame.to_jpeg_bytes(quality=85)` - JPEG bytes (cv2 fast path, PIL fallback)
 - `StreamInfo`: stream_id, width, height, format, fps, buffer_count
 - `PixelFormat`: NV12, NV21, RGB, BGR, RGBA, BGRA, GRAY8, YUYV
+
+### Recording (`recording`)
+
+Pure-python MPEG-TS muxing of `EncodedFrame` Annex-B payloads — no ffmpeg required.
+
+- `TsWriter(path, codec="h264")` - Single-file .ts event clip
+- `HlsWriter(out_dir, segment_seconds=6.0, window=5)` - Keyframe-aligned HLS segments + live `index.m3u8`
+- `PrerollBuffer(seconds=10.0)` - Ring buffer; `push(frame)`, `dump("event.ts")` writes "seconds before the event"
+
+### Web Streaming (`web`)
+
+MJPEG helpers for app preview pages.
+
+- `MjpegStream()` - Thread-safe latest-frame holder; `push_frame(frame, quality=85)` / `push_jpeg(data)`
+- `mjpeg_wsgi_app(source, fps=15)` - WSGI callable — mount straight into Flask
+- `MjpegServer(port=8080, host="0.0.0.0", source=...)` - Standalone threaded HTTP server
+
+### Drawing (`draw`)
+
+Detection visualization on RGB numpy arrays (returns new arrays, input untouched).
+
+- `draw_boxes(image, boxes, labels=None, scores=None, color=(0,255,0), thickness=2)`
+- `draw_text(image, text, xy, color=(255,255,255), font_scale=0.5, thickness=1)`
+- `draw_detections(image, result_or_objects, color=None)` - Accepts `InferenceResult` / `DetectedObject` / raw `(x1,y1,x2,y2)` tuples
 
 ### PluginDiscovery / PluginServer
 
