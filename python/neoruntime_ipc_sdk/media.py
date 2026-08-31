@@ -40,6 +40,56 @@ PIXEL_FORMAT_NAMES = {
     PixelFormat.YUYV: "YUYV",
 }
 
+# Formats stored as plain pixel arrays (crop/resize via numpy slicing)
+_PACKED_FORMATS = ("RGB", "BGR", "RGBA", "BGRA", "GRAY8")
+# Planar/semi-planar YUV formats (crop/resize with per-plane handling)
+_YUV_FORMATS = ("NV12", "NV21")
+
+
+def _resize_array(img: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Resize a uint8 2D/3D array to (height, width).
+
+    Uses cv2 when available (INTER_AREA down / INTER_LINEAR up); falls back
+    to pure-numpy nearest-neighbour indexing so the SDK works without cv2.
+    """
+    if img.shape[0] == height and img.shape[1] == width:
+        return img
+    try:
+        import cv2
+        interp = cv2.INTER_AREA if (height < img.shape[0] and width < img.shape[1]) \
+            else cv2.INTER_LINEAR
+        return cv2.resize(img, (width, height), interpolation=interp)
+    except ImportError:
+        rows = np.arange(height) * img.shape[0] // height
+        cols = np.arange(width) * img.shape[1] // width
+        if img.ndim == 2:
+            return img[rows[:, None], cols[None, :]]
+        return img[rows[:, None], cols[None, :], :]
+
+
+def _even(value: int) -> int:
+    """Round down to the nearest even number, minimum 2 (YUV plane safety)."""
+    return max(2, value - (value % 2))
+
+
+def _encode_jpeg(rgb: np.ndarray, quality: int = 85) -> bytes:
+    """Encode an RGB uint8 array as JPEG bytes. cv2 first, Pillow fallback."""
+    try:
+        import cv2
+        bgr = np.ascontiguousarray(rgb[:, :, ::-1])
+        ok, buf = cv2.imencode(
+            ".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
+        if not ok:
+            raise IOError("cv2.imencode failed to encode JPEG")
+        return buf.tobytes()
+    except ImportError:
+        import io
+        from PIL import Image
+        out = io.BytesIO()
+        Image.fromarray(rgb, mode="RGB").save(
+            out, format="JPEG", quality=int(quality))
+        return out.getvalue()
+
 
 @dataclass
 class Frame:
@@ -96,7 +146,156 @@ class Frame:
         
         return np.stack([r, g, b], axis=-1)
     
+    def crop(self, x: int, y: int, width: int, height: int) -> "Frame":
+        """Return a new Frame cropped to the given pixel rectangle.
+
+        NV12/NV21 require even x, y, width, height (chroma subsampling).
+        The original Frame is left untouched.
+        """
+        if width <= 0 or height <= 0:
+            raise ValueError("crop width/height must be positive")
+        if x < 0 or y < 0 or x + width > self.width or y + height > self.height:
+            raise ValueError(
+                f"crop ({x},{y},{width}x{height}) out of bounds for "
+                f"{self.width}x{self.height} frame")
+        fmt = self.format
+        if fmt in _PACKED_FORMATS:
+            sub = np.ascontiguousarray(
+                self.image[y:y + height, x:x + width])
+        elif fmt in _YUV_FORMATS:
+            if x % 2 or y % 2 or width % 2 or height % 2:
+                raise ValueError(
+                    f"{fmt} crop requires even x, y, width, height")
+            y_plane = self.image[:self.height]
+            uv_plane = self.image[self.height:]
+            new_y = y_plane[y:y + height, x:x + width]
+            new_uv = uv_plane[y // 2:(y + height) // 2,
+                              (x // 2) * 2:(x // 2 + width // 2) * 2]
+            sub = np.ascontiguousarray(np.vstack([new_y, new_uv]))
+        else:
+            raise ValueError(f"crop not supported for format: {fmt}")
+        return Frame(sequence=self.sequence, timestamp_ns=self.timestamp_ns,
+                     width=width, height=height, format=fmt, image=sub,
+                     metadata=dict(self.metadata))
+
+    def resize(self, width: int, height: int, mode: str = "letterbox",
+               pad_value: int = 114) -> "Frame":
+        """Return a new Frame resized to width x height.
+
+        Modes:
+            "letterbox" — fit inside, preserve aspect ratio, pad with
+                          pad_value (NV12 pads luma with pad_value and
+                          chroma with neutral 128). Default.
+            "stretch"   — fill exactly, aspect ratio not preserved.
+            "crop"      — scale to cover, center-crop the overflow.
+
+        NV12/NV21 require even target dimensions. cv2 accelerates when
+        available; a pure-numpy nearest-neighbour path is the fallback.
+        """
+        if width <= 0 or height <= 0:
+            raise ValueError("resize width/height must be positive")
+        if mode not in ("letterbox", "stretch", "crop"):
+            raise ValueError(f"unsupported resize mode: {mode}")
+        fmt = self.format
+        if fmt in _YUV_FORMATS:
+            if width % 2 or height % 2:
+                raise ValueError(f"{fmt} resize requires even width/height")
+            image = self._resize_yuv(width, height, mode, pad_value)
+        elif fmt in _PACKED_FORMATS:
+            image = self._resize_packed(width, height, mode, pad_value)
+        else:
+            raise ValueError(f"resize not supported for format: {fmt}")
+        return Frame(sequence=self.sequence, timestamp_ns=self.timestamp_ns,
+                     width=width, height=height, format=fmt, image=image,
+                     metadata=dict(self.metadata))
+
+    def _resize_packed(self, dw: int, dh: int, mode: str,
+                       pad: int) -> np.ndarray:
+        src = self.image
+        sw, sh = self.width, self.height
+        if mode == "stretch":
+            return _resize_array(src, dw, dh)
+        if mode == "letterbox":
+            scale = min(dw / sw, dh / sh)
+            rw = max(1, int(round(sw * scale)))
+            rh = max(1, int(round(sh * scale)))
+            content = _resize_array(src, rw, rh)
+            ox, oy = (dw - rw) // 2, (dh - rh) // 2
+            if src.ndim == 2:
+                canvas = np.full((dh, dw), pad, dtype=np.uint8)
+            else:
+                fill = [pad] * src.shape[2]
+                if self.format in ("RGBA", "BGRA"):
+                    fill[-1] = 255
+                canvas = np.full((dh, dw, src.shape[2]), fill,
+                                 dtype=np.uint8)
+            canvas[oy:oy + rh, ox:ox + rw] = content
+            return canvas
+        # mode == "crop": scale to cover, then center-crop
+        scale = max(dw / sw, dh / sh)
+        rw = max(dw, int(round(sw * scale)))
+        rh = max(dh, int(round(sh * scale)))
+        tmp = _resize_array(src, rw, rh)
+        ox, oy = (rw - dw) // 2, (rh - dh) // 2
+        return np.ascontiguousarray(
+            tmp[oy:oy + dh, ox:ox + dw])
+
+    def _resize_yuv(self, dw: int, dh: int, mode: str,
+                    pad: int) -> np.ndarray:
+        sw, sh = self.width, self.height
+        y_plane = self.image[:sh]
+        uv_plane = np.ascontiguousarray(self.image[sh:])
+        if uv_plane.shape[0] * 2 != sh or uv_plane.shape[1] != sw:
+            raise ValueError(
+                f"{self.format} buffer shape {self.image.shape} does not "
+                f"match {sw}x{sh} frame")
+
+        def uv_resize(uv: np.ndarray, w: int, h: int) -> np.ndarray:
+            # Packed interleaved chroma: resize as (h/2, w/2, 2) image so
+            # U and V stay on separate channels, then flatten back.
+            src_h, src_w = uv.shape
+            paired = uv.reshape(src_h, src_w // 2, 2)
+            out = _resize_array(paired, w // 2, h // 2)
+            return out.reshape(h // 2, w)
+
+        if mode == "stretch":
+            return np.vstack([
+                _resize_array(y_plane, dw, dh),
+                uv_resize(uv_plane, dw, dh),
+            ])
+        if mode == "letterbox":
+            scale = min(dw / sw, dh / sh)
+            rw = _even(int(round(sw * scale)))
+            rh = _even(int(round(sh * scale)))
+            content_y = _resize_array(y_plane, rw, rh)
+            content_uv = uv_resize(uv_plane, rw, rh)
+            ox, oy = (dw - rw) // 2 & ~1, (dh - rh) // 2 & ~1
+            canvas_y = np.full((dh, dw), pad, dtype=np.uint8)
+            canvas_uv = np.full((dh // 2, dw), 128, dtype=np.uint8)
+            canvas_y[oy:oy + rh, ox:ox + rw] = content_y
+            canvas_uv[oy // 2:oy // 2 + rh // 2, ox:ox + rw] = content_uv
+            return np.vstack([canvas_y, canvas_uv])
+        # mode == "crop": scale to cover, then center-crop both planes
+        scale = max(dw / sw, dh / sh)
+        rw = _even(max(dw, int(round(sw * scale))))
+        rh = _even(max(dh, int(round(sh * scale))))
+        tmp_y = _resize_array(y_plane, rw, rh)
+        tmp_uv = uv_resize(uv_plane, rw, rh)
+        ox, oy = (rw - dw) // 2, (rh - dh) // 2
+        return np.vstack([
+            tmp_y[oy:oy + dh, ox:ox + dw],
+            tmp_uv[oy // 2:oy // 2 + dh // 2, ox:ox + dw],
+        ])
+
+    def to_jpeg_bytes(self, quality: int = 85) -> bytes:
+        """Encode the frame as JPEG bytes (RGB conversion first)."""
+        return _encode_jpeg(self.to_rgb(), quality)
+
     def save(self, path: str) -> None:
+        if path.lower().endswith((".jpg", ".jpeg")):
+            with open(path, "wb") as fh:
+                fh.write(_encode_jpeg(self.to_rgb()))
+            return
         try:
             import cv2
             rgb = self.to_rgb()
