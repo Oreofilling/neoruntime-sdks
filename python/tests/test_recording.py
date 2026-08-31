@@ -185,6 +185,38 @@ class TestTsWriter:
                 assert p[5] & 0x10                  # PCR flag
                 break
 
+    def test_device_regression_tail_chunk_of_183_bytes(self, tmp_path):
+        # PES total = 14B header + 353B data = 367 = 184 + 183. The 183B
+        # tail must be packed, not rejected: it leaves exactly one byte
+        # for a length-only adaptation field. Live 4K frames on
+        # 192.168.93.72 hit this ("TS payload overflow with adaptation
+        # field") whenever pes_len % 184 == 183.
+        first = enc(0, 0, key=True, size=100)
+        tail_frame = enc(1, FRAME_MS, size=353)
+        path = self._write(tmp_path, [first, tail_frame])
+        data = open(path, "rb").read()
+        assert len(data) % 188 == 0
+        for p in packets(data):
+            assert p[0] == 0x47
+            assert has_payload(p)
+        groups = reassemble_pes(data)
+        assert groups[0].endswith(first.data)
+        assert groups[1].endswith(tail_frame.data)
+
+    def test_device_regression_short_pes_with_pcr(self, tmp_path):
+        # First frame carries the PCR. A PES of 183B total (14B header +
+        # 169B data) must be split so the PCR adaptation field fits:
+        # cap the first chunk at 176B instead of overflowing.
+        frame = enc(0, 0, key=True, size=169)
+        path = self._write(tmp_path, [frame])
+        data = open(path, "rb").read()
+        assert len(data) % 188 == 0
+        for p in packets(data):
+            assert p[0] == 0x47
+        groups = reassemble_pes(data)
+        assert len(groups) == 1
+        assert groups[0].endswith(frame.data)
+
     def test_write_after_close_raises(self, tmp_path):
         w = TsWriter(str(tmp_path / "x.ts"), codec="h264")
         w.close()

@@ -105,16 +105,22 @@ def _ts_packet(pid: int, payload: bytes, cc: int, unit_start: bool = False,
     afc = 0x01                                     # payload only
     body = bytearray()
     if pcr_base is not None or len(payload) < TS_PACKET_SIZE - 4:
-        af = bytearray([0x10 if pcr_base is not None else 0x00])
-        if pcr_base is not None:
-            af += _pcr_bytes(pcr_base)
-        pad = (TS_PACKET_SIZE - 4) - 1 - len(af) - len(payload)
-        if pad < 0:
-            raise ValueError("TS payload overflow with adaptation field")
-        af += b"\xff" * pad
-        afc = 0x03
-        body.append(len(af))
-        body += af
+        if pcr_base is None and len(payload) == TS_PACKET_SIZE - 5:
+            # 183B tail: exactly one byte left, a length-only adaptation
+            # field (ISO 13818-1: the length byte itself is the stuffing)
+            afc = 0x03
+            body.append(0)
+        else:
+            af = bytearray([0x10 if pcr_base is not None else 0x00])
+            if pcr_base is not None:
+                af += _pcr_bytes(pcr_base)
+            pad = (TS_PACKET_SIZE - 4) - 1 - len(af) - len(payload)
+            if pad < 0:
+                raise ValueError("TS payload overflow with adaptation field")
+            af += b"\xff" * pad
+            afc = 0x03
+            body.append(len(af))
+            body += af
     body += payload
     header = bytes([
         0x47,
@@ -186,10 +192,11 @@ class TsWriter:
         pos = 0
         first = True
         while pos < len(pes):
-            chunk = pes[pos:pos + (TS_PACKET_SIZE - 4)]
-            if first and pcr is not None and len(chunk) == TS_PACKET_SIZE - 4:
-                # leave room for the adaptation field carrying the PCR
-                chunk = pes[pos:pos + (TS_PACKET_SIZE - 4 - 8)]
+            # adaptation field carrying the PCR costs 8 bytes (length +
+            # flags + PCR), so the first chunk of a PES is capped lower
+            cap = (TS_PACKET_SIZE - 12) if (first and pcr is not None) \
+                else (TS_PACKET_SIZE - 4)
+            chunk = pes[pos:pos + cap]
             pos += len(chunk)
             self._f.write(_ts_packet(VIDEO_PID, chunk, self._next_cc(VIDEO_PID),
                                      unit_start=first, pcr_base=pcr if first else None))
