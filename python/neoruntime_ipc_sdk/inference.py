@@ -3,6 +3,7 @@ AI Inference Client
 """
 
 import asyncio
+import logging
 import threading
 import queue
 from concurrent.futures import Future
@@ -14,6 +15,8 @@ import numpy as np
 
 from .config import Config
 from .proto import inference_pb2, inference_pb2_grpc
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -613,7 +616,14 @@ class InferenceClient:
                   model: str,
                   fps: int = 10,
                   session_id: str = "",
-                  raw_output_only: bool = False) -> Iterator[Tuple[int, InferenceResult]]:
+                  raw_output_only: bool = False,
+                  max_consecutive_failures: Optional[int] = 10) -> Iterator[Tuple[int, InferenceResult]]:
+        """Yield (frame_sequence, InferenceResult) for a camera stream subscription.
+
+        Failed frames are skipped with a warning. If ``max_consecutive_failures``
+        frames fail in a row (default 10), a RuntimeError is raised instead of
+        yielding nothing forever. Pass 0 or None to disable the limit.
+        """
         if self.stub is None:
             self.connect()
         
@@ -647,6 +657,7 @@ class InferenceClient:
 
         pump_future = asyncio.run_coroutine_threadsafe(_pump(), self._loop)
 
+        consecutive_failures = 0
         try:
             while True:
                 item = q.get()
@@ -657,7 +668,22 @@ class InferenceClient:
                 response = item
 
                 if not response.status.success:
+                    consecutive_failures += 1
+                    if consecutive_failures == 1 or consecutive_failures % 10 == 0:
+                        logger.warning(
+                            "subscribe(stream=%r, model=%r): inference failed for frame %d "
+                            "(%d consecutive): %s",
+                            stream, model, response.frame_sequence,
+                            consecutive_failures, response.status.message)
+                    if max_consecutive_failures and \
+                            consecutive_failures >= max_consecutive_failures:
+                        raise RuntimeError(
+                            f"Stream inference failed {consecutive_failures} consecutive times "
+                            f"(stream={stream!r}, model={model!r}, "
+                            f"last frame={response.frame_sequence}): "
+                            f"{response.status.message!r}")
                     continue
+                consecutive_failures = 0
 
                 objects = []
                 classifications = []

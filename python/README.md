@@ -225,7 +225,7 @@ AI inference client for model inference and streaming inference subscription.
 | `close()` | - | - | Close connection |
 | `infer(image, model_id, timeout_ms, priority, session_id)` | ndarray, str, int, int, str | InferenceResult | Single inference |
 | `infer_with_tensors(model_id, inputs, input_names, timeout_ms)` | str, List[ndarray], List[str], int | List[ndarray] | Multi-tensor inference |
-| `subscribe(stream, model, fps, session_id, raw_output_only)` | str, str, int, str, bool | Iterator[Tuple[int, InferenceResult]] | Streaming inference |
+| `subscribe(stream, model, fps, session_id, raw_output_only, max_consecutive_failures)` | str, str, int, str, bool, Optional[int] | Iterator[Tuple[int, InferenceResult]] | Streaming inference; failed frames are skipped with a warning and a `RuntimeError` is raised after 10 consecutive failures (0/None disables) |
 | `register_model(model_path, model_id, inputs, outputs)` | str, str, List[Dict], List[Dict] | str | Register model |
 | `unregister_model(model_id)` | str | - | Unregister model |
 | `list_models()` | - | List[ModelInfo] | List models |
