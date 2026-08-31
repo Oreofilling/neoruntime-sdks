@@ -51,6 +51,45 @@ class DeviceEvent:
     temperature: float = 0.0
 
 
+@dataclass
+class AfJob:
+    """Result of starting an autofocus job (native AF RPCs)."""
+    accepted: bool
+    job_id: int
+    message: str
+
+
+@dataclass
+class AfStatus:
+    """Full snapshot of the autofocus engine state."""
+    job_id: int
+    operation: str
+    state: str
+    progress: float
+    busy: bool
+    anchor_valid: bool
+    requested_ratio: float
+    effective_ratio: float
+    zoom_pos: int
+    focus_pos: int
+    best_focus: int
+    metric: float
+    confidence: float
+    reproducibility: float
+    estimated_distance_m: float
+    elapsed_ms: int
+    error_code: int
+    message: str
+
+
+@dataclass
+class AfMeasurement:
+    """Per-window focus telemetry from the last AF measurement."""
+    focus_energy: list
+    mean_luma: list
+    frame_id: int
+
+
 class DeviceClient:
     """
     Device Control Client
@@ -371,6 +410,109 @@ class DeviceClient:
 
         if not settled:
             raise TimeoutError(f"Autofocus did not converge within {timeout}s")
+
+    # ------------------------------------------------------------------
+    # Native autofocus job APIs (device-control StartOneShotAf family)
+    # ------------------------------------------------------------------
+
+    def start_oneshot_af(self) -> AfJob:
+        """Start a one-shot autofocus job and return its handle immediately.
+
+        Unlike :meth:`oneshot_autofocus` (a blocking composite over the
+        legacy SetAutofocus RPC), this returns at once; pair it with
+        :meth:`get_autofocus_status` to poll for convergence.
+        """
+        if self.stub is None:
+            self.connect()
+
+        response = self.stub.StartOneShotAf(device_pb2.Empty())
+        if not response.accepted:
+            raise RuntimeError(
+                f"StartOneShotAf rejected: {response.message}")
+        return AfJob(accepted=response.accepted, job_id=response.job_id,
+                     message=response.message)
+
+    def start_zoom_follow(self, ratio: float) -> AfJob:
+        """Start continuous autofocus locked to a zoom ratio.
+
+        Args:
+            ratio: Zoom ratio the focus engine should track (e.g. 1.5).
+        """
+        if self.stub is None:
+            self.connect()
+
+        request = device_pb2.ZoomFollowRequest(ratio=ratio)
+        response = self.stub.StartZoomFollow(request)
+        if not response.accepted:
+            raise RuntimeError(
+                f"StartZoomFollow rejected: {response.message}")
+        return AfJob(accepted=response.accepted, job_id=response.job_id,
+                     message=response.message)
+
+    def get_autofocus_status(self) -> AfStatus:
+        """Snapshot of the autofocus engine (job, progress, lens positions)."""
+        if self.stub is None:
+            self.connect()
+
+        r = self.stub.GetAutofocusStatus(device_pb2.Empty())
+        return AfStatus(
+            job_id=r.job_id, operation=r.operation, state=r.state,
+            progress=r.progress, busy=r.busy, anchor_valid=r.anchor_valid,
+            requested_ratio=r.requested_ratio,
+            effective_ratio=r.effective_ratio,
+            zoom_pos=r.zoom_pos, focus_pos=r.focus_pos,
+            best_focus=r.best_focus, metric=r.metric,
+            confidence=r.confidence, reproducibility=r.reproducibility,
+            estimated_distance_m=r.estimated_distance_m,
+            elapsed_ms=r.elapsed_ms, error_code=r.error_code,
+            message=r.message)
+
+    def cancel_autofocus(self, job_id: int = 0) -> None:
+        """Cancel an autofocus job.
+
+        Args:
+            job_id: Job to cancel; 0 (default) cancels the active job.
+        """
+        if self.stub is None:
+            self.connect()
+
+        request = device_pb2.AfJobRequest(job_id=job_id)
+        response = self.stub.CancelAutofocus(request)
+        if not response.success:
+            raise RuntimeError(
+                f"CancelAutofocus failed: {response.message}")
+
+    def set_af_windows(self, enabled: bool, windows, stream_id: str = "main") -> None:
+        """Set autofocus measurement windows for a stream.
+
+        Args:
+            enabled: Whether AF windows are active.
+            windows: 1-3 ``(x, y, w, h)`` pixel rectangles. An AF window
+                restricts the image region the focus metric is computed on.
+            stream_id: Stream the windows apply to (default "main").
+        """
+        if self.stub is None:
+            self.connect()
+
+        if len(windows) > 3:
+            raise ValueError("at most 3 AF windows are supported")
+        request = device_pb2.SetAfWindowsRequest(enabled=enabled,
+                                                 stream_id=stream_id)
+        for x, y, w, h in windows:
+            request.windows.add(x=x, y=y, w=w, h=h)
+        response = self.stub.SetAfWindows(request)
+        if not response.success:
+            raise RuntimeError(f"SetAfWindows failed: {response.message}")
+
+    def get_af_measurement(self) -> AfMeasurement:
+        """Latest per-window focus telemetry (focus energy / luma)."""
+        if self.stub is None:
+            self.connect()
+
+        r = self.stub.GetAfMeasurement(device_pb2.Empty())
+        return AfMeasurement(focus_energy=list(r.focus_energy),
+                             mean_luma=list(r.mean_luma),
+                             frame_id=r.frame_id)
 
     def set_wiegand_out(self, channel: int, enable: bool) -> None:
         """Enable or disable a Wiegand output channel.
