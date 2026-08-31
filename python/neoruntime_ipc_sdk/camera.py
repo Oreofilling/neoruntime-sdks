@@ -119,6 +119,57 @@ class EnvStatus:
     enabled: bool
 
 
+@dataclass
+class InfraredStatus:
+    """Day/night imaging state reported by the camera pipeline."""
+    mode: str
+    transition: str
+    output_source: str
+    auto_follow: bool
+    follow_active: bool
+    manual_override: bool
+    degraded: bool
+    requested_near_pwm: int
+    requested_far_pwm: int
+    applied_near_pwm: int
+    applied_far_pwm: int
+    zoom_ratio: float
+    active_profile: str
+    selected_mode: str
+    light_percent: int
+    light_mv: int
+    light_milli: int
+    light_valid: bool
+    night_enter: int
+    day_enter: int
+
+
+@dataclass
+class IrPreset:
+    """Saved IR-light profile bound to a zoom ratio."""
+    name: str
+    zoom_ratio: float
+    near_pwm: int
+    far_pwm: int
+
+
+@dataclass
+class PrivacyMaskSettings:
+    """Static and dynamic (AI) privacy-mask configuration.
+
+    regions is a list of dicts: {id, name, enabled, points_x, points_y}
+    with normalized [0.0-1.0] polygon coordinates (up to 8 points).
+    """
+    color: int
+    blur_radius: int
+    enabled: bool
+    regions: List[dict]
+    dpm_enabled: bool
+    dpm_labels: str
+    dpm_mode: str
+    dpm_color: int
+
+
 def _check_status(resp, label: str) -> None:
     """Check a Status-bearing response."""
     s = resp.status if hasattr(resp, "status") and hasattr(resp.status, "success") else resp
@@ -348,6 +399,271 @@ class CameraClient:
             line_thickness=line_thickness,
         ))
         _check_status(resp, "UpdateAiOverlay")
+
+    # -- Day/night imaging & infrared --
+
+    def _to_infrared_status(self, resp: "camera_pb2.InfraredStatusResponse") -> InfraredStatus:
+        return InfraredStatus(
+            mode=resp.mode, transition=resp.transition,
+            output_source=resp.output_source, auto_follow=resp.auto_follow,
+            follow_active=resp.follow_active,
+            manual_override=resp.manual_override, degraded=resp.degraded,
+            requested_near_pwm=resp.requested_near_pwm,
+            requested_far_pwm=resp.requested_far_pwm,
+            applied_near_pwm=resp.applied_near_pwm,
+            applied_far_pwm=resp.applied_far_pwm,
+            zoom_ratio=resp.zoom_ratio,
+            active_profile=resp.active_profile,
+            selected_mode=resp.selected_mode,
+            light_percent=resp.light_percent, light_mv=resp.light_mv,
+            light_milli=resp.light_milli, light_valid=resp.light_valid,
+            night_enter=resp.night_enter, day_enter=resp.day_enter)
+
+    def set_imaging_mode(self, mode: str) -> InfraredStatus:
+        """Switch day/night imaging mode.
+
+        Args:
+            mode: "day", "infrared" or "auto" (light-sensor driven).
+
+        Returns: the resulting InfraredStatus.
+        """
+        if mode not in ("day", "infrared", "auto"):
+            raise ValueError(f"mode must be day/infrared/auto, got {mode!r}")
+        stub = self._connect()
+        resp = stub.SetImagingMode(camera_pb2.ImagingModeRequest(mode=mode))
+        _check_status(resp, "SetImagingMode")
+        return self._to_infrared_status(resp)
+
+    def get_infrared_status(self) -> InfraredStatus:
+        """Current day/night imaging state (mode, PWMs, light sensor)."""
+        stub = self._connect()
+        resp = stub.GetInfraredStatus(camera_pb2.Empty())
+        _check_status(resp, "GetInfraredStatus")
+        return self._to_infrared_status(resp)
+
+    def set_infrared_settings(self, auto_follow: Optional[bool] = None,
+                              near_pwm: Optional[int] = None,
+                              far_pwm: Optional[int] = None,
+                              night_enter: Optional[int] = None,
+                              day_enter: Optional[int] = None) -> InfraredStatus:
+        """Update IR light settings; omitted fields (None) are left unchanged.
+
+        Args:
+            auto_follow: tie IR output to optical zoom ratio.
+            near_pwm / far_pwm: manual IR intensities (0-100).
+            night_enter / day_enter: light-sensor thresholds for auto mode.
+        """
+        req = camera_pb2.InfraredSettingsRequest()
+        if auto_follow is not None:
+            req.auto_follow = auto_follow
+        if near_pwm is not None:
+            req.near_pwm = near_pwm
+        if far_pwm is not None:
+            req.far_pwm = far_pwm
+        if night_enter is not None:
+            req.night_enter = night_enter
+        if day_enter is not None:
+            req.day_enter = day_enter
+        stub = self._connect()
+        resp = stub.SetInfraredSettings(req)
+        _check_status(resp, "SetInfraredSettings")
+        return self._to_infrared_status(resp)
+
+    def clear_infrared_manual(self) -> InfraredStatus:
+        """Drop manual IR overrides and return to profile-driven output."""
+        stub = self._connect()
+        resp = stub.ClearInfraredManual(camera_pb2.Empty())
+        _check_status(resp, "ClearInfraredManual")
+        return self._to_infrared_status(resp)
+
+    # -- IR presets --
+
+    def list_ir_presets(self) -> List[IrPreset]:
+        """Saved IR-light profiles (per zoom ratio)."""
+        stub = self._connect()
+        resp = stub.ListIrPresets(camera_pb2.Empty())
+        _check_status(resp, "ListIrPresets")
+        return [IrPreset(name=p.name, zoom_ratio=p.zoom_ratio,
+                         near_pwm=p.near_pwm, far_pwm=p.far_pwm)
+                for p in resp.presets]
+
+    def save_ir_preset(self, name: str, zoom_ratio: float,
+                       near_pwm: int, far_pwm: int) -> List[IrPreset]:
+        """Save (or overwrite) an IR preset and return the new list."""
+        stub = self._connect()
+        resp = stub.SaveIrPreset(camera_pb2.IrPreset(
+            name=name, zoom_ratio=zoom_ratio,
+            near_pwm=near_pwm, far_pwm=far_pwm))
+        _check_status(resp, "SaveIrPreset")
+        return [IrPreset(name=p.name, zoom_ratio=p.zoom_ratio,
+                         near_pwm=p.near_pwm, far_pwm=p.far_pwm)
+                for p in resp.presets]
+
+    def delete_ir_preset(self, name: str) -> List[IrPreset]:
+        """Delete an IR preset by name and return the remaining list."""
+        stub = self._connect()
+        resp = stub.DeleteIrPreset(camera_pb2.DeleteIrPresetRequest(name=name))
+        _check_status(resp, "DeleteIrPreset")
+        return [IrPreset(name=p.name, zoom_ratio=p.zoom_ratio,
+                         near_pwm=p.near_pwm, far_pwm=p.far_pwm)
+                for p in resp.presets]
+
+    # -- Privacy mask --
+
+    def get_privacy_mask(self) -> PrivacyMaskSettings:
+        """Current static + dynamic (AI) privacy-mask configuration."""
+        stub = self._connect()
+        cfg = stub.GetPrivacyMaskConfig(camera_pb2.Empty())
+        return PrivacyMaskSettings(
+            color=cfg.color, blur_radius=cfg.blur_radius,
+            enabled=cfg.enabled,
+            regions=[{"id": r.id, "name": r.name, "enabled": r.enabled,
+                      "points_x": list(r.points_x),
+                      "points_y": list(r.points_y)}
+                     for r in cfg.regions],
+            dpm_enabled=cfg.dpm_enabled, dpm_labels=cfg.dpm_labels,
+            dpm_mode=cfg.dpm_mode, dpm_color=cfg.dpm_color)
+
+    def set_privacy_mask(self, settings: Optional[PrivacyMaskSettings] = None, *,
+                         color: Optional[int] = None,
+                         blur_radius: Optional[int] = None,
+                         enabled: Optional[bool] = None,
+                         regions: Optional[List[dict]] = None,
+                         dpm_enabled: Optional[bool] = None,
+                         dpm_labels: Optional[str] = None,
+                         dpm_mode: Optional[str] = None,
+                         dpm_color: Optional[int] = None) -> None:
+        """Update privacy-mask configuration with merge semantics.
+
+        Only the fields given as arguments are changed; everything else
+        (including existing regions) is read back from the device and
+        preserved, so partial updates never wipe masks.
+
+        Args:
+            settings: full PrivacyMaskSettings to apply wholesale (optional).
+            color: 0x00RRGGBB fill color (used when blur_radius=0).
+            blur_radius: pixelation block size 2-64; 0 = solid color.
+            enabled: global static-mask on/off.
+            regions: list of {id, name, enabled, points_x, points_y} with
+                normalized polygon coordinates (up to 8 points).
+            dpm_*: dynamic (AI) privacy-mask options.
+        """
+        stub = self._connect()
+        if settings is not None:
+            cfg = camera_pb2.PrivacyMaskConfig(
+                color=settings.color, blur_radius=settings.blur_radius,
+                enabled=settings.enabled,
+                dpm_enabled=settings.dpm_enabled,
+                dpm_labels=settings.dpm_labels,
+                dpm_mode=settings.dpm_mode, dpm_color=settings.dpm_color)
+            regions = settings.regions
+            if regions is not None:
+                for region in regions:
+                    self._add_mask_region(cfg, region)
+        else:
+            current = stub.GetPrivacyMaskConfig(camera_pb2.Empty())
+            cfg = camera_pb2.PrivacyMaskConfig()
+            cfg.CopyFrom(current)
+            if color is not None:
+                cfg.color = color
+            if blur_radius is not None:
+                cfg.blur_radius = blur_radius
+            if enabled is not None:
+                cfg.enabled = enabled
+            if regions is not None:
+                del cfg.regions[:]
+                for region in regions:
+                    self._add_mask_region(cfg, region)
+            if dpm_enabled is not None:
+                cfg.dpm_enabled = dpm_enabled
+            if dpm_labels is not None:
+                cfg.dpm_labels = dpm_labels
+            if dpm_mode is not None:
+                cfg.dpm_mode = dpm_mode
+            if dpm_color is not None:
+                cfg.dpm_color = dpm_color
+        resp = stub.SetPrivacyMaskConfig(cfg)
+        _check_status(resp, "SetPrivacyMaskConfig")
+
+    @staticmethod
+    def _add_mask_region(cfg: "camera_pb2.PrivacyMaskConfig",
+                         region: dict) -> None:
+        r = cfg.regions.add()
+        r.id = region.get("id", "")
+        r.name = region.get("name", "")
+        r.enabled = region.get("enabled", True)
+        r.points_x.extend(region.get("points_x", []))
+        r.points_y.extend(region.get("points_y", []))
+
+    # -- OSD read-back --
+
+    def get_osd(self) -> List[dict]:
+        """Read back OSD overlay config, shaped like set_osd() input.
+
+        Returns: list of {stream_name, text_overlays, datetime_overlays,
+        image_overlays}; each overlay is a plain dict of its proto fields,
+        so the result can be edited and fed straight back into set_osd().
+        """
+        stub = self._connect()
+        resp = stub.GetOsdConfig(camera_pb2.Empty())
+        streams = []
+        for sc in resp.streams:
+            entry = {
+                "stream_name": sc.stream_name,
+                "text_overlays": [],
+                "datetime_overlays": [],
+                "image_overlays": [],
+            }
+            for tc in sc.text_overlays:
+                entry["text_overlays"].append({
+                    "id": tc.id, "text": tc.text, "x": tc.x, "y": tc.y,
+                    "font_size": tc.font_size, "text_color": tc.text_color,
+                    "enabled": tc.enabled, "h_align": tc.h_align,
+                    "v_align": tc.v_align})
+            for dc in sc.datetime_overlays:
+                entry["datetime_overlays"].append({
+                    "id": dc.id, "x": dc.x, "y": dc.y, "format": dc.format,
+                    "font_size": dc.font_size, "text_color": dc.text_color,
+                    "enabled": dc.enabled, "h_align": dc.h_align,
+                    "v_align": dc.v_align})
+            for ic in sc.image_overlays:
+                entry["image_overlays"].append({
+                    "id": ic.id, "image_path": ic.image_path, "x": ic.x,
+                    "y": ic.y, "width": ic.width, "height": ic.height,
+                    "enabled": ic.enabled, "h_align": ic.h_align,
+                    "v_align": ic.v_align})
+            streams.append(entry)
+        return streams
+
+    # -- Raw config fields --
+
+    def get_config_field(self, field_path: str) -> str:
+        """Read one camera-daemon config field by dotted path.
+
+        Args:
+            field_path: e.g. "frontend.hailort.use-hailort-service".
+
+        Returns: the current value encoded as a string.
+        """
+        stub = self._connect()
+        resp = stub.GetConfigField(
+            camera_pb2.GetConfigFieldRequest(field_path=field_path))
+        _check_status(resp, "GetConfigField")
+        return resp.value
+
+    def set_config_field(self, field_path: str, value) -> None:
+        """Write one camera-daemon config field by dotted path.
+
+        Args:
+            field_path: dotted config path.
+            value: value encoded as a string (e.g. "true", "42", "1.5");
+                non-str values are converted with str().
+        """
+        stub = self._connect()
+        resp = stub.SetConfigField(camera_pb2.SetConfigFieldRequest(
+            field_path=field_path,
+            value=value if isinstance(value, str) else str(value)))
+        _check_status(resp, "SetConfigField")
 
     # -- Stream management --
 
