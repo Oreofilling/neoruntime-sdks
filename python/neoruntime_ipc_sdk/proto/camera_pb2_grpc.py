@@ -360,6 +360,11 @@ class CameraControlStub(object):
                 request_serializer=camera__pb2.GetConfigFieldRequest.SerializeToString,
                 response_deserializer=camera__pb2.GetConfigFieldResponse.FromString,
                 _registered_method=True)
+        self.SubmitDspJob = channel.unary_unary(
+                '/aipc.camera.CameraControl/SubmitDspJob',
+                request_serializer=camera__pb2.DspJobRequest.SerializeToString,
+                response_deserializer=camera__pb2.DspJobResponse.FromString,
+                _registered_method=True)
 
 
 class CameraControlServicer(object):
@@ -785,6 +790,15 @@ class CameraControlServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SubmitDspJob(self, request, context):
+        """DSP offload (P0). Buffers are allocated/freed over the FD publisher UDS
+        (FD_PUB_MSG_DSP_ALLOC / FD_PUB_MSG_DSP_BUF_RELEASE, fds via SCM_RIGHTS)
+        and referenced here by buffer id. Synchronous single-job form first.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_CameraControlServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1112,6 +1126,11 @@ def add_CameraControlServicer_to_server(servicer, server):
                     servicer.GetConfigField,
                     request_deserializer=camera__pb2.GetConfigFieldRequest.FromString,
                     response_serializer=camera__pb2.GetConfigFieldResponse.SerializeToString,
+            ),
+            'SubmitDspJob': grpc.unary_unary_rpc_method_handler(
+                    servicer.SubmitDspJob,
+                    request_deserializer=camera__pb2.DspJobRequest.FromString,
+                    response_serializer=camera__pb2.DspJobResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -2870,6 +2889,33 @@ class CameraControl(object):
             '/aipc.camera.CameraControl/GetConfigField',
             camera__pb2.GetConfigFieldRequest.SerializeToString,
             camera__pb2.GetConfigFieldResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SubmitDspJob(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/SubmitDspJob',
+            camera__pb2.DspJobRequest.SerializeToString,
+            camera__pb2.DspJobResponse.FromString,
             options,
             channel_credentials,
             insecure,
