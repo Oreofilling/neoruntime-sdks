@@ -240,7 +240,8 @@ class TestResizeHw:
         client = DspClient()
         calls = patched_alloc(client)
         client._stub = RecordingStub()
-        client.resize_hw(np.zeros((32, 32), dtype=np.uint8), 16, 16)
+        with pytest.warns(DeprecationWarning, match="fmt="):
+            client.resize_hw(np.zeros((32, 32), dtype=np.uint8), 16, 16)
         assert calls[0][2] == 8
 
 
@@ -341,7 +342,8 @@ class TestFallback:
         monkeypatch.setattr(dsp_format, "_cv2", None)  # deterministic nearest
         client = unimplemented_client()
         src = np.arange(32 * 32, dtype=np.uint8).reshape(32, 32)
-        out = client.resize_hw(src, 16, 16)
+        with pytest.warns(UserWarning, match="CPU fallback"):
+            out = client.resize_hw(src, 16, 16, fmt="gray8")
         assert out.shape == (16, 16)
         assert client.last_used_hw is False
         np.testing.assert_array_equal(out, src[::2, ::2])  # nearest decimation
@@ -354,7 +356,8 @@ class TestFallback:
                 success=False, error_code=DSP_SERVICE_UNAVAILABLE,
                 message="dsp service not running"))
         src = np.zeros((32, 32), dtype=np.uint8)
-        out = client.resize_hw(src, 16, 16)
+        with pytest.warns(UserWarning, match="CPU fallback"):
+            out = client.resize_hw(src, 16, 16, fmt="gray8")
         assert out.shape == (16, 16)
         assert client.last_used_hw is False
 
@@ -365,13 +368,16 @@ class TestFallback:
             lambda req: camera_pb2.DspJobResponse(
                 success=False, error_code=-1, message="bad rect"))
         with pytest.raises(DspError) as ei:
-            client.resize_hw(np.zeros((64, 32), dtype=np.uint8), 32, 16)
+            client.resize_hw(np.zeros((64, 32), dtype=np.uint8), 32, 16,
+                             fmt="gray8")
         assert ei.value.code == -1
 
     def test_cpu_letterbox_geometry(self):
         client = unimplemented_client()
         src = np.full((16, 32), 200, dtype=np.uint8)
-        out = client.resize_hw(src, 16, 16, scaling="letterbox")
+        with pytest.warns(UserWarning, match="CPU fallback"):
+            out = client.resize_hw(src, 16, 16, scaling="letterbox",
+                                   fmt="gray8")
         assert out.shape == (16, 16)
         # 32x16 -> 16x16: scale 0.5 -> content rows 4..11, pad rows 0..3/12..15
         np.testing.assert_array_equal(out[4:12], np.full((8, 16), 200))
@@ -386,8 +392,10 @@ class TestFallback:
     def test_cpu_multi_crop_matches_single_crop(self):
         client = unimplemented_client()
         src = nv12_array(64, 32, seed=3)
-        single = client.crop_hw(src, 0, 0, 32, 16, fmt="nv12")
-        multi = client.multi_crop_hw(src, [(0, 0, 32, 16, 32, 16)], fmt="nv12")
+        with pytest.warns(UserWarning, match="CPU fallback"):
+            single = client.crop_hw(src, 0, 0, 32, 16, fmt="nv12")
+            multi = client.multi_crop_hw(src, [(0, 0, 32, 16, 32, 16)],
+                                         fmt="nv12")
         np.testing.assert_array_equal(single, multi[0])
 
 
@@ -397,7 +405,8 @@ class TestValidation:
     def test_dims_out_of_daemon_range_rejected_locally(self, w, h):
         client = DspClient()
         with pytest.raises(DspError):
-            client.resize_hw(np.zeros((32, 64), dtype=np.uint8), w, h)
+            client.resize_hw(np.zeros((32, 64), dtype=np.uint8), w, h,
+                             fmt="gray8")
 
     def test_nv12_requires_even_width(self):
         client = DspClient()
