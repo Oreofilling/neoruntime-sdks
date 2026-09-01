@@ -142,10 +142,14 @@ hence quota-first, open-by-opt-in.
 1. **P0 (probe)**: daemon exposes `SubmitDspJob` with
    `DSP_OP_CROP_AND_RESIZE` **and `DSP_OP_MULTI_CROP_AND_RESIZE`** —
    batching is day-one, not a follow-up, per the experiment
-   conclusions (the ~7-10 ms per-op submission path dominates, so
-   per-tile jobs would each pay it in full). Quota hard-coded low
-   (~30 jobs/s, ~60 MPix/s per app — anchored to the measured
-   contended floor); SDK gains `DspClient.resize_hw(frame, w, h)`.
+   conclusions (the per-op submission cost dominates on USERPTR
+   buffers, so per-tile jobs would each pay it in full; on dma-buf it
+   drops 10-15x — see [e4](#hal-validation-experiments-e4-2026-09-01)).
+   Batch cap **64 rects** at validation (128 verified all-written on
+   hardware, 260 silently truncates). Quota hard-coded low (~100
+   jobs/s, ~120 MPix/s per app — anchored to the measured dma-buf
+   floor; USERPTR buffers must be rejected or throttled, not silently
+   accepted); SDK gains `DspClient.resize_hw(frame, w, h)`.
    Acceptance gate: encoder-drop soak under app load (E2b proved
    coexistence safe but did not measure encoder drops). Itemized
    per-layer work: [hardware-first-roadmap.md](hardware-first-roadmap.md).
@@ -212,3 +216,32 @@ NV12; op under test is `resize` 1920x1080 -> 640x360 bilinear.
 Numbers were taken under live system load (load avg ~5-6, encoder and
 inference active): treat them as contended-floor figures, not peak
 benchmarks.
+
+## HAL validation experiments (e4, 2026-09-01)
+
+Follow-up on the same probe (`--mode e4`), same device and load,
+validating the three ops the RPC needs and the buffer mode it must
+use. 1080p → 640×360 bilinear, 120 iterations per figure.
+
+| Experiment | Result |
+|---|---|
+| E4-A HAL `multi_crop_and_resize` N=1..7 | USERPTR 6.9→14.0 ms; **dma-buf 0.64→1.06 ms** (N=7: 6 598 rects/s); deterministic (maxd=0) in both modes once `DMA_BUF_IOCTL_SYNC` discipline is applied |
+| E4-B vendor-direct N up to 260 | N≤128 all outputs written; **N=260 rc=0 but only outputs 0-3 written** (reproducible ×3 — header's "max 260" does not hold on this firmware). One run after a truncated 260-job: every multi-crop rejected (`DSP_RUN_COMMAND_FAILED`, xrp firmware −6), self-recovered next run |
+| E4-B cost split | dmabuf-src/userptr-dst N=1 = 2.1 ms vs 7.0 ms all-userptr → **the P0 "~7-10 ms submission path" is dominated by USERPTR page mapping**, ~5 ms of it on the source side alone |
+| E4-C HAL `blend` | exact semantics: outside Δ±0.00, alpha=0 Δ±0.00, alpha=255 Δ−77.52 = pure-red luma (identical both modes); 1-ov/8-ov: USERPTR 9.1/10.4 ms, **dma-buf 0.67/1.57 ms** (~130 µs/ov marginal); NV12 overlay rejected rc −2801 per docs |
+| E4-C contract | base NV12 only, overlays A420/ARGB only, base modified in place, alpha from overlay's alpha channel — confirmed on hardware |
+
+Conclusions folded into
+[hardware-first-roadmap.md](hardware-first-roadmap.md):
+
+1. **dma-buf everywhere (PLAT-5) is the primary performance lever** —
+   10-15x on the same op, before any scheduler sophistication.
+2. **Batch cap 64** at RPC validation (128 verified, 260 silently
+   truncates and once poisoned the firmware for subsequent commands).
+3. **`DMA_BUF_IOCTL_SYNC` is part of the buffer contract**: write-fence
+   after any CPU fill, read-fence before any CPU read — without it the
+   probe saw stale reads (blend delta −57.78 vs true −77.52) and
+   phantom non-determinism.
+4. hal_v2's multi-crop wrapper cannot take N>7 today (stack storage of
+   7, count passed unclamped — OOB read inside the vendor lib); needs
+   the clamp fix before the daemon routes batches through it.

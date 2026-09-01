@@ -18,9 +18,22 @@
  *        dsp utilization out-of-band via a private vendor device handle.
  *   e3   single-context throughput: sync loop vs async submit/wait pipeline
  *        (depth D), latency percentiles.
+ *   e4   HAL-1/2/3 validation (2026-09-01):
+ *        A: multi_crop_and_resize via HAL ops table, N=1/2/4/7. The hal_v2
+ *           wrapper sizes its stack storage for DSP_MULTI_RESIZE_OUTPUTS_COUNT
+ *           == 7 but passes output_count UNCLAMPED, so N>7 through the HAL
+ *           path would read out of bounds inside the vendor lib — never run.
+ *        B: vendor-direct dsp_multi_crop_and_resize, N=1/7/16/64/260 (vendor
+ *           documents max 260 crops per job) — per-rect marginal cost curve.
+ *        C: blend. Base must be NV12 (only supported format), overlays only
+ *           A420/ARGB (alpha from the overlay's alpha channel), base is
+ *           modified in place. Verifies alpha=0 passthrough / alpha=255
+ *           blend / outside untouched, then 1-overlay vs 8-overlay timing.
+ *        All sub-tests honor --mem, so `--mem dmabuf --mode e4` doubles as
+ *        the HAL_MEM_DMABUF path validation (HAL-3).
  *
  * Usage:
- *   dsp_p0_probe --mode all|e1|e2a|e2b|e3 [--w 1920] [--h 1080]
+ *   dsp_p0_probe --mode all|e1|e2a|e2b|e3|e4 [--w 1920] [--h 1080]
  *                [--ow 640] [--oh 360] [--iters 120] [--seconds 10]
  *                [--depth 4] [--mem auto|userptr|dmabuf]
  *
@@ -45,6 +58,7 @@ dsp_status dsp_get_utilization(dsp_device device, uint32_t &utilization);
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <linux/dma-buf.h>
 #include <linux/dma-heap.h>
 #include <mutex>
 #include <numeric>
@@ -153,6 +167,8 @@ int dma_heap_alloc(size_t len, int *fd_out, void **map_out, size_t *len_out)
     return 0;
 }
 
+void sync_dmabuf_write(const HalFrameBuffer *fb); /* e4 helper, below */
+
 void fill_nv12_pattern(HalFrameBuffer *fb)
 {
     const uint32_t w = fb->width;
@@ -172,6 +188,7 @@ void fill_nv12_pattern(HalFrameBuffer *fb)
             row[c + 1] = 128;
         }
     }
+    sync_dmabuf_write(fb); /* flush CPU writes before any DSP read */
 }
 
 bool alloc_nv12(Nv12Buffer *b, uint32_t w, uint32_t h, bool use_dmabuf)
@@ -614,6 +631,461 @@ int run_e3(const ProbeCfg &cfg, Nv12Buffer *src, Nv12Buffer *dst)
     return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* e4 helpers                                                          */
+/* ------------------------------------------------------------------ */
+
+/* CPU-read barrier for dmabuf-backed planes: without DMA_BUF_IOCTL_SYNC the
+ * cache may serve stale lines after the DSP wrote via DMA. */
+static void dmabuf_sync(const HalFrameBuffer *fb, uint64_t extra_flags)
+{
+#ifdef DMA_BUF_SYNC_START
+    for (int i = 0; i < HAL_MAX_PLANES; ++i) {
+        if (fb->dma_fds[i] < 0) {
+            continue;
+        }
+        struct dma_buf_sync s{};
+        s.flags = DMA_BUF_SYNC_START | extra_flags;
+        ioctl(fb->dma_fds[i], DMA_BUF_IOCTL_SYNC, &s);
+        s.flags = DMA_BUF_SYNC_END | extra_flags;
+        ioctl(fb->dma_fds[i], DMA_BUF_IOCTL_SYNC, &s);
+    }
+#endif
+}
+
+void sync_dmabuf_read(const HalFrameBuffer *fb)
+{
+    dmabuf_sync(fb, DMA_BUF_SYNC_READ);
+}
+
+void sync_dmabuf_write(const HalFrameBuffer *fb)
+{
+    dmabuf_sync(fb, DMA_BUF_SYNC_WRITE);
+}
+
+uint32_t checksum_y(const HalFrameBuffer *fb)
+{
+    sync_dmabuf_read(fb);
+    const unsigned char *y = static_cast<const unsigned char *>(fb->planes[0]);
+    uint32_t acc = 0;
+    for (uint32_t r = 0; r < fb->height; ++r) {
+        const unsigned char *row = y + (size_t)r * fb->strides[0];
+        for (uint32_t c = 0; c < fb->width; c += 17) {
+            acc += row[c];
+        }
+    }
+    return acc;
+}
+
+double mean_y_region(const HalFrameBuffer *fb, uint32_t x0, uint32_t y0,
+                     uint32_t x1, uint32_t y1)
+{
+    sync_dmabuf_read(fb);
+    const unsigned char *y = static_cast<const unsigned char *>(fb->planes[0]);
+    unsigned long long acc = 0;
+    size_t n = 0;
+    for (uint32_t r = y0; r < y1; ++r) {
+        const unsigned char *row = y + (size_t)r * fb->strides[0];
+        for (uint32_t c = x0; c < x1; c += 3) {
+            acc += row[c];
+            ++n;
+        }
+    }
+    return n ? (double)acc / (double)n : 0.0;
+}
+
+/* tile the source into n even-aligned ROIs on a near-square grid
+ * (HalDspRoi and dsp_roi_t share field names) */
+template <typename RoiT>
+void make_roi_grid(RoiT *rois, uint32_t n, uint32_t w, uint32_t h)
+{
+    uint32_t cols = 1;
+    while (cols * cols < n) {
+        ++cols;
+    }
+    const uint32_t rows = (n + cols - 1) / cols;
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t cx = i % cols;
+        const uint32_t cy = i / cols;
+        rois[i].start_x = (cx * (w / cols)) & ~1u;
+        rois[i].end_x = (cx + 1 == cols) ? w : (((cx + 1) * (w / cols)) & ~1u);
+        rois[i].start_y = (cy * (h / rows)) & ~1u;
+        rois[i].end_y = (cy + 1 == rows || (cy + 1) * (h / rows) > h)
+                            ? h
+                            : (((cy + 1) * (h / rows)) & ~1u);
+    }
+}
+
+/* ARGB32 overlay: left half alpha=0 (passthrough), right half alpha=255 */
+struct ArgbBuffer
+{
+    HalFrameBuffer fb{};
+    std::vector<unsigned char> heap;
+};
+
+void fill_argb_overlay(HalFrameBuffer *fb)
+{
+    const uint32_t w = fb->width;
+    unsigned char *p = static_cast<unsigned char *>(fb->planes[0]);
+    for (uint32_t r = 0; r < fb->height; ++r) {
+        unsigned char *row = p + (size_t)r * fb->strides[0];
+        for (uint32_t c = 0; c < w; ++c) {
+            unsigned char *px = row + (size_t)c * 4;
+            px[0] = (c < w / 2) ? 0 : 255; /* A */
+            px[1] = 255;                   /* R */
+            px[2] = 0;                     /* G */
+            px[3] = 0;                     /* B */
+        }
+    }
+}
+
+/* vendor-side image view of an Nv12Buffer (for direct vendor calls) */
+struct Vimg
+{
+    dsp_image_properties_t img{};
+    dsp_data_plane_t pl[HAL_MAX_PLANES]{};
+};
+
+void nv12_to_vendor_image(const Nv12Buffer *b, Vimg *v)
+{
+    v->img.width = b->fb.width;
+    v->img.height = b->fb.height;
+    v->img.format = DSP_IMAGE_FORMAT_NV12;
+    v->img.planes_count = 2;
+    v->img.planes = v->pl;
+    for (int i = 0; i < 2; ++i) {
+        if (b->fb.mem_type == HAL_MEM_DMABUF) {
+            v->pl[i].fd = b->fb.dma_fds[i];
+        } else {
+            v->pl[i].userptr = b->fb.planes[i];
+        }
+        v->pl[i].bytesperline = b->fb.strides[i];
+        v->pl[i].bytesused = b->fb.sizes[i];
+    }
+    v->img.memory = (b->fb.mem_type == HAL_MEM_DMABUF) ? DSP_MEMORY_TYPE_DMABUF
+                                                       : DSP_MEMORY_TYPE_USERPTR;
+}
+
+/* ------------------------------------------------------------------ */
+/* e4: HAL-1/2/3 validation                                            */
+/* ------------------------------------------------------------------ */
+
+int run_e4(const ProbeCfg &cfg, Nv12Buffer *src)
+{
+    std::printf("\n[E4] HAL-1/2/3 validation: multi-crop capacity, blend, "
+                "mem=%s\n",
+                src->using_dmabuf ? "dmabuf" : "userptr");
+    void *ctx = nullptr;
+    HalDspConfig c{};
+    if (HAL_DSP_OPS.init(&c, &ctx) != 0) {
+        return -1;
+    }
+    VendorDev vd;
+    if (!vd.ok) {
+        std::printf("    vendor device for E4-B FAILED\n");
+        HAL_DSP_OPS.deinit(ctx);
+        return -1;
+    }
+
+    /* ---- E4-A: HAL ops-table multi_crop_and_resize, N <= 7 ---- */
+    std::printf("\n[E4-A] HAL multi_crop_and_resize (ops table; wrapper cap "
+                "7, N>7 skipped — unclamped count would read OOB)\n");
+    {
+        const uint32_t Ns[] = {1, 2, 4, 7};
+        double mean_1 = 0.0;
+        for (uint32_t N : Ns) {
+            std::vector<Nv12Buffer> dsts(N);
+            bool ok = true;
+            for (auto &d : dsts) {
+                ok = ok && alloc_nv12(&d, cfg.ow, cfg.oh, src->using_dmabuf);
+            }
+            if (!ok) {
+                std::printf("    N=%u dst alloc FAILED\n", N);
+                HAL_DSP_OPS.deinit(ctx);
+                return -1;
+            }
+            std::vector<HalDspRoi> rois(N);
+            std::vector<HalDspMultiCropOutput> outs(N);
+            make_roi_grid(rois.data(), N, cfg.w, cfg.h);
+            for (uint32_t i = 0; i < N; ++i) {
+                outs[i].crop = rois[i];
+                outs[i].dst = &dsts[i].fb;
+                outs[i].scaling_mode = HAL_DSP_SCALING_STRETCH;
+                outs[i].letterbox_color = HalDspColor{};
+            }
+            HalDspMultiCropResizeParams p{};
+            p.src = &src->fb;
+            p.outputs = outs.data();
+            p.output_count = N;
+            p.interpolation = HAL_DSP_INTERPOLATION_BILINEAR;
+
+            /* correctness: zero outputs, run twice, deterministic + nonzero */
+            for (auto &d : dsts) {
+                std::memset(d.fb.planes[0], 0, d.fb.sizes[0]);
+                sync_dmabuf_write(&d.fb);
+            }
+            int rc = HAL_DSP_OPS.multi_crop_and_resize(ctx, &p);
+            std::vector<uint32_t> cs(N, 0);
+            for (uint32_t i = 0; i < N; ++i) {
+                cs[i] = checksum_y(&dsts[i].fb);
+            }
+            rc = HAL_DSP_OPS.multi_crop_and_resize(ctx, &p);
+            bool det = (rc == 0);
+            bool nonzero = true;
+            uint32_t maxdelta = 0;
+            for (uint32_t i = 0; i < N; ++i) {
+                const uint32_t c2 = checksum_y(&dsts[i].fb);
+                if (c2 != cs[i]) {
+                    det = false;
+                    const uint32_t dd = (c2 > cs[i]) ? (c2 - cs[i])
+                                                     : (cs[i] - c2);
+                    if (dd > maxdelta) {
+                        maxdelta = dd;
+                    }
+                }
+                if (cs[i] == 0) {
+                    nonzero = false;
+                }
+            }
+
+            std::vector<double> lat;
+            lat.reserve(cfg.iters);
+            for (uint32_t k = 0; k < cfg.iters; ++k) {
+                const double t0 = now_us();
+                if (HAL_DSP_OPS.multi_crop_and_resize(ctx, &p) != 0) {
+                    ++errors;
+                }
+                lat.push_back(now_us() - t0);
+            }
+            const LatencyStats st = summarize(lat);
+            if (N == 1) {
+                mean_1 = st.mean_us;
+            }
+            std::printf(
+                "    HAL N=%-3u mean=%7.0fus p95=%7.0fus rects/s=%8.1f "
+                "marginal=%7.1fus/rect det=%d maxd=%u nonzero=%d rc=%d\n",
+                N, st.mean_us, st.p95_us, (double)N * 1e6 / st.mean_us,
+                (N > 1 && mean_1 > 0.0) ? (st.mean_us - mean_1) / (N - 1)
+                                        : 0.0,
+                det ? 1 : 0, maxdelta, nonzero ? 1 : 0, rc);
+            for (auto &d : dsts) {
+                free_nv12(&d);
+            }
+        }
+    }
+
+    /* ---- E4-B: vendor-direct multi_crop_and_resize, N up to 260 ---- */
+    std::printf("\n[E4-B] vendor-direct dsp_multi_crop_and_resize "
+                "(heap arrays; dsts userptr to bound memory)\n");
+    {
+        Vimg s;
+        nv12_to_vendor_image(src, &s);
+        const uint32_t Ns[] = {1, 7, 16, 64, 128, 260};
+        double mean_1 = 0.0;
+        for (uint32_t N : Ns) {
+            std::vector<Nv12Buffer> dsts(N);
+            bool ok = true;
+            for (auto &d : dsts) {
+                ok = ok && alloc_nv12(&d, cfg.ow, cfg.oh, false);
+            }
+            if (!ok) {
+                std::printf("    N=%u dst alloc FAILED\n", N);
+                continue;
+            }
+            std::vector<Vimg> vimgs(N);
+            std::vector<dsp_roi_t> rois(N);
+            std::vector<dsp_crop_resize_params_t> cps(N);
+            make_roi_grid(rois.data(), N, cfg.w, cfg.h);
+            for (uint32_t i = 0; i < N; ++i) {
+                nv12_to_vendor_image(&dsts[i], &vimgs[i]);
+                cps[i].crop = &rois[i];
+                for (uint32_t j = 0; j < DSP_MULTI_RESIZE_OUTPUTS_COUNT; ++j) {
+                    cps[i].dst[j] = nullptr;
+                }
+                cps[i].dst[0] = &vimgs[i].img;
+                cps[i].scaling_params[0].scaling_mode = DSP_SCALING_MODE_STRETCH;
+            }
+            dsp_multi_crop_resize_params_t m{};
+            m.src = &s.img;
+            m.crop_resize_params = cps.data();
+            m.crop_resize_params_count = N;
+            m.interpolation = INTERPOLATION_TYPE_BILINEAR;
+
+            for (auto &d : dsts) {
+                std::memset(d.fb.planes[0], 0, d.fb.sizes[0]);
+                sync_dmabuf_write(&d.fb);
+            }
+            int rc = dsp_multi_crop_and_resize(vd.dev, &m);
+            uint32_t zeros = 0;
+            int first_zero = -1, last_zero = -1;
+            for (uint32_t i = 0; i < N; ++i) {
+                if (checksum_y(&dsts[i].fb) == 0) {
+                    ++zeros;
+                    if (first_zero < 0) {
+                        first_zero = (int)i;
+                    }
+                    last_zero = (int)i;
+                }
+            }
+
+            const uint32_t iters = (N >= 64) ? std::max(30u, cfg.iters / 2)
+                                             : cfg.iters;
+            std::vector<double> lat;
+            lat.reserve(iters);
+            for (uint32_t k = 0; k < iters; ++k) {
+                const double t0 = now_us();
+                if (dsp_multi_crop_and_resize(vd.dev, &m) != DSP_SUCCESS) {
+                    ++errors;
+                }
+                lat.push_back(now_us() - t0);
+            }
+            const LatencyStats st = summarize(lat);
+            if (N == 1) {
+                mean_1 = st.mean_us;
+            }
+            std::printf(
+                "    VND N=%-3u mean=%7.0fus p95=%7.0fus rects/s=%8.1f "
+                "marginal=%7.1fus/rect zeros=%u%s rc=%d\n",
+                N, st.mean_us, st.p95_us, (double)N * 1e6 / st.mean_us,
+                (N > 1 && mean_1 > 0.0) ? (st.mean_us - mean_1) / (N - 1)
+                                        : 0.0,
+                zeros,
+                zeros ? (" first=" + std::to_string(first_zero) +
+                         " last=" + std::to_string(last_zero))
+                            .c_str()
+                      : "",
+                rc);
+            for (auto &d : dsts) {
+                free_nv12(&d);
+            }
+        }
+    }
+
+    /* ---- E4-C: blend (base NV12 in-place, overlay ARGB) ---- */
+    std::printf("\n[E4-C] HAL blend: base %ux%u NV12 in-place + ARGB "
+                "256x128 overlay (left half a=0, right half a=255)\n",
+                cfg.w, cfg.h);
+    {
+        Nv12Buffer base{};
+        if (!alloc_nv12(&base, cfg.w, cfg.h, src->using_dmabuf)) {
+            std::printf("    base alloc FAILED\n");
+            HAL_DSP_OPS.deinit(ctx);
+            return -1;
+        }
+        fill_nv12_pattern(&base.fb);
+
+        const uint32_t ow = 256, oh = 128, ox = 64, oy = 96;
+        ArgbBuffer ovb{};
+        ovb.fb.width = ow;
+        ovb.fb.height = oh;
+        ovb.fb.format = HAL_PIX_FMT_ARGB32;
+        ovb.fb.num_planes = 1;
+        ovb.fb.strides[0] = ow * 4;
+        ovb.fb.sizes[0] = ow * oh * 4;
+        for (int i = 0; i < HAL_MAX_PLANES; ++i) {
+            ovb.fb.dma_fds[i] = -1;
+        }
+        ovb.heap.resize((size_t)ow * oh * 4);
+        ovb.fb.planes[0] = ovb.heap.data();
+        ovb.fb.mem_type = HAL_MEM_MALLOC;
+        fill_argb_overlay(&ovb.fb);
+
+        HalDspOverlay hov{};
+        hov.overlay = &ovb.fb;
+        hov.x_offset = (int32_t)ox;
+        hov.y_offset = (int32_t)oy;
+        HalDspBlendParams bp{};
+        bp.base = &base.fb;
+        bp.overlays = &hov;
+        bp.overlay_count = 1;
+
+        const double out_b = mean_y_region(&base.fb, 4, 4, 24, 24);
+        const double a0_b = mean_y_region(&base.fb, ox + 4, oy + 4,
+                                          ox + ow / 2 - 4, oy + oh - 4);
+        const double a1_b = mean_y_region(&base.fb, ox + ow / 2 + 4, oy + 4,
+                                          ox + ow - 4, oy + oh - 4);
+        const int rc = HAL_DSP_OPS.blend(ctx, &bp);
+        const double d_out = mean_y_region(&base.fb, 4, 4, 24, 24) - out_b;
+        const double d_a0 = mean_y_region(&base.fb, ox + 4, oy + 4,
+                                          ox + ow / 2 - 4, oy + oh - 4) - a0_b;
+        const double d_a1 = mean_y_region(&base.fb, ox + ow / 2 + 4, oy + 4,
+                                          ox + ow - 4, oy + oh - 4) - a1_b;
+        const bool pass = (rc == 0) && (d_out < 0.5 && d_out > -0.5) &&
+                          (d_a0 < 0.5 && d_a0 > -0.5) &&
+                          (d_a1 > 2.0 || d_a1 < -2.0);
+        std::printf("    blend rc=%d dY(outside)=%+.2f dY(alpha0)=%+.2f "
+                    "dY(alpha255)=%+.2f -> %s\n",
+                    rc, d_out, d_a0, d_a1,
+                    pass ? "PASS (a=0 passthrough, a=255 blends)"
+                         : "FAIL");
+
+        if (rc == 0) {
+            /* timing: 1 overlay vs 8 overlays */
+            std::vector<double> lat1;
+            lat1.reserve(cfg.iters);
+            for (uint32_t k = 0; k < cfg.iters; ++k) {
+                const double t0 = now_us();
+                if (HAL_DSP_OPS.blend(ctx, &bp) != 0) {
+                    ++errors;
+                }
+                lat1.push_back(now_us() - t0);
+            }
+            const LatencyStats st1 = summarize(lat1);
+
+            HalDspOverlay ov8[8];
+            const int32_t xs[8] = {0, 320, 640, 960, 1280, 1600, 200, 800};
+            const int32_t ys[8] = {0, 0, 0, 0, 0, 0, 540, 540};
+            for (int i = 0; i < 8; ++i) {
+                ov8[i].overlay = &ovb.fb;
+                ov8[i].x_offset = xs[i];
+                ov8[i].y_offset = ys[i];
+            }
+            HalDspBlendParams bp8{};
+            bp8.base = &base.fb;
+            bp8.overlays = ov8;
+            bp8.overlay_count = 8;
+            std::vector<double> lat8;
+            lat8.reserve(cfg.iters);
+            for (uint32_t k = 0; k < cfg.iters; ++k) {
+                const double t0 = now_us();
+                if (HAL_DSP_OPS.blend(ctx, &bp8) != 0) {
+                    ++errors;
+                }
+                lat8.push_back(now_us() - t0);
+            }
+            const LatencyStats st8 = summarize(lat8);
+            std::printf("    blend 1 ov : mean=%7.0fus p95=%7.0fus\n",
+                        st1.mean_us, st1.p95_us);
+            std::printf("    blend 8 ov : mean=%7.0fus p95=%7.0fus "
+                        "marginal=%7.1fus/ov\n",
+                        st8.mean_us, st8.p95_us,
+                        (st8.mean_us - st1.mean_us) / 7.0);
+        }
+
+        /* unsupported overlay format must be rejected (run LAST) */
+        Nv12Buffer bad{};
+        if (alloc_nv12(&bad, 64, 64, false)) {
+            HalDspOverlay bov{};
+            bov.overlay = &bad.fb;
+            bov.x_offset = 0;
+            bov.y_offset = 0;
+            HalDspBlendParams bb{};
+            bb.base = &base.fb;
+            bb.overlays = &bov;
+            bb.overlay_count = 1;
+            const int rcb = HAL_DSP_OPS.blend(ctx, &bb);
+            std::printf("    NV12 overlay (unsupported per docs) rc=%d -> %s\n",
+                        rcb, rcb != 0 ? "rejected as expected"
+                                      : "ACCEPTED (contract wider than docs)");
+            free_nv12(&bad);
+        }
+        free_nv12(&base);
+    }
+
+    HAL_DSP_OPS.deinit(ctx);
+    return 0;
+}
+
 /* mem-mode auto probe: try userptr first, fall back to dmabuf */
 bool alloc_auto(Nv12Buffer *src, Nv12Buffer *dst, const ProbeCfg &cfg,
                 std::string *used)
@@ -716,6 +1188,9 @@ int main(int argc, char **argv)
     }
     if (mode == "e3" || mode == "all") {
         run_e3(cfg, &src, &dst);
+    }
+    if (mode == "e4") { /* not in "all": e4 allocates its own dsts */
+        run_e4(cfg, &src);
     }
 
     free_nv12(&src);
