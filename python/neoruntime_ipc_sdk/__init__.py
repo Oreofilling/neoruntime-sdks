@@ -86,6 +86,7 @@ from .media import (
     EncodedStreamClient,
     FdMediaClient,
     Frame,
+    FrameHandle,
     PixelFormat,
     StreamInfo,
 )
@@ -125,6 +126,7 @@ __all__ = [
     # Media
     "FdMediaClient",
     "Frame",
+    "FrameHandle",
     "StreamInfo",
     "PixelFormat",
     "EncodedFrame",

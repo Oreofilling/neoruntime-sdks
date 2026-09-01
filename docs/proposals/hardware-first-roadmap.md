@@ -185,9 +185,40 @@ new file (md5) is actually mapped, not a stale inode held open.
 
 | # | Item | Detail |
 |---|---|---|
-| SDK-1 | **Frame fd retention (opt-in)** | `_recv_frame` today mmaps the received dma-buf, copies to numpy, and closes the fd (`media.py:663-669`) — `Frame` holds no fd, so no zero-copy path exists. Add a keep-fd mode carrying fd + per-plane stride/size; with the sync RPC, lifetime is trivial: hold the frame's release until `SubmitDspJob` returns. HAL-3 adds a requirement: any CPU access to a retained dma-buf must be fenced with `DMA_BUF_IOCTL_SYNC` (read-direction before numpy copies — today's mmap+copy path should adopt it too) |
+| SDK-1 | **Frame fd retention (opt-in)** ✅ done (2026-09-01) | `get_frame/subscribe(..., keep_fd=True)` returns a `FrameHandle` (dma-buf fds, per-plane strides/sizes, frame_id) with idempotent `release()`; `Frame.to_array()` lazily materializes, fenced with `DMA_BUF_IOCTL_SYNC`. Device-verified on 93.72 (4K NV12): 30/30 sustained retains at p50 23 ms; 2-frame × 2 s holds with live content; release after watchdog force-reclaim still unpins the window. **Constraints found:** retention budget ~4 s (FrameWatchdog warns ~4.2 s, force-reclaims buffers at ~5 s); `DMA_BUF_IOCTL_SYNC` returns EINVAL on these exporter fds (content coherent — SDK fences best-effort). **Three fd_publisher defects block fast releasers** — see note below |
 | SDK-2 | **`DspClient` with CPU fallback** | `resize_hw` / `crop_hw` / `multi_crop_hw` following the established cv2-optional pattern: hardware-first, numpy fallback when the RPC is absent — mirrors how `Frame.resize` degrades today |
 | SDK-3 | **`Frame.resize` fast-path switch (P1)** | opportunistic: route through `DspClient` when available, keep the current implementation as the fallback |
+
+### fd_publisher defects found during SDK-1 verification (2026-09-01, daemon v2.0.0 on 93.72)
+
+All in `camera-daemon` (platform repo); repro evidence in
+`journalctl -u camera-daemon` around 06:59:30 and 07:13:40 on 2026-09-01.
+
+1. **Use-after-free → SIGSEGV** (crashed the daemon, restart counter 1):
+   `FdPublisher::on_frame` collects `ClientState*` targets under
+   `clients_mu_` (fd_publisher.cpp:113-120), then dereferences them after
+   unlocking (:132-141); a concurrent `disconnect_client` frees the object
+   in between. Triggered by subscribe→read→release→disconnect churn.
+   Stack: `FdPublisher::on_frame` ← `FrameRouter::dispatch_loop`.
+2. **RELEASE-before-track race → permanent delivery stall**: `on_frame`
+   sends the frame (:147) *before* inserting it into `outstanding` (:150);
+   a client RELEASE arriving in that gap is discarded as "unknown"
+   (:372) and the slot pins at `max_outstanding_per_client=3` →
+   `frames_dropped` for that client until disconnect. Nondeterministic
+   (load-dependent): copy mode's 4K memcpy (~10-30 ms) hides it;
+   keep-fd's microsecond release hits it.
+3. **Non-blocking send never enabled**: `accept_loop` reads
+   `fcntl(F_GETFL)` (:216) but never calls `F_SETFL` with `O_NONBLOCK`,
+   and `fd_pub_sendmsg` passes only `MSG_NOSIGNAL` (fd_protocol.h:154) —
+   the dispatch thread can block on a slow client, contradicting the
+   "must not block HAL callback" comment at :215.
+
+Fix direction for 1+2: keep targets alive across the dispatch loop
+(shared_ptr), and insert into `outstanding` before sendmsg (erase +
+release on send failure). Until the platform ships fixes, the SDK
+documents the ~4 s retention budget and keeps releases on the client
+side unmodified — the SDK cannot detect a discarded RELEASE (no
+negative ack).
 
 ## Sequencing
 
@@ -199,7 +230,11 @@ HAL-4 + HAL-7 ✅ done (2026-09-01, platform    ──► PLAT-1..5 ✅ done (20
                                                          ├──► PLAT-6 ✅ (2026-09-01, encoder 30.02 fps
                                                          │     under 160 jobs/s, 0 drops)
                                                          ▼
-                                                 SDK-1..2 (fd retention + DspClient)
+                                                 SDK-1 ✅ (2026-09-01, keep-fd verified
+                                                         │   on device; 3 fd_publisher
+                                                         │   defects documented above)
+                                                         ▼
+                                                 SDK-2..3 (DspClient + fast-path)
 ```
 
 HAL-1's verified batch envelope (≤64 recommended) is folded into

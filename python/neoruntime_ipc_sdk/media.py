@@ -91,6 +91,59 @@ def _encode_jpeg(rgb: np.ndarray, quality: int = 85) -> bytes:
         return out.getvalue()
 
 
+class FrameHandle:
+    """Retained dma-buf backing store for one received frame (SDK-1).
+
+    In keep-fd mode the per-plane dma-buf fds the daemon passed with the
+    FRAME message are kept open here and the RELEASE message — the
+    daemon's buffer-recycling ticket — is deferred until :meth:`close`.
+    CPU access to the pixels must go through :meth:`Frame.to_array`,
+    which applies the required DMA_BUF_IOCTL_SYNC read fences. The fds
+    can also be handed to a future DspClient job as-is for a zero-copy
+    hardware path.
+    """
+
+    def __init__(self, fds: List[int], strides, plane_sizes, frame_id: int,
+                 on_release: Optional[Callable[["FrameHandle"], None]] = None):
+        self.fds = list(fds)
+        self.strides = tuple(strides)
+        self.plane_sizes = tuple(plane_sizes)
+        self.frame_id = frame_id
+        self._on_release = on_release
+        self._closed = False
+
+    @property
+    def fd(self) -> int:
+        """Convenience accessor for the first plane's fd."""
+        return self.fds[0]
+
+    def close(self) -> None:
+        """Close the fds and send the deferred RELEASE (idempotent)."""
+        if self._closed:
+            return
+        self._closed = True
+        for fd in self.fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if self._on_release is not None:
+            try:
+                self._on_release(self)
+            except Exception:
+                logger.exception("FrameHandle: release callback failed")
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __repr__(self) -> str:
+        return (f"FrameHandle(frame_id={self.frame_id}, "
+                f"fds={len(self.fds)}, released={self._closed})")
+
+
 @dataclass
 class Frame:
     sequence: int
@@ -98,25 +151,52 @@ class Frame:
     width: int
     height: int
     format: str
-    image: np.ndarray
+    image: Optional[np.ndarray]
     metadata: Dict[str, Any] = field(default_factory=dict)
+    handle: Optional[FrameHandle] = None
 
     @property
     def data(self) -> Optional[np.ndarray]:
         """Alias for image, returns raw frame data as flat numpy array."""
         if self.image is None:
-            return None
+            if self.handle is None:
+                return None
+            return self.to_array().flatten()
         return self.image.flatten()
 
+    def to_array(self) -> np.ndarray:
+        """Return the raw pixel buffer, materializing a retained fd.
+
+        For keep-fd frames this maps the dma-buf planes once (with the
+        DMA_BUF_IOCTL_SYNC read fences) and caches the copy in
+        ``image``; later calls return the cache without re-mapping.
+        """
+        if self.image is None:
+            if self.handle is None:
+                raise ValueError("Frame has no image data and no retained fd")
+            self.image = _decode_raw(
+                _materialize_handle(self.handle),
+                self.width, self.height, self.format)
+        return self.image
+
+    def release(self) -> None:
+        """Release a retained fd frame back to the daemon (idempotent).
+
+        No-op for frames that were copied on receive.
+        """
+        if self.handle is not None:
+            self.handle.close()
+
     def to_rgb(self) -> np.ndarray:
+        arr = self.to_array()
         if self.format == "RGB":
-            return self.image
+            return arr
         elif self.format == "BGR":
-            return self.image[:, :, ::-1]
+            return arr[:, :, ::-1]
         elif self.format == "NV12":
             return self._nv12_to_rgb()
         elif self.format == "GRAY8":
-            return np.stack([self.image] * 3, axis=-1)
+            return np.stack([arr] * 3, axis=-1)
         else:
             raise ValueError(f"Unsupported format: {self.format}")
     
@@ -159,15 +239,16 @@ class Frame:
                 f"crop ({x},{y},{width}x{height}) out of bounds for "
                 f"{self.width}x{self.height} frame")
         fmt = self.format
+        arr = self.to_array()
         if fmt in _PACKED_FORMATS:
             sub = np.ascontiguousarray(
-                self.image[y:y + height, x:x + width])
+                arr[y:y + height, x:x + width])
         elif fmt in _YUV_FORMATS:
             if x % 2 or y % 2 or width % 2 or height % 2:
                 raise ValueError(
                     f"{fmt} crop requires even x, y, width, height")
-            y_plane = self.image[:self.height]
-            uv_plane = self.image[self.height:]
+            y_plane = arr[:self.height]
+            uv_plane = arr[self.height:]
             new_y = y_plane[y:y + height, x:x + width]
             new_uv = uv_plane[y // 2:(y + height) // 2,
                               (x // 2) * 2:(x // 2 + width // 2) * 2]
@@ -196,6 +277,7 @@ class Frame:
             raise ValueError("resize width/height must be positive")
         if mode not in ("letterbox", "stretch", "crop"):
             raise ValueError(f"unsupported resize mode: {mode}")
+        self.to_array()  # materialize a retained fd before slicing planes
         fmt = self.format
         if fmt in _YUV_FORMATS:
             if width % 2 or height % 2:
@@ -526,8 +608,10 @@ class EncodedStreamClient:
         self.close()
 
 
+import fcntl  # noqa: E402
 import mmap  # noqa: E402
 import socket as _socket  # noqa: E402
+import weakref  # noqa: E402
 
 
 def _recvmsg_with_fds(sock: _socket.socket, bufsize: int, max_fds: int = _FD_PUB_MAX_FDS):
@@ -546,6 +630,60 @@ def _sendmsg_plain(sock: _socket.socket, data: bytes) -> None:
     sock.sendall(data)
 
 
+# DMA_BUF_IOCTL_SYNC (linux/dma-buf.h): _IOW('b', 0, u64) on 64-bit.
+_DMA_BUF_IOCTL_SYNC = 0x40086200
+_DMA_BUF_SYNC_READ = 1 << 0
+_DMA_BUF_SYNC_WRITE = 2 << 0
+_DMA_BUF_SYNC_START = 1 << 2
+_DMA_BUF_SYNC_END = 2 << 2
+
+
+def _dma_buf_sync(fd: int, flags: int) -> None:
+    """Fence CPU access to a dma-buf (HAL-3 discipline).
+
+    Device-written dma-bufs must be fenced READ|START before a CPU read
+    and READ|END after it, or the read can serve stale cache lines. On
+    non-dma-buf fds (memfd in tests, plain anon memory) the ioctl raises
+    ENOTTY — there is nothing to fence, so OSError is swallowed.
+    """
+    try:
+        fcntl.ioctl(fd, _DMA_BUF_IOCTL_SYNC, struct.pack("=Q", flags))
+    except OSError:
+        pass
+
+
+def _decode_raw(raw: np.ndarray, w: int, h: int, fmt: str) -> np.ndarray:
+    """Reshape a flat frame buffer into its per-format image layout."""
+    if fmt in ("NV12", "NV21"):
+        return raw.reshape(h * 3 // 2, w)
+    elif fmt in ("RGB", "BGR"):
+        return raw.reshape(h, w, 3)
+    elif fmt in ("RGBA", "BGRA"):
+        return raw.reshape(h, w, 4)
+    elif fmt == "GRAY8":
+        return raw.reshape(h, w)
+    elif fmt == "YUYV":
+        return raw.reshape(h, w, 2)
+    return raw.reshape(h, w, 3)
+
+
+def _materialize_handle(handle: FrameHandle) -> np.ndarray:
+    """Map a retained frame's planes and return them as one numpy copy."""
+    planes = []
+    for i, fd in enumerate(handle.fds):
+        size = handle.plane_sizes[i] if i < len(handle.plane_sizes) else 0
+        _dma_buf_sync(fd, _DMA_BUF_SYNC_READ | _DMA_BUF_SYNC_START)
+        actual_size = os.fstat(fd).st_size
+        buf = mmap.mmap(fd, actual_size, access=mmap.ACCESS_READ)
+        try:
+            plane = np.frombuffer(buf, dtype=np.uint8)[:size].copy()
+        finally:
+            buf.close()
+        _dma_buf_sync(fd, _DMA_BUF_SYNC_READ | _DMA_BUF_SYNC_END)
+        planes.append(plane)
+    return np.concatenate(planes) if len(planes) > 1 else planes[0]
+
+
 class FdMediaClient:
     """Zero-copy media client using DMA-BUF FD passing over Unix Domain Socket."""
 
@@ -555,6 +693,9 @@ class FdMediaClient:
         self.socket_path = socket_path
         self._streams: dict[str, _socket.socket] = {}
         self._lock = threading.Lock()
+        # Retained keep-fd handles. WeakSet: tracking without extending
+        # lifetime — a dropped Frame is GC-released back to the daemon.
+        self._retained: "weakref.WeakSet[FrameHandle]" = weakref.WeakSet()
 
     # PLACEHOLDER_FDMEDIACLIENT_METHODS
 
@@ -597,7 +738,8 @@ class FdMediaClient:
         except OSError:
             pass
 
-    def _recv_frame(self, sock: _socket.socket) -> Frame | None:
+    def _recv_frame(self, sock: _socket.socket,
+                    keep_fd: bool = False) -> Frame | None:
         skipped = 0
         eof_count = 0
         for _attempt in range(32):
@@ -640,7 +782,7 @@ class FdMediaClient:
         height = values[6]
         fmt_code = values[7]
         num_planes = values[8]
-        _strides = values[9:12]
+        strides = values[9:12]
         sizes = values[12:15]
         _num_fds_expected = values[15]
 
@@ -648,20 +790,48 @@ class FdMediaClient:
 
         fmt_name = PIXEL_FORMAT_NAMES.get(fmt_code, f"UNKNOWN({fmt_code})")
 
-        try:
-            if not fds:
-                self._release_frame(sock, frame_id)
-                return None
+        if not fds:
+            self._release_frame(sock, frame_id)
+            return None
 
+        if keep_fd:
+            def _on_release(h: FrameHandle) -> None:
+                self._retained.discard(h)
+                self._release_frame(sock, h.frame_id)
+
+            handle = FrameHandle(
+                fds=fds, strides=strides, plane_sizes=sizes,
+                frame_id=frame_id, on_release=_on_release,
+            )
+            self._retained.add(handle)
+            logger.debug(
+                "FdMediaClient: retained frame seq=%d %dx%d %s (frame_id=%d)",
+                sequence, width, height, fmt_name, frame_id,
+            )
+            return Frame(
+                sequence=sequence,
+                timestamp_ns=timestamp_ns,
+                width=width,
+                height=height,
+                format=fmt_name,
+                image=None,
+                handle=handle,
+            )
+
+        # Copy path: mmap each dma-buf plane (fenced per HAL-3), copy to
+        # numpy, close the fds, then hand the buffer back to the daemon.
+        try:
             # DMA-BUF fds must be mmapped per-plane using the fd's actual size,
             # not the protocol-reported plane size (which excludes alignment padding).
             planes = []
             for i in range(min(num_planes, len(fds))):
                 fd = fds[i]
+                _dma_buf_sync(fd, _DMA_BUF_SYNC_READ | _DMA_BUF_SYNC_START)
                 actual_size = os.fstat(fd).st_size
                 buf = mmap.mmap(fd, actual_size, access=mmap.ACCESS_READ)
                 plane_data = np.frombuffer(buf, dtype=np.uint8)[:sizes[i]].copy()
                 buf.close()
+                _dma_buf_sync(fd, _DMA_BUF_SYNC_READ | _DMA_BUF_SYNC_END)
                 planes.append(plane_data)
             raw = np.concatenate(planes) if len(planes) > 1 else planes[0]
         finally:
@@ -675,7 +845,7 @@ class FdMediaClient:
             sequence, width, height, fmt_name, frame_id,
         )
 
-        image = self._decode(raw, width, height, fmt_name)
+        image = _decode_raw(raw, width, height, fmt_name)
         return Frame(
             sequence=sequence,
             timestamp_ns=timestamp_ns,
@@ -685,25 +855,19 @@ class FdMediaClient:
             image=image,
         )
 
-    @staticmethod
-    def _decode(raw: np.ndarray, w: int, h: int, fmt: str) -> np.ndarray:
-        if fmt in ("NV12", "NV21"):
-            return raw.reshape(h * 3 // 2, w)
-        elif fmt in ("RGB", "BGR"):
-            return raw.reshape(h, w, 3)
-        elif fmt in ("RGBA", "BGRA"):
-            return raw.reshape(h, w, 4)
-        elif fmt == "GRAY8":
-            return raw.reshape(h, w)
-        elif fmt == "YUYV":
-            return raw.reshape(h, w, 2)
-        return raw.reshape(h, w, 3)
+    def get_frame(self, stream_id: str, timeout_ms: int = 5000, *,
+                  keep_fd: bool = False) -> Frame | None:
+        """Receive one frame.
 
-    def get_frame(self, stream_id: str, timeout_ms: int = 5000) -> Frame | None:
+        With ``keep_fd=True`` the frame's dma-buf fds are retained
+        (zero-copy handoff; see :class:`FrameHandle`) instead of copied,
+        and the daemon-side buffer release is deferred until
+        ``frame.release()`` / GC / client close.
+        """
         sock = self._get_sock(stream_id)
         sock.settimeout(timeout_ms / 1000.0)
         try:
-            return self._recv_frame(sock)
+            return self._recv_frame(sock, keep_fd=keep_fd)
         except _socket.timeout:
             return None
         except (ConnectionError, OSError):
@@ -717,12 +881,13 @@ class FdMediaClient:
                         pass
             raise
 
-    def subscribe_raw(self, stream_id: str, skip_frames: bool = True) -> Iterator[Frame]:
+    def subscribe_raw(self, stream_id: str, skip_frames: bool = True,
+                      keep_fd: bool = False) -> Iterator[Frame]:
         sock = self._get_sock(stream_id)
         sock.settimeout(5.0)
         while True:
             try:
-                frame = self._recv_frame(sock)
+                frame = self._recv_frame(sock, keep_fd=keep_fd)
                 if frame is not None:
                     yield frame
             except _socket.timeout:
@@ -738,8 +903,9 @@ class FdMediaClient:
                 sock = self._get_sock(stream_id)
                 sock.settimeout(5.0)
 
-    def subscribe(self, stream_id: str, skip_frames: bool = True) -> Iterator[Frame]:
-        return self.subscribe_raw(stream_id, skip_frames)
+    def subscribe(self, stream_id: str, skip_frames: bool = True,
+                  keep_fd: bool = False) -> Iterator[Frame]:
+        return self.subscribe_raw(stream_id, skip_frames, keep_fd)
 
     def on_frame(self, stream_id: str, callback: Callable[[Frame], None]) -> threading.Thread:
         def _run():
@@ -756,6 +922,13 @@ class FdMediaClient:
         logger.info(
             "FdMediaClient: closing %d stream connections", len(self._streams),
         )
+        # Release retained frames first so the daemon recycles their
+        # buffers before the subscriptions and sockets go away.
+        for handle in list(self._retained):
+            try:
+                handle.close()
+            except Exception:
+                pass
         with self._lock:
             for sock in self._streams.values():
                 try:
