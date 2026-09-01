@@ -92,14 +92,57 @@ reboot. Consequences:
 
 ## Platform-layer work items (camera-daemon)
 
+**PLAT-1..5 were implemented and verified 2026-09-01** on
+192.168.93.72 (platform branch `feat/dsp-service-p0`): the probe
+(`/tmp/dsp_plat_probe`, gRPC control + UDS fd-passing client, both
+cross-compiled against the daemon's own proto) passed **21/21** against
+the live daemons — including two core dumps' worth of bisecting that
+ended in a client-side pitfall, not a daemon defect (see
+"Vendor limitation" below). End-to-end through the RPC path:
+**4.7 ms/job for a 16-rect MULTI_CROP (3410 rects/s burst, 213 jobs/s)**,
+quota enforcement observed live (58 accepted / 5 quota-rejected in a
+tight client loop), and every cap verified from the hostile side
+(33-buffer/66-fd alloc → rejected, batch 66 → rejected, released and
+unknown buffer ids → rc −2, bad pixel format → rejected).
+
 | # | Item | Detail |
 |---|---|---|
-| PLAT-1 | **`dsp_service` module owning the one HAL context** | extend the existing init path (`dpm_worker.cpp:473`) into a service that serializes *all* DSP work — encoder pre-scale, DPM, OSD, app jobs — through one daemon queue (D1). No per-client `init` ever |
-| PLAT-2 | **`SubmitDspJob` RPC, synchronous form first** | E3: async depth-4 bought +6 % (100.2→106.4 jobs/s, Little's-law-consistent single server) — async submit/wait moves to P2 with a real pipelining consumer |
-| PLAT-3 | **`MULTI_CROP_AND_RESIZE` in P0, not later — batch cap 64** | D2: the RPC contract must make the batched op at least as easy as the single op (repeated `rects`), or every app will submit per-tile and pay the per-op cost each. Cap anchored to measurement: N≤128 verified all-written, N=260 silently truncates (HAL-1) — reject `rects > 64` at validation |
-| PLAT-4 | **Scheduler: priority + quota + caps + timeout** | platform jobs preempt app jobs; per-app jobs/s and MPix/s budgets; max-pixel cap at validation; job timeout via the existing HAL `wait(timeout_ms)`+cancel. Quota anchors from measurement — **dma-buf figures now apply** (HAL-3): single-op resize ~1 500 ops/s, multi-crop N=7 ~6 500 rects/s → suggested starting quota **~100 jobs/s and ~120 MPix/s per app** (was ~30/60 on the userptr assumption); keep the encoder-drop soak (PLAT-6) as the real gate before raising |
-| PLAT-5 | **`AllocateDspBuffer` + fd passing — now the primary performance item** | dma-buf fds over gRPC, same fd-passing pattern the raw-media UDS path already uses platform-wide; alloc via CMA dma-heap. HAL-3 measured the same ops 10-15x faster on dma-buf (the userptr page-mapping cost *was* the P0 "~7-10 ms submission path") — so fd passing is not just zero-copy hygiene, it is what makes per-frame DSP use viable. Contract must include the `DMA_BUF_IOCTL_SYNC` discipline (write-fence after any CPU fill, read-fence before any CPU read) |
-| PLAT-6 | **Encoder-contention regression gate** | the existing drop path (`dpm_worker.cpp:815-817`, "DSP contention with the encoder") must be measured under app load before opening the RPC: E2b proved coexistence *safe* (1093 ops, 0 errors) but did not measure encoder frame drops — that is the acceptance metric for P0 |
+| PLAT-1 ✅ | **`dsp_service` module owning the one HAL context** | implemented as a daemon-owned service; all app jobs ride the same context the encoder/DPM paths use (D1). Buffers come from dedicated CMA dma-heap pools keyed by geometry (`pool_max_buffers = 32` per geometry — a 32-buffer NV12 pool is exactly 64 fds, the SCM_RIGHTS ceiling the UDS path passes in one message, so a full pool can always be handed to one client atomically) | 
+| PLAT-2 ✅ | **`SubmitDspJob` RPC, synchronous form first** | live on the UDS control socket `/run/aipc/camera-control.sock`; op/interpolation/scaling enums validated against the proto before HAL conversion (E3: async depth-4 bought +6 % — async moves to P2) |
+| PLAT-3 ✅ | **`MULTI_CROP_AND_RESIZE` in P0, not later — batch cap 64** | verified from both sides: N=16 jobs pass with per-ROI content and gradient checks; `rects`/`dst_ids` above 64 rejected at validation with an explicit message; mismatched `dst_ids.size()` also rejected |
+| PLAT-4 ✅ | **Scheduler: priority + quota + caps + timeout** | per-client quota **100 jobs/s and 120 MPix/s** (anchors from the dma-buf HAL-3 numbers) enforced under lock — the probe's unthrottled loop saw 58 ok / 5 quota_rej; 2000 ms job timeout via the HAL `wait(timeout_ms)`+cancel path |
+| PLAT-5 ✅ | **`AllocateDspBuffer` + fd passing** | UDS `/run/aipc/camera.sock` flat messages `DSP_ALLOC` / `DSP_ALLOC_RESP` / `DSP_BUF_RELEASE` with SCM_RIGHTS (max 64 fds per message, enforced: 66 → rejected); per-plane stride/size returned; released and unknown ids correctly rejected (rc −2); `DMA_BUF_IOCTL_SYNC` write-fence after CPU fill verified as required for correct DSP reads |
+| PLAT-6 | **Encoder-contention regression gate** | the existing drop path (`dpm_worker.cpp:815-817`, "DSP contention with the encoder") must be measured under app load before opening the RPC: E2b proved coexistence *safe* (1093 ops, 0 errors) but did not measure encoder frame drops — that is the acceptance metric for P0. **Not yet run — the one remaining platform item.** |
+
+### Vendor limitation discovered during verification
+
+`MULTI_CROP_AND_RESIZE` **rejects NEAREST interpolation**
+(`DSP_INTERP_NEAREST` = 0) with `DSP_INVALID_ARGUMENT` →
+`HAL_ERR_RESULT` (−2801); only BILINEAR(1) and BICUBIC(3) are accepted
+on the batched op (the vendor perf path gates on
+`(interp & ~2) == 1`). Single-op `crop_and_resize` accepts NEAREST.
+This bit the probe itself, not the daemon: a gRPC client that omits
+`set_interpolation()` silently gets 0 = NEAREST and every multi-crop
+job fails with −2801 — the exact signature that cost two core dumps to
+bisect. Two consequences, both now in place:
+
+- the probe (and any future SDK client) must always set
+  `interpolation` explicitly on MULTI_CROP jobs;
+- clients of the future `DspClient` should default multi-crop to
+  BILINEAR, and the daemon-side validation should consider rejecting
+  NEAREST-on-MULTI_CROP with a named error rather than letting the
+  vendor code surface as a generic −2801.
+
+The clean HAL also now logs the vendor `dsp_status` by name
+(`DSP_INVALID_ARGUMENT`, `DSP_RUN_COMMAND_FAILED`, …) before collapsing
+to `HAL_ERR_RESULT`, so this class of failure is diagnosable from
+journalctl alone instead of requiring instrumentation.
+
+Deployment note for reproducing on-device runs: the daemon loads
+`libaipc_hal.so.2` via the soname symlink — after replacing
+`libaipc_hal.so.2.0.0`, verify with
+`grep libaipc_hal.so.2.0.0 /proc/$(pidof camera-daemon)/maps` that the
+new file (md5) is actually mapped, not a stale inode held open.
 
 ## SDK-layer work items (this repo, for completeness)
 
@@ -113,17 +156,21 @@ reboot. Consequences:
 
 ```
 HAL-1..3 ✅ done (2026-09-01, results above)
-HAL-4 + HAL-7 ✅ done (2026-09-01, platform    ──► PLAT-1..5 (dsp_service + RPC + scheduler)
-      branch fix/hal15-dsp-batch-storage,              │
-      commit 4c65a595)                                 ▼
+HAL-4 + HAL-7 ✅ done (2026-09-01, platform    ──► PLAT-1..5 ✅ done (2026-09-01, 21/21 on device,
+      branch fix/hal15-dsp-batch-storage,              branch feat/dsp-service-p0)
+      commit 4c65a595)                                 │
+                                                         ├──► PLAT-6 encoder soak gate ──► open P0 to apps
+                                                         ▼
                                                  SDK-1..2 (fd retention + DspClient)
-                                                        │
-                                                        └──► PLAT-6 encoder soak gate ──► open P0 to apps
 ```
 
-HAL-1's verified batch envelope (≤64 recommended) is already folded
-into PLAT-3's cap; HAL-3's dma-buf numbers set PLAT-4's quota anchors.
-Nothing else blocks on HAL items.
+HAL-1's verified batch envelope (≤64 recommended) is folded into
+PLAT-3's cap; HAL-3's dma-buf numbers set PLAT-4's quota anchors; the
+PLAT-5 measurements (4.7 ms/job end-to-end through gRPC + fd passing,
+vs 3.26 ms for the same N=16 batch called in-process through the HAL)
+price the RPC layer itself at roughly 1.4 ms/job — acceptable for P0,
+and amortized by larger batches. The remaining blockers are PLAT-6
+(encoder soak) and the SDK client work; nothing blocks on HAL items.
 
 ## Explicitly deferred
 

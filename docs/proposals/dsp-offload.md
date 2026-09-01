@@ -253,3 +253,37 @@ Conclusions folded into
    on device: HAL-path N=16/64 bit-exact both mem modes (dma-buf
    N=64: 11.5 ms, 5 561 rects/s), N=129 rejected rc −2814, blend
    semantics unchanged.
+
+## P0 implementation verified on device (2026-09-01)
+
+PLAT-1..5 of the [roadmap](hardware-first-roadmap.md) were implemented
+in the platform repo (branch `feat/dsp-service-p0`) and verified on
+192.168.93.72 with all daemons live: a purpose-built client probe
+(gRPC `SubmitDspJob` on the control UDS + flat `DSP_ALLOC` /
+`DSP_BUF_RELEASE` fd-passing on the media UDS, both cross-compiled
+against the daemon's own proto) passed **21/21** checks — connects,
+allocs (32-buffer dst pool = 64 fds in one SCM_RIGHTS message), hostile
+rejections (bad format, 66 fds, batch 66, released/unknown ids),
+content correctness (per-ROI means, gradient monotonicity, neutral-gray
+convert), sequencing (multi after resize, multi after convert), quota
+enforcement (58 ok / 5 quota_rej in an unthrottled loop), and timing.
+
+Measured through the full RPC path (N=16 MULTI_CROP, 16-rect batches of
+448×288 from 1080p): **4.7-4.8 ms/job → 213 jobs/s burst, 3410 rects/s**.
+Against the 3.26 ms in-process HAL figure for the same batch, the RPC
+layer (gRPC serialization + fd passing + scheduler) prices at
+~1.4 ms/job — acceptable for P0 and amortized by larger batches.
+
+### Vendor limitation: NEAREST is rejected on MULTI_CROP
+
+`MULTI_CROP_AND_RESIZE` accepts only BILINEAR(1) and BICUBIC(3);
+NEAREST(0) returns `DSP_INVALID_ARGUMENT` → `HAL_ERR_RESULT` (−2801).
+The vendor perf path gates on `(interp & ~2) == 1`; single-op
+`crop_and_resize` still accepts NEAREST. This cost two daemon core
+dumps to find, because a gRPC client that omits `set_interpolation()`
+silently gets proto-default 0 = NEAREST and every multi-crop fails
+with a generic −2801 — the daemon path itself was correct throughout.
+Client rules: always set `interpolation` explicitly on multi-crop;
+default to BILINEAR. The clean HAL now logs the vendor `dsp_status` by
+name before collapsing to `HAL_ERR_RESULT`, making this class of
+failure diagnosable from journalctl alone.
