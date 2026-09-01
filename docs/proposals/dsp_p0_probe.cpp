@@ -19,10 +19,12 @@
  *   e3   single-context throughput: sync loop vs async submit/wait pipeline
  *        (depth D), latency percentiles.
  *   e4   HAL-1/2/3 validation (2026-09-01):
- *        A: multi_crop_and_resize via HAL ops table, N=1/2/4/7. The hal_v2
- *           wrapper sizes its stack storage for DSP_MULTI_RESIZE_OUTPUTS_COUNT
- *           == 7 but passes output_count UNCLAMPED, so N>7 through the HAL
- *           path would read out of bounds inside the vendor lib — never run.
+ *        A: multi_crop_and_resize via HAL ops table, N=1/2/4/7/16/64. N>7
+ *           exercises the hal_v2 wrapper fix (2026-09-01): dynamic storage
+ *           sized to output_count, batches above HAL_DSP_MULTI_CROP_MAX_OUTPUTS
+ *           (128) rejected with HAL_ERR_INVALID_ARG instead of truncated.
+ *           Before the fix the wrapper used fixed stack storage of 7 with an
+ *           unclamped count (OOB read inside the vendor lib for N>7).
  *        B: vendor-direct dsp_multi_crop_and_resize, N=1/7/16/64/260 (vendor
  *           documents max 260 crops per job) — per-rect marginal cost curve.
  *        C: blend. Base must be NV12 (only supported format), overlays only
@@ -787,11 +789,11 @@ int run_e4(const ProbeCfg &cfg, Nv12Buffer *src)
         return -1;
     }
 
-    /* ---- E4-A: HAL ops-table multi_crop_and_resize, N <= 7 ---- */
-    std::printf("\n[E4-A] HAL multi_crop_and_resize (ops table; wrapper cap "
-                "7, N>7 skipped — unclamped count would read OOB)\n");
+    /* ---- E4-A: HAL ops-table multi_crop_and_resize, N <= 64 ---- */
+    std::printf("\n[E4-A] HAL multi_crop_and_resize (ops table; wrapper "
+                "dynamic storage, N>7 exercises the HAL-7 fix)\n");
     {
-        const uint32_t Ns[] = {1, 2, 4, 7};
+        const uint32_t Ns[] = {1, 2, 4, 7, 16, 64};
         double mean_1 = 0.0;
         for (uint32_t N : Ns) {
             std::vector<Nv12Buffer> dsts(N);
@@ -849,8 +851,10 @@ int run_e4(const ProbeCfg &cfg, Nv12Buffer *src)
             }
 
             std::vector<double> lat;
-            lat.reserve(cfg.iters);
-            for (uint32_t k = 0; k < cfg.iters; ++k) {
+            const uint32_t iters = (N >= 64) ? std::max(30u, cfg.iters / 2)
+                                             : cfg.iters;
+            lat.reserve(iters);
+            for (uint32_t k = 0; k < iters; ++k) {
                 const double t0 = now_us();
                 if (HAL_DSP_OPS.multi_crop_and_resize(ctx, &p) != 0) {
                     ++errors;
@@ -868,6 +872,47 @@ int run_e4(const ProbeCfg &cfg, Nv12Buffer *src)
                 (N > 1 && mean_1 > 0.0) ? (st.mean_us - mean_1) / (N - 1)
                                         : 0.0,
                 det ? 1 : 0, maxdelta, nonzero ? 1 : 0, rc);
+            for (auto &d : dsts) {
+                free_nv12(&d);
+            }
+        }
+
+        /* HAL-7 validation edge: a batch above HAL_DSP_MULTI_CROP_MAX_OUTPUTS
+         * must be rejected, not truncated (rejection happens before any
+         * outputs[] dereference, so no DSP work runs here). */
+        {
+            const uint32_t over = HAL_DSP_MULTI_CROP_MAX_OUTPUTS + 1;
+            std::vector<Nv12Buffer> dsts(over);
+            bool ok = true;
+            for (auto &d : dsts) {
+                ok = ok && alloc_nv12(&d, cfg.ow, cfg.oh, false);
+            }
+            if (!ok) {
+                std::printf("    N=%u dst alloc FAILED\n", over);
+            } else {
+                std::vector<HalDspRoi> rois(over);
+                std::vector<HalDspMultiCropOutput> outs(over);
+                make_roi_grid(rois.data(), over, cfg.w, cfg.h);
+                for (uint32_t i = 0; i < over; ++i) {
+                    outs[i].crop = rois[i];
+                    outs[i].dst = &dsts[i].fb;
+                    outs[i].scaling_mode = HAL_DSP_SCALING_STRETCH;
+                    outs[i].letterbox_color = HalDspColor{};
+                }
+                HalDspMultiCropResizeParams p{};
+                p.src = &src->fb;
+                p.outputs = outs.data();
+                p.output_count = over;
+                p.interpolation = HAL_DSP_INTERPOLATION_BILINEAR;
+                const int rc = HAL_DSP_OPS.multi_crop_and_resize(ctx, &p);
+                const bool rejected = (rc != 0);
+                std::printf("    HAL N=%u (cap+1) rc=%d rejected=%d %s\n",
+                            over, rc, rejected ? 1 : 0,
+                            rejected ? "OK" : "FAIL");
+                if (!rejected) {
+                    ++errors;
+                }
+            }
             for (auto &d : dsts) {
                 free_nv12(&d);
             }

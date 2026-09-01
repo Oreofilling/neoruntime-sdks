@@ -242,6 +242,14 @@ Conclusions folded into
    after any CPU fill, read-fence before any CPU read — without it the
    probe saw stale reads (blend delta −57.78 vs true −77.52) and
    phantom non-determinism.
-4. hal_v2's multi-crop wrapper cannot take N>7 today (stack storage of
-   7, count passed unclamped — OOB read inside the vendor lib); needs
-   the clamp fix before the daemon routes batches through it.
+4. hal_v2's multi-crop wrapper could not take N>7 (stack storage of 7,
+   count passed unclamped — OOB read inside the vendor lib). **Fixed
+   2026-09-01** (platform branch `fix/hal15-dsp-batch-storage`,
+   commit `4c65a595`): per-call dynamic storage, batches above
+   `HAL_DSP_MULTI_CROP_MAX_OUTPUTS` (128) rejected with
+   `HAL_ERR_INVALID_ARG`, and blend's shared `static
+   overlays_storage[50]` replaced with per-call storage — the
+   shared-state hazard noted in conclusion 1 above is gone. Verified
+   on device: HAL-path N=16/64 bit-exact both mem modes (dma-buf
+   N=64: 11.5 ms, 5 561 rects/s), N=129 rejected rc −2814, blend
+   semantics unchanged.

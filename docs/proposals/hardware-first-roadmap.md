@@ -37,14 +37,17 @@ jobs). No item below asks hal_v2 for a new op.
 **HAL-1, HAL-2, HAL-3 were executed 2026-09-01** (probe mode `e4`,
 192.168.93.72, daemons live; results below the table and in
 [dsp-offload.md](dsp-offload.md#hal-validation-experiments-e4-2026-09-01)).
+**HAL-4 and HAL-7 were fixed the same day** in the platform repo
+(branch `fix/hal15-dsp-batch-storage`) and re-verified on device with
+the same probe.
 
 | # | Item | Why | Evidence / starting point |
 |---|---|---|---|
 | HAL-1 ✅ | **Characterize `multi_crop_and_resize` on hardware** | D2 makes batching the core RPC design bet; the P0 probe had measured single-op `resize` only. **Result: verified all-written envelope N≤128; per-rect marginal cost ~70-150 µs (dmabuf) / ~1.2-1.5 ms (userptr); N=260 silently truncates to 4 outputs with rc=0** | probe mode e4 (E4-A/E4-B) |
 | HAL-2 ✅ | **Validate `blend`** — base NV12, overlays A420/ARGB only (alpha from the overlay's alpha channel, base modified in place) | P1 prerequisite for `ai-overlay-extended.md`. **Result: exact semantics verified** — alpha=0 passthrough (Δ±0.00), alpha=255 blends to pure-red luma (Δ−77.52, identical in both mem modes), outside region untouched, NV12 overlay rejected (rc −2801, matches docs) | probe E4-C |
 | HAL-3 ✅ | **Validate the `HAL_MEM_DMABUF` path through hal_v2 ops** | app→daemon buffer handoff must be dma-buf. **Result: functional, bit-exact deterministic, and 10-15x faster than USERPTR. Two-side `DMA_BUF_IOCTL_SYNC` discipline required** (CPU-write → SYNC(WRITE) before DSP read; DSP-write → SYNC(READ) before CPU read) — without it, stale reads and phantom non-determinism | probe E4-A/C under `--mem dmabuf` |
-| HAL-4 | Header hygiene: `hailo15_dsp_priv.hpp` lacks `<thread>`/`<mutex>`/`<condition_variable>`/`<atomic>` when compiled outside the CMake build | forced `-include` workarounds in the probe; out-of-tree tools (and any future SDK-side tooling) should compile with just `-I include` | probe build line in its header |
-| HAL-7 **new** | **Fix the hal_v2 multi-crop wrapper before any platform use**: `hailo15_dsp_impl.cpp:249-290` stack-allocates `crop_params_storage[DSP_MULTI_RESIZE_OUTPUTS_COUNT]` (7) but passes `output_count` **unclamped** → N>7 through the HAL ops table reads out of bounds inside the vendor lib | batched RPC wants N up to 64+; the HAL path must clamp or dynamically size. (The probe capped E4-A at N=7 for exactly this reason) | `platforms/hailo15/dsp/hailo15_dsp_impl.cpp:249-290` |
+| HAL-4 ✅ | Header hygiene: out-of-tree builds of the impl needed `-include` workarounds. **Only `<thread>` was actually missing** from `hailo15_dsp_priv.hpp` (`<mutex>`/`<condition_variable>`/`<atomic>`/`<queue>` were already included; the extra flags were cargo-cult from the probe). **Fixed 2026-09-01**: `<thread>` added to the priv header, `<chrono>`/`<cstdlib>`/`<vector>` now directly included by the impl — the probe compiles with just `-I include` | platform branch `fix/hal15-dsp-batch-storage`, commit `4c65a595` |
+| HAL-7 ✅ | **hal_v2 multi-crop wrapper fixed before any platform use**: was fixed stack storage of 7 + `output_count` unclamped (OOB read inside the vendor lib for N>7). **Fixed 2026-09-01**: storage dynamically sized per call; batches above the new `HAL_DSP_MULTI_CROP_MAX_OUTPUTS` (128, `hal_dsp.h`) rejected with `HAL_ERR_INVALID_ARG` instead of truncated; blend's shared `static overlays_storage[50]` (thread-race between sync/async paths + silent 50 clamp) replaced with per-call storage. **Verified on 93.72**: HAL-path N=16/64 bit-exact in both mem modes (dmabuf N=64: 11.5 ms / 5 561 rects/s), N=129 rejected rc −2814, blend semantics unchanged (dY −77.52, NV12 overlay −2801) | platform branch `fix/hal15-dsp-batch-storage`, commit `4c65a595` |
 | HAL-5 | *(optional, defense-in-depth)* second daemon handle with `dsp_set_priority(HIGH)` for platform jobs | the vendor singleton queue arbitrates **per handle priority**: a platform job submitted behind an app job still runs first (only the in-flight op is non-preemptible). Cheap because E1 proved multi-handle works. The daemon queue stays the primary arbiter | `send_command.cpp:42`, `dsp_set_priority` in `hailodsp_base.h:103` |
 | HAL-6 | *(optional, P2)* expose utilization/stats via the `dsp_get_utilization` redeclaration pattern | quota tuning needs a feedback signal; 19 %/21 % numbers came from this path | probe TU redeclaration |
 
@@ -54,9 +57,17 @@ jobs). No item below asks hal_v2 for a new op.
 |---|---|---|---|---|
 | HAL multi_crop | 1 | 6.9 ms | **0.64 ms** | 1 560 ops/s |
 | HAL multi_crop | 7 | 14.0 ms | **1.06 ms** | 6 598 rects/s |
+| HAL multi_crop (post-HAL-7) | 16 | 30.1 ms | **3.26 ms** | 4 915 rects/s |
+| HAL multi_crop (post-HAL-7) | 64 | 79.8 ms | **11.5 ms** | 5 561 rects/s |
 | blend | 1 ov | 9.1 ms | **0.67 ms** | — |
 | blend | 8 ov | 10.4 ms | **1.57 ms** | ~129 µs/ov marginal |
 | vendor multi_crop (dmabuf src, userptr dsts) | 1 | 7.0 ms | 2.1 ms | src-side mapping alone ≈ 5 ms of the ~7 ms userptr cost |
+
+The N=16/64 rows were measured through the HAL ops table after the
+HAL-7 fix (2026-09-01, same load and settings); before the fix the HAL
+path could not take N>7 at all. Marginal per-rect cost on dma-buf stays
+in the ~150-175 µs band from N=2 to N=64 — the batch envelope holds
+through the HAL wrapper.
 
 Correctness: deterministic (maxd=0) in both mem modes once the
 `DMA_BUF_IOCTL_SYNC` discipline is applied; blend deltas match
@@ -74,7 +85,10 @@ reboot. Consequences:
   also verified but doubles sync-RPC latency to ~150 ms under load),
 - rc=0 alone is not proof a batch completed — the daemon must
   validate output counts it constructed itself, and never forward a
-  client-supplied count above the cap.
+  client-supplied count above the cap. The HAL now enforces its own
+  ceiling too: batches above `HAL_DSP_MULTI_CROP_MAX_OUTPUTS` (128)
+  are rejected with `HAL_ERR_INVALID_ARG` instead of truncated
+  (verified on device: N=129 → rc −2814, no DSP work).
 
 ## Platform-layer work items (camera-daemon)
 
@@ -99,15 +113,12 @@ reboot. Consequences:
 
 ```
 HAL-1..3 ✅ done (2026-09-01, results above)
-HAL-4 (header include fix, trivial)          ──┐
-HAL-7 (multi-crop wrapper clamp, required    ──┤
-      before the daemon routes batches        │
-      through the HAL path)                   ├─► PLAT-1..5 (dsp_service + RPC + scheduler)
-                                              │        │
-                                              │        ▼
-                                              │   SDK-1..2 (fd retention + DspClient)
-                                              │        │
-                                              └──► PLAT-6 encoder soak gate ──► open P0 to apps
+HAL-4 + HAL-7 ✅ done (2026-09-01, platform    ──► PLAT-1..5 (dsp_service + RPC + scheduler)
+      branch fix/hal15-dsp-batch-storage,              │
+      commit 4c65a595)                                 ▼
+                                                 SDK-1..2 (fd retention + DspClient)
+                                                        │
+                                                        └──► PLAT-6 encoder soak gate ──► open P0 to apps
 ```
 
 HAL-1's verified batch envelope (≤64 recommended) is already folded
