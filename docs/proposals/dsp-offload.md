@@ -31,8 +31,10 @@ RPC plumbing, not new hardware work:
   `convert_format`, `resize`, `crop_and_resize`, `multi_crop_and_resize`,
   `blend`, `flip_rotate`, `privacy_mask` (lines 279-285), plus the full
   async job API `submit` / `wait(timeout_ms)` / `cancel` / `job_release`
-  (lines 302-337). Context-based (`init`/`deinit`), which maps naturally
-  onto per-client sessions.
+  (lines 302-337). Context-based (`init`/`deinit`) — but see
+  [Context-model decision experiments](#context-model-decision-experiments-2026-09-01):
+  measured on hardware, extra in-process contexts buy zero parallelism,
+  so the daemon keeps **one** context and multiplexes.
 - `platform/camera-daemon/src/dpm_worker.cpp:473` — the daemon already
   initializes and drives a DSP context (`dsp_ops_->init(...)`), proving
   the driver path works inside a daemon.
@@ -152,3 +154,54 @@ hence quota-first, open-by-opt-in.
   compositing.
 - `frame-injection.md` requires `CONVERT_FORMAT`/`RESIZE` to turn app
   RGB frames into the NV12 the injection node expects.
+
+## Context-model decision experiments (2026-09-01)
+
+Question that had to be settled before any rollout: should the daemon
+hand each app client its own HAL DSP context (per-client `init`), or
+keep one context and multiplex every job through it? Executed on device
+192.168.93.72 with all daemons running (realistic contention). Probe
+source is archived next to this doc (`dsp_p0_probe.cpp`; poky
+cross-compile command in its header). Buffers were malloc'd USERPTR
+NV12; op under test is `resize` 1920x1080 -> 640x360 bilinear.
+
+### Static evidence (libhailodsp 1.12.0 vendor sources)
+
+- `device.cpp`: `dsp_create_device` = `open("/dev/dsp0", O_RDWR)` — no
+  exclusive flag, multiple handles are possible by construction.
+- `send_command.cpp:42`: **every** op is enqueued to the process-wide
+  `PriorityQueueSingleton` — one queue, one dispatch thread per process.
+- `dsp_set_priority` only tags the handle's priority inside that queue;
+  a context owns no execution resource of its own.
+
+### Measured results (live load)
+
+| Experiment | Result |
+|---|---|
+| E1 double-init | 2 contexts in one process: both `init` OK, 2 dsp0 fds held, both functional, identical output checksum — on top of camera-daemon's own cross-process fd |
+| E2a serial baseline | 139.9 ops/s, per-op mean 7.1 ms (p95 11.2 ms, p99 13.2 ms) |
+| E2a 2 ctx + 2 threads | **speedup 1.00x** — aggregate throughput unchanged; per-op latency doubles to 14.3 ms mean (jobs queue behind the singleton) |
+| E2a 1 ctx + 2 threads | also 1.00x with **zero errors** — concurrent sync calls on one context are safe |
+| E3 sync vs async (depth 4) | 100.2 vs 106.4 jobs/s — no throughput gain, caller thread freed only; Little's-law check 4 in-flight / 37.2 ms = 107 jobs/s matches the measured 106.4: one serial server |
+| E2b cross-process hammer | 10 s, 1093 ops, 0 errors alongside camera-daemon; DSP utilization avg 19 % / peak 21 % (49/49 samples ok); after the run all daemon PIDs unchanged, no new log errors |
+
+### Conclusions
+
+1. **One context, daemon-multiplexed** is the confirmed model. Extra
+   in-process contexts buy zero parallelism (they double per-op latency
+   instead) while adding shared-state hazards (e.g. the static
+   `overlays_storage[50]` in the HAL impl). The earlier
+   "per-client sessions" idea is dropped.
+2. **The DSP core is not the bottleneck — the ~7-10 ms per-op
+   submission path is.** Utilization stayed at 19 % while sustaining
+   ~225 MPix/s source plus the daemon's own encoding/scaling work.
+   The RPC should therefore encourage batching
+   (`DSP_OP_MULTI_CROP_AND_RESIZE`) over per-tile jobs.
+3. **Priority and quota belong in the daemon queue**, exactly as the
+   mitigations above assume. Coexistence across processes is safe
+   (E2b), but the driver/firmware has no app-aware arbitration —
+   fairness between apps can only come from the daemon.
+
+Numbers were taken under live system load (load avg ~5-6, encoder and
+inference active): treat them as contended-floor figures, not peak
+benchmarks.
