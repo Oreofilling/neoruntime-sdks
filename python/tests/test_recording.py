@@ -11,7 +11,6 @@ import pytest
 from neoruntime_ipc_sdk.media import EncodedFrame
 from neoruntime_ipc_sdk.recording import HlsWriter, PrerollBuffer, TsWriter
 
-
 # ---------- synthetic encoded frames ----------
 
 def enc(seq, pts_ns, key=False, codec=0, size=400):
@@ -136,7 +135,7 @@ class TestTsWriter:
             if not has_payload(p):
                 continue
             per_pid.setdefault(pid_of(p), []).append(cc_of(p))
-        for pid, ccs in per_pid.items():
+        for _pid, ccs in per_pid.items():
             for a, b in zip(ccs, ccs[1:]):
                 assert b == (a + 1) % 16
 

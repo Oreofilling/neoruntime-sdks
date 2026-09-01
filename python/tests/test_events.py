@@ -2,10 +2,11 @@
 Tests for EventClient
 """
 
-import pytest
 from unittest.mock import Mock, patch
 
-from neoruntime_ipc_sdk import EventClient, Event, TopicInfo
+import pytest
+
+from neoruntime_ipc_sdk import Event, EventClient, TopicInfo
 
 
 class TestEvent:

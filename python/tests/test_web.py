@@ -12,7 +12,6 @@ import pytest
 from neoruntime_ipc_sdk.media import Frame
 from neoruntime_ipc_sdk.web import MjpegServer, MjpegStream, mjpeg_wsgi_app
 
-
 JPEG_MAGIC = b"\xff\xd8\xff"
 
 

@@ -119,7 +119,7 @@ class _MjpegHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"        # close connection after each stream
 
     def do_GET(self) -> None:            # noqa: N802 - http.server API
-        server: "MjpegServer" = self.server
+        server: MjpegServer = self.server
         if self.path != server.path:
             self.send_error(404)
             return

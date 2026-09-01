@@ -2,8 +2,9 @@
 Tests for DeviceClient
 """
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 from neoruntime_ipc_sdk import DeviceClient, IrCutMode
 

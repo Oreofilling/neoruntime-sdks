@@ -5,12 +5,12 @@ Tests for InferenceClient
 import asyncio
 import threading
 import time
+from unittest.mock import MagicMock, Mock, patch
 
-import pytest
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
+import pytest
 
-from neoruntime_ipc_sdk import InferenceClient, BoundingBox, DetectedObject, InferenceResult
+from neoruntime_ipc_sdk import BoundingBox, DetectedObject, InferenceClient, InferenceResult
 
 
 class TestBoundingBox:

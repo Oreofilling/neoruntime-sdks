@@ -4,8 +4,8 @@ AI Inference Client
 
 import asyncio
 import logging
-import threading
 import queue
+import threading
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -637,7 +637,7 @@ class InferenceClient:
 
         # Bridge the async server-stream to a sync generator via a queue. The
         # caller blocks on q.get() (a futex), not a sync-CQ spin.
-        q: "queue.Queue[Any]" = queue.Queue()
+        q: queue.Queue[Any] = queue.Queue()
         SENTINEL = object()
 
         async def _pump():
@@ -1034,7 +1034,7 @@ class InferenceClient:
             request.params.do_sample = do_sample
 
         # Bridge the async server-stream to a sync generator via a queue.
-        q: "queue.Queue[Any]" = queue.Queue()
+        q: queue.Queue[Any] = queue.Queue()
         SENTINEL = object()
 
         async def _pump():

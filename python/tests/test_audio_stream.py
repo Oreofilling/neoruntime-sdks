@@ -7,7 +7,6 @@ import struct
 
 from neoruntime_ipc_sdk.audio_stream import AudioFrame, decode_audio_format
 
-
 # Raw 30-byte header of frame 0 captured on a live NE503 (a test device,
 # 2026-08-19): the platform daemon writes the VIDEO EncHeader layout on
 # audio_capture.sock — total=2078, codec=pcm, pts=0x00004b9214fa5ce6,

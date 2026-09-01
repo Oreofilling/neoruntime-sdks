@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from neoruntime_ipc_sdk.draw import draw_boxes, draw_text, draw_detections
+from neoruntime_ipc_sdk.draw import draw_boxes, draw_detections, draw_text
 from neoruntime_ipc_sdk.inference import BoundingBox, DetectedObject
 
 

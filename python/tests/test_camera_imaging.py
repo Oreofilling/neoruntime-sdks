@@ -2,8 +2,9 @@
 Tests for CameraClient imaging/IR/preset/privacy-mask/OSD/config-field APIs.
 """
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 from neoruntime_ipc_sdk import CameraClient
 from neoruntime_ipc_sdk.camera import InfraredStatus, IrPreset, PrivacyMaskSettings
@@ -147,7 +148,7 @@ def mask_config():
         color=0x00FF00, blur_radius=8, enabled=False,
         dpm_enabled=True, dpm_labels="person,vehicle",
         dpm_mode="mosaic", dpm_color=0xFF0000)
-    r = cfg.regions.add(id="r1", name="yard", enabled=True,
+    cfg.regions.add(id="r1", name="yard", enabled=True,
                         points_x=[0.1, 0.5, 0.5], points_y=[0.2, 0.2, 0.6])
     return cfg
 

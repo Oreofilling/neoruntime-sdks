@@ -2,8 +2,9 @@
 Tests for CameraClient, ISPConfig, TransformConfig
 """
 
+from unittest.mock import MagicMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 
 from neoruntime_ipc_sdk import CameraClient, ISPConfig, TransformConfig
 

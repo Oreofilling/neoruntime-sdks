@@ -2,12 +2,13 @@
 Tests for Frame, PixelFormat
 """
 
-import pytest
-import numpy as np
-import tempfile
-import os
 import json
+import os
+import tempfile
 from unittest.mock import Mock, patch
+
+import numpy as np
+import pytest
 
 from neoruntime_ipc_sdk import Frame, PixelFormat
 

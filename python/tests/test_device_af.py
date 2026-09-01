@@ -4,8 +4,9 @@ start_oneshot_af / start_zoom_follow / get_autofocus_status /
 cancel_autofocus / set_af_windows / get_af_measurement
 """
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 from neoruntime_ipc_sdk import DeviceClient
 from neoruntime_ipc_sdk.device import AfJob, AfMeasurement, AfStatus
