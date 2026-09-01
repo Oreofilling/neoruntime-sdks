@@ -2,9 +2,10 @@
 Tests for Frame extensions: crop / resize / to_jpeg_bytes
 """
 
+import sys
+
 import numpy as np
 import pytest
-import sys
 
 from neoruntime_ipc_sdk.media import Frame, PixelFormat
 
@@ -234,8 +235,9 @@ class TestFrameToJpegBytes:
         assert data[:3] == b"\xff\xd8\xff"
 
     def test_save_jpg_uses_jpeg_encoder(self, tmp_path):
-        from PIL import Image
         import io
+
+        from PIL import Image
         f = make_rgb_frame()
         p = tmp_path / "out.jpg"
         f.save(str(p))
@@ -243,3 +245,167 @@ class TestFrameToJpegBytes:
         assert data[:3] == b"\xff\xd8\xff"
         img = Image.open(io.BytesIO(data))
         assert img.size == (64, 48)
+
+
+class _FakeDspFactory:
+    """Stand-in for dsp.DspClient; records resize_hw calls per client."""
+
+    def __init__(self, result=None, error=None):
+        self.result = result      # ndarray, or callable(src, dw, dh) -> ndarray
+        self.error = error
+        self.clients = []
+
+    def __call__(self, *args, **kwargs):
+        parent = self
+
+        class _Client:
+            def __init__(self):
+                self.calls = []
+                parent.clients.append(self)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def resize_hw(self, src, dw, dh, **kw):
+                self.calls.append((src, dw, dh, kw))
+                if parent.error is not None:
+                    raise parent.error
+                r = parent.result
+                return r(src, dw, dh) if callable(r) else r
+
+        return _Client()
+
+
+def make_keepfd_frame(w=64, h=48, fmt="NV12", image=None):
+    """Frame backed by an (unopened) FrameHandle, as keep-fd receive yields."""
+    from neoruntime_ipc_sdk.media import FrameHandle
+    handle = FrameHandle(fds=[-1], strides=[w], plane_sizes=[w * h],
+                         frame_id=9, width=w, height=h, format=fmt)
+    return Frame(sequence=7, timestamp_ns=12345, width=w, height=h,
+                 format=fmt, image=image, metadata={"stream": "main"},
+                 handle=handle)
+
+
+class TestResizeDspFastPath:
+    """Frame.resize routes keep-fd frames through the DSP (SDK-3)."""
+
+    def _patch(self, monkeypatch, factory):
+        import neoruntime_ipc_sdk.dsp as dsp_mod
+        monkeypatch.setattr(dsp_mod, "DspClient", factory)
+
+    def test_stretch_uses_dsp_and_preserves_metadata(self, monkeypatch):
+        out = np.zeros((72, 96), dtype=np.uint8)
+        f = make_keepfd_frame(64, 48, "GRAY8")
+        fac = _FakeDspFactory(result=out)
+        self._patch(monkeypatch, fac)
+
+        r = f.resize(96, 72, mode="stretch")
+
+        assert len(fac.clients) == 1
+        (src, dw, dh, kw), = fac.clients[0].calls
+        assert src is f and (dw, dh) == (96, 72)
+        assert kw.get("scaling") == "stretch"
+        assert r.image is out                       # DSP output passed through
+        assert (r.width, r.height, r.format) == (96, 72, "GRAY8")
+        assert r.sequence == 7 and r.timestamp_ns == 12345
+        assert r.metadata == {"stream": "main"}
+        assert not f.handle.closed                  # input frame not consumed
+        assert f.image is None                      # never materialized
+
+    def test_letterbox_scales_content_on_dsp_pads_on_cpu(self, monkeypatch):
+        # 16x32 -> 64x64 letterbox: scale 2 -> content 32x64 at offset (16, 0)
+        f = make_keepfd_frame(16, 32, "NV12")
+
+        def content(src, dw, dh):
+            assert (dw, dh) == (32, 64)             # content box, not target
+            y = np.full((dh, dw), 7, dtype=np.uint8)
+            uv = np.full((dh // 2, dw), 200, dtype=np.uint8)
+            return np.vstack([y, uv])
+
+        fac = _FakeDspFactory(result=content)
+        self._patch(monkeypatch, fac)
+
+        r = f.resize(64, 64)                        # default: letterbox
+
+        img = r.image
+        assert img.shape == (96, 64)                # NV12 2D layout
+        assert img[0, 0] == 114 and img[63, 63] == 114      # luma pad
+        assert img[0, 16] == 7 and img[63, 47] == 7         # content box
+        assert img[64, 0] == 128 and img[64, 63] == 128     # chroma pad
+        assert img[64, 16] == 200                            # content chroma
+
+    def test_crop_scales_cover_box_and_center_crops(self, monkeypatch):
+        # 16x32 -> 64x48 crop: cover scale 4 -> box 64x128, crop rows 40..88
+        f = make_keepfd_frame(16, 32, "GRAY8")
+        content = np.arange(64 * 128, dtype=np.uint8).reshape(128, 64)
+        fac = _FakeDspFactory(result=content)
+        self._patch(monkeypatch, fac)
+
+        r = f.resize(64, 48, mode="crop")
+
+        (src, dw, dh, kw), = fac.clients[0].calls
+        assert (dw, dh) == (64, 128)                # cover box, not target
+        assert kw.get("scaling") == "stretch"
+        np.testing.assert_array_equal(r.image, content[40:88])
+
+    def test_crop_nv12_crops_both_planes(self, monkeypatch):
+        # 16x32 NV12 -> 64x48 crop: box 64x128; Y rows 40..88, UV rows 20..44
+        f = make_keepfd_frame(16, 32, "NV12")
+        y = np.full((128, 64), 30, dtype=np.uint8)
+        uv = np.full((64, 64), 77, dtype=np.uint8)
+        fac = _FakeDspFactory(result=np.vstack([y, uv]))
+        self._patch(monkeypatch, fac)
+
+        r = f.resize(64, 48, mode="crop")
+
+        assert r.image.shape == (72, 64)            # NV12 2D layout
+        np.testing.assert_array_equal(r.image[:48], np.full((48, 64), 30))
+        np.testing.assert_array_equal(r.image[48:], np.full((24, 64), 77))
+
+    def test_dsp_error_falls_back_to_cpu(self, monkeypatch):
+        from neoruntime_ipc_sdk.dsp import DspError
+        twin = make_nv12_frame(64, 48)
+        f = make_keepfd_frame(64, 48, "NV12", image=twin.image.copy())
+        fac = _FakeDspFactory(error=DspError("service down"))
+        self._patch(monkeypatch, fac)
+
+        r = f.resize(32, 32)
+
+        assert len(fac.clients) == 1                # fast path was attempted
+        np.testing.assert_array_equal(r.image, twin.resize(32, 32).image)
+
+    def test_pixel_frame_never_touches_dsp(self, monkeypatch):
+        fac = _FakeDspFactory(result=None)
+        self._patch(monkeypatch, fac)
+        f = make_rgb_frame(64, 48)
+
+        r = f.resize(32, 24)
+
+        assert fac.clients == []
+        assert r.image.shape == (24, 32, 3)
+
+    def test_closed_handle_skips_dsp(self, monkeypatch):
+        fac = _FakeDspFactory(result=None)
+        self._patch(monkeypatch, fac)
+        f = make_keepfd_frame(64, 48, "GRAY8",
+                              image=np.full((48, 64), 9, np.uint8))
+        f.handle.close()
+
+        r = f.resize(32, 24)
+
+        assert fac.clients == []
+        assert r.image.shape == (24, 32)
+
+    def test_unsupported_format_skips_dsp(self, monkeypatch):
+        fac = _FakeDspFactory(result=None)
+        self._patch(monkeypatch, fac)
+        f = make_keepfd_frame(64, 48, "RGBA",
+                              image=np.zeros((48, 64, 4), np.uint8))
+
+        r = f.resize(32, 24)
+
+        assert fac.clients == []
+        assert r.image.shape == (24, 32, 4)

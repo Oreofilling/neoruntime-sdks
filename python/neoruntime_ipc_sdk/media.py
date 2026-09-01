@@ -44,6 +44,9 @@ PIXEL_FORMAT_NAMES = {
 _PACKED_FORMATS = ("RGB", "BGR", "RGBA", "BGRA", "GRAY8")
 # Planar/semi-planar YUV formats (crop/resize with per-plane handling)
 _YUV_FORMATS = ("NV12", "NV21")
+# Formats Frame.resize can hand to the DSP as a zero-copy source
+# (must stay in sync with dsp._FRAME_FMT_TO_DSP)
+_DSP_RESIZE_FORMATS = ("NV12", "RGB", "BGR", "GRAY8")
 
 
 def _resize_array(img: np.ndarray, width: int, height: int) -> np.ndarray:
@@ -282,26 +285,114 @@ class Frame:
             "stretch"   — fill exactly, aspect ratio not preserved.
             "crop"      — scale to cover, center-crop the overflow.
 
-        NV12/NV21 require even target dimensions. cv2 accelerates when
+        NV12/NV21 require even target dimensions. Frames received with
+        keep_fd=True are scaled on the DSP without materializing their
+        dma-bufs first (falling back to the CPU path when the DSP
+        service is unavailable). cv2 accelerates the CPU path when
         available; a pure-numpy nearest-neighbour path is the fallback.
         """
         if width <= 0 or height <= 0:
             raise ValueError("resize width/height must be positive")
         if mode not in ("letterbox", "stretch", "crop"):
             raise ValueError(f"unsupported resize mode: {mode}")
-        self.to_array()  # materialize a retained fd before slicing planes
         fmt = self.format
-        if fmt in _YUV_FORMATS:
-            if width % 2 or height % 2:
-                raise ValueError(f"{fmt} resize requires even width/height")
-            image = self._resize_yuv(width, height, mode, pad_value)
-        elif fmt in _PACKED_FORMATS:
-            image = self._resize_packed(width, height, mode, pad_value)
-        else:
-            raise ValueError(f"resize not supported for format: {fmt}")
+        if fmt in _YUV_FORMATS and (width % 2 or height % 2):
+            raise ValueError(f"{fmt} resize requires even width/height")
+        image = self._hw_resize(width, height, mode, pad_value)
+        if image is None:
+            self.to_array()  # materialize a retained fd before slicing planes
+            if fmt in _YUV_FORMATS:
+                image = self._resize_yuv(width, height, mode, pad_value)
+            elif fmt in _PACKED_FORMATS:
+                image = self._resize_packed(width, height, mode, pad_value)
+            else:
+                raise ValueError(f"resize not supported for format: {fmt}")
         return Frame(sequence=self.sequence, timestamp_ns=self.timestamp_ns,
                      width=width, height=height, format=fmt, image=image,
                      metadata=dict(self.metadata))
+
+    def _hw_resize(self, dw: int, dh: int, mode: str,
+                   pad: int) -> Optional[np.ndarray]:
+        """Zero-copy DSP scale for keep-fd frames; None means "use CPU".
+
+        Returns the resized pixels when the frame carries a dma-buf
+        handle the daemon can import, or None for every other case (no
+        handle, closed handle, format the DSP cannot take, service
+        down) so :meth:`resize` can fall back to its CPU path.
+
+        Every mode scales on the DSP into the exact box the CPU path
+        computes, then pads/crops on the CPU, so both paths agree on
+        content placement:
+
+        * "stretch"  — one DSP stretch to the target, used as-is.
+        * "letterbox" — DSP stretch to the fitted box; CPU pads with
+          ``pad``. (The daemon's own letterbox pads Y=U=V=0 — green in
+          YUV, not a neutral pad — so it is never used here.)
+        * "crop" — DSP stretch to the cover box; CPU center-crops.
+          (The vendor SCALE_AND_CROP picks its own rounding; on device
+          it disagreed with the CPU placement by ~21 luma levels.)
+
+        Hot loops should hold a :class:`~neoruntime_ipc_sdk.dsp.DspClient`
+        open and call ``resize_hw`` directly instead of paying this
+        method's per-call client setup.
+        """
+        handle = self.handle
+        if handle is None or handle.closed:
+            return None
+        if self.format not in _DSP_RESIZE_FORMATS:
+            return None
+        yuv = self.format in _YUV_FORMATS
+        # (rw, rh, ox, oy) must match _resize_yuv/_resize_packed placement,
+        # or the two paths would disagree on the same frame
+        sw, sh = self.width, self.height
+        if mode == "stretch":
+            rw, rh, ox, oy = dw, dh, 0, 0
+        elif mode == "letterbox":
+            scale = min(dw / sw, dh / sh)
+            rw = max(1, int(round(sw * scale)))
+            rh = max(1, int(round(sh * scale)))
+            if yuv:
+                rw, rh = _even(rw), _even(rh)
+            ox, oy = (dw - rw) // 2, (dh - rh) // 2
+            if yuv:
+                ox, oy = ox & ~1, oy & ~1  # chroma-aligned pad offsets
+        else:  # "crop": scale to cover, center-crop the overflow
+            scale = max(dw / sw, dh / sh)
+            rw = max(dw, int(round(sw * scale)))
+            rh = max(dh, int(round(sh * scale)))
+            if yuv:
+                rw, rh = _even(rw), _even(rh)
+            ox, oy = (rw - dw) // 2, (rh - dh) // 2
+        try:
+            from .dsp import DspClient, DspError  # lazy: dsp imports media
+            with DspClient() as dsp:
+                content = dsp.resize_hw(self, rw, rh, scaling="stretch")
+        except DspError as exc:
+            logger.debug("DSP resize fast path unavailable (%s); CPU path",
+                         exc)
+            return None
+        if mode == "stretch":
+            return content
+        if not yuv:
+            if mode == "crop":
+                return np.ascontiguousarray(
+                    content[oy:oy + dh, ox:ox + dw])
+            canvas = np.full((dh, dw), pad, dtype=np.uint8) \
+                if content.ndim == 2 else \
+                np.full((dh, dw, content.shape[2]),
+                        [pad] * content.shape[2], dtype=np.uint8)
+            canvas[oy:oy + rh, ox:ox + rw] = content
+            return canvas
+        if mode == "crop":
+            return np.ascontiguousarray(np.vstack([
+                content[:rh][oy:oy + dh, ox:ox + dw],
+                content[rh:][oy // 2:oy // 2 + dh // 2, ox:ox + dw],
+            ]))
+        canvas_y = np.full((dh, dw), pad, dtype=np.uint8)
+        canvas_uv = np.full((dh // 2, dw), 128, dtype=np.uint8)
+        canvas_y[oy:oy + rh, ox:ox + rw] = content[:rh]
+        canvas_uv[oy // 2:oy // 2 + rh // 2, ox:ox + rw] = content[rh:]
+        return np.vstack([canvas_y, canvas_uv])
 
     def _resize_packed(self, dw: int, dh: int, mode: str,
                        pad: int) -> np.ndarray:
