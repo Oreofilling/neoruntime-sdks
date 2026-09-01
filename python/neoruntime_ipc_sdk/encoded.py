@@ -1,10 +1,12 @@
 """Encoded video stream client (EncodedPublisher UDS socket)."""
 
+from __future__ import annotations
+
 import logging
+import os
 import socket
 import struct
 from dataclasses import dataclass
-from typing import Optional
 
 from ._transport import UdsStreamClient
 
@@ -16,13 +18,14 @@ __all__ = ["EncodedFrame", "EncodedStreamClient"]
 @dataclass
 class EncodedFrame:
     """Encoded video frame (H.264/H.265) from the EncodedPublisher."""
-    codec: int          # 0=h264, 1=h265
-    flags: int          # bit0 = keyframe
-    pts_ns: int         # Presentation timestamp (nanoseconds)
+
+    codec: int  # 0=h264, 1=h265
+    flags: int  # bit0 = keyframe
+    pts_ns: int  # Presentation timestamp (nanoseconds)
     width: int
     height: int
-    dts_ns: int         # Decode timestamp (nanoseconds)
-    data: bytes         # Encoded NALU payload
+    dts_ns: int  # Decode timestamp (nanoseconds)
+    data: bytes  # Encoded NALU payload
 
     @property
     def is_keyframe(self) -> bool:
@@ -31,8 +34,6 @@ class EncodedFrame:
     @property
     def codec_name(self) -> str:
         return {0: "h264", 1: "h265"}.get(self.codec, f"unknown({self.codec})")
-
-
 
 
 # Encoded video header: 30 bytes, little-endian
@@ -47,8 +48,6 @@ _ENC_HEADER_SIZE = 30
 _ENC_HEADER_FMT = "<I BB Q II Q"
 
 
-
-
 class EncodedStreamClient(UdsStreamClient):
     """Read encoded video frames from an EncodedPublisher UDS socket.
 
@@ -57,7 +56,9 @@ class EncodedStreamClient(UdsStreamClient):
 
     Usage::
 
-        client = EncodedStreamClient("/run/aipc/encoded/main.sock")
+        client = EncodedStreamClient()                    # main stream
+        client = EncodedStreamClient(stream_id="sub")     # sub stream
+        client = EncodedStreamClient("/run/aipc/encoded/main.sock")  # explicit
         for frame in client.subscribe():
             print(f"{frame.codec_name} {frame.width}x{frame.height} "
                   f"keyframe={frame.is_keyframe} {len(frame.data)}B")
@@ -66,7 +67,25 @@ class EncodedStreamClient(UdsStreamClient):
     # Socket lifecycle, reconnect, get_frame/subscribe/on_frame and close live
     # in UdsStreamClient; only the wire framing stays here.
 
-    def _recv_frame(self, sock: socket.socket) -> Optional[EncodedFrame]:
+    def __init__(
+        self,
+        socket_path: str | None = None,
+        *,
+        stream_id: str = "main",
+        socket_dir: str | None = None,
+    ):
+        """Resolve the socket path.
+
+        ``socket_path`` (explicit) wins; otherwise the path is derived as
+        ``{socket_dir}/{stream_id}.sock`` with ``socket_dir`` defaulting to
+        ``/run/aipc/encoded`` (overridable via ``ENCODED_SOCK_DIR``).
+        """
+        if socket_path is None:
+            base = socket_dir or os.getenv("ENCODED_SOCK_DIR", "/run/aipc/encoded")
+            socket_path = os.path.join(base, f"{stream_id}.sock")
+        super().__init__(socket_path)
+
+    def _recv_frame(self, sock: socket.socket) -> EncodedFrame | None:
         try:
             header_data = self._recv_exact(sock, _ENC_HEADER_SIZE)
         except (ConnectionError, OSError):
@@ -95,8 +114,11 @@ class EncodedStreamClient(UdsStreamClient):
             return None
 
         return EncodedFrame(
-            codec=codec, flags=flags, pts_ns=pts_ns,
-            width=width, height=height, dts_ns=dts_ns,
+            codec=codec,
+            flags=flags,
+            pts_ns=pts_ns,
+            width=width,
+            height=height,
+            dts_ns=dts_ns,
             data=payload,
         )
-

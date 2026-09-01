@@ -1,5 +1,7 @@
 """Zero-copy media client over DMA-BUF fd passing (camera.sock fd publisher)."""
 
+from __future__ import annotations
+
 import logging
 import mmap
 import os
@@ -8,7 +10,7 @@ import struct
 import threading
 import time
 import weakref
-from typing import Callable, Iterator, List
+from typing import Callable, Iterator
 
 import numpy as np
 
@@ -35,37 +37,36 @@ __all__ = ["FdMediaClient"]
 # FD Protocol constants (must match fd_protocol.h)
 # ---------------------------------------------------------------------------
 
-_FD_PUB_MSG_SUBSCRIBE   = 1
+_FD_PUB_MSG_SUBSCRIBE = 1
 _FD_PUB_MSG_UNSUBSCRIBE = 2
-_FD_PUB_MSG_FRAME       = 3
-_FD_PUB_MSG_RELEASE     = 4
-_FD_PUB_MSG_OK          = 5
-_FD_PUB_MSG_ERROR       = 6
+_FD_PUB_MSG_FRAME = 3
+_FD_PUB_MSG_RELEASE = 4
+_FD_PUB_MSG_OK = 5
+_FD_PUB_MSG_ERROR = 6
 
 _FD_PUB_MAX_STREAM_NAME = 64
-_FD_PUB_MAX_FDS         = 3
+_FD_PUB_MAX_FDS = 3
 _FD_PUB_PROTOCOL_VERSION = 1
 
 # struct FdPubMsgHeader { uint32 type; uint32 size; }
-_HDR_FMT = '<II'
+_HDR_FMT = "<II"
 _HDR_SIZE = struct.calcsize(_HDR_FMT)
 
 # struct FdPubSubscribeMsg { header(8) + uint32 version + char[64] stream_name }
-_SUB_FMT = '<II I 64s'
+_SUB_FMT = "<II I 64s"
 _SUB_SIZE = struct.calcsize(_SUB_FMT)
 
 # struct FdPubFrameMsg (aarch64 pads to 8-byte alignment: 76 data + 4 padding = 80)
-_FRAME_FMT = '<II QQQ IIII 3I 3I I 4x'
+_FRAME_FMT = "<II QQQ IIII 3I 3I I 4x"
 _FRAME_SIZE = struct.calcsize(_FRAME_FMT)
 
 # struct FdPubReleaseMsg { header(8) + uint64 frame_id }
-_REL_FMT = '<II Q'
+_REL_FMT = "<II Q"
 _REL_SIZE = struct.calcsize(_REL_FMT)
 
 # struct FdPubResponseMsg { header(8) + int32 code }
-_RESP_FMT = '<II i'
+_RESP_FMT = "<II i"
 _RESP_SIZE = struct.calcsize(_RESP_FMT)
-
 
 
 class FdMediaClient:
@@ -88,10 +89,11 @@ class FdMediaClient:
         sock.connect(self.socket_path)
         logger.info("FdMediaClient: socket fd=%d connected", sock.fileno())
 
-        name_bytes = stream_id.encode('utf-8')[:_FD_PUB_MAX_STREAM_NAME - 1]
-        name_padded = name_bytes.ljust(_FD_PUB_MAX_STREAM_NAME, b'\x00')
-        sub_msg = struct.pack(_SUB_FMT, _FD_PUB_MSG_SUBSCRIBE, _SUB_SIZE,
-                              _FD_PUB_PROTOCOL_VERSION, name_padded)
+        name_bytes = stream_id.encode("utf-8")[: _FD_PUB_MAX_STREAM_NAME - 1]
+        name_padded = name_bytes.ljust(_FD_PUB_MAX_STREAM_NAME, b"\x00")
+        sub_msg = struct.pack(
+            _SUB_FMT, _FD_PUB_MSG_SUBSCRIBE, _SUB_SIZE, _FD_PUB_PROTOCOL_VERSION, name_padded
+        )
         _sendmsg_plain(sock, sub_msg)
 
         resp_data = sock.recv(_RESP_SIZE)
@@ -102,7 +104,9 @@ class FdMediaClient:
         msg_type, msg_size, code = struct.unpack(_RESP_FMT, resp_data[:_RESP_SIZE])
         if msg_type != _FD_PUB_MSG_OK:
             sock.close()
-            raise ConnectionError(f"FdMediaClient: subscribe rejected for '{stream_id}' (code={code})")
+            raise ConnectionError(
+                f"FdMediaClient: subscribe rejected for '{stream_id}' (code={code})"
+            )
 
         logger.info("FdMediaClient: subscribed to '%s' successfully", stream_id)
         return sock
@@ -120,8 +124,7 @@ class FdMediaClient:
         except OSError:
             pass
 
-    def _recv_frame(self, sock: _socket.socket,
-                    keep_fd: bool = False) -> Frame | None:
+    def _recv_frame(self, sock: _socket.socket, keep_fd: bool = False) -> Frame | None:
         skipped = 0
         eof_count = 0
         for _attempt in range(32):
@@ -175,19 +178,29 @@ class FdMediaClient:
             return None
 
         if keep_fd:
+
             def _on_release(h: FrameHandle) -> None:
                 self._retained.discard(h)
                 self._release_frame(sock, h.frame_id)
 
             handle = FrameHandle(
-                fds=fds, strides=strides, plane_sizes=sizes,
-                frame_id=frame_id, on_release=_on_release,
-                width=width, height=height, format=fmt_name,
+                fds=fds,
+                strides=strides,
+                plane_sizes=sizes,
+                frame_id=frame_id,
+                on_release=_on_release,
+                width=width,
+                height=height,
+                format=fmt_name,
             )
             self._retained.add(handle)
             logger.debug(
                 "FdMediaClient: retained frame seq=%d %dx%d %s (frame_id=%d)",
-                sequence, width, height, fmt_name, frame_id,
+                sequence,
+                width,
+                height,
+                fmt_name,
+                frame_id,
             )
             return Frame(
                 sequence=sequence,
@@ -210,7 +223,7 @@ class FdMediaClient:
                 _dma_buf_sync(fd, _DMA_BUF_SYNC_READ | _DMA_BUF_SYNC_START)
                 actual_size = os.fstat(fd).st_size
                 buf = mmap.mmap(fd, actual_size, access=mmap.ACCESS_READ)
-                plane_data = np.frombuffer(buf, dtype=np.uint8)[:sizes[i]].copy()
+                plane_data = np.frombuffer(buf, dtype=np.uint8)[: sizes[i]].copy()
                 buf.close()
                 _dma_buf_sync(fd, _DMA_BUF_SYNC_READ | _DMA_BUF_SYNC_END)
                 planes.append(plane_data)
@@ -223,7 +236,11 @@ class FdMediaClient:
 
         logger.debug(
             "FdMediaClient: frame seq=%d %dx%d %s released (frame_id=%d)",
-            sequence, width, height, fmt_name, frame_id,
+            sequence,
+            width,
+            height,
+            fmt_name,
+            frame_id,
         )
 
         image = _decode_raw(raw, width, height, fmt_name)
@@ -236,8 +253,9 @@ class FdMediaClient:
             image=image,
         )
 
-    def get_frame(self, stream_id: str, timeout_ms: int = 5000, *,
-                  keep_fd: bool = False) -> Frame | None:
+    def get_frame(
+        self, stream_id: str, timeout_ms: int = 5000, *, keep_fd: bool = False
+    ) -> Frame | None:
         """Receive one frame.
 
         With ``keep_fd=True`` the frame's dma-buf fds are retained
@@ -262,8 +280,9 @@ class FdMediaClient:
                         pass
             raise
 
-    def subscribe_raw(self, stream_id: str, skip_frames: bool = True,
-                      keep_fd: bool = False) -> Iterator[Frame]:
+    def subscribe_raw(
+        self, stream_id: str, skip_frames: bool = True, keep_fd: bool = False
+    ) -> Iterator[Frame]:
         sock = self._get_sock(stream_id)
         sock.settimeout(5.0)
         while True:
@@ -284,8 +303,9 @@ class FdMediaClient:
                 sock = self._get_sock(stream_id)
                 sock.settimeout(5.0)
 
-    def subscribe(self, stream_id: str, skip_frames: bool = True,
-                  keep_fd: bool = False) -> Iterator[Frame]:
+    def subscribe(
+        self, stream_id: str, skip_frames: bool = True, keep_fd: bool = False
+    ) -> Iterator[Frame]:
         return self.subscribe_raw(stream_id, skip_frames, keep_fd)
 
     def on_frame(self, stream_id: str, callback: Callable[[Frame], None]) -> threading.Thread:
@@ -295,13 +315,15 @@ class FdMediaClient:
                     callback(frame)
                 except Exception:
                     pass
+
         t = threading.Thread(target=_run, daemon=True)
         t.start()
         return t
 
     def close(self) -> None:
         logger.info(
-            "FdMediaClient: closing %d stream connections", len(self._streams),
+            "FdMediaClient: closing %d stream connections",
+            len(self._streams),
         )
         # Release retained frames first so the daemon recycles their
         # buffers before the subscriptions and sockets go away.
@@ -325,22 +347,23 @@ class FdMediaClient:
 
     # -- Encoded stream convenience methods --
 
-    def get_encoded_stream(self, stream_id: str = "main",
-                           socket_dir: str = "/run/aipc/encoded") -> EncodedStreamClient:
+    def get_encoded_stream(
+        self, stream_id: str = "main", socket_dir: str | None = None
+    ) -> EncodedStreamClient:
         """Return an :class:`EncodedStreamClient` for the given encoded stream.
 
         Args:
             stream_id: Stream name (e.g. ``"main"``, ``"sub"``).
-            socket_dir: Directory containing EncodedPublisher UDS sockets.
+            socket_dir: Directory containing EncodedPublisher UDS sockets
+                (default ``/run/aipc/encoded``, or ``ENCODED_SOCK_DIR``).
 
         Returns:
             A connected :class:`EncodedStreamClient` reading from
             ``{socket_dir}/{stream_id}.sock``.
         """
-        path = os.path.join(socket_dir, f"{stream_id}.sock")
-        return EncodedStreamClient(path)
+        return EncodedStreamClient(stream_id=stream_id, socket_dir=socket_dir)
 
-    def list_streams(self) -> List[str]:
+    def list_streams(self) -> list[str]:
         """List available raw stream IDs by scanning the camera socket.
 
         Returns common stream IDs. For detailed status use
@@ -348,8 +371,9 @@ class FdMediaClient:
         """
         return ["main", "sub"]
 
-    def get_rtsp_url(self, stream_id: str = "main",
-                     host: str = "192.0.2.72", port: int = 8554) -> str:
+    def get_rtsp_url(
+        self, stream_id: str = "main", host: str = "192.0.2.72", port: int = 8554
+    ) -> str:
         """Return an RTSP URL for the given stream.
 
         Note: RTSP must be enabled on the device first (via CameraClient
