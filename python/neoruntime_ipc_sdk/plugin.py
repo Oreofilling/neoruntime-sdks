@@ -11,13 +11,15 @@ For plugin consumers:
     channel = endpoint.connect()
 """
 
+from __future__ import annotations
+
 import json
 import os
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable
 
 import grpc
 
@@ -28,20 +30,23 @@ DISCOVERY_FILE = "discovery.json"
 @dataclass
 class PluginEndpoint:
     """Resolved endpoint for a discovered plugin capability."""
+
     app_id: str
     capability_id: str
     version: str
     transport: str
-    socket_path: Optional[str] = None
-    grpc_service: Optional[str] = None
-    event_publish: List[str] = field(default_factory=list)
-    event_subscribe: List[str] = field(default_factory=list)
+    socket_path: str | None = None
+    grpc_service: str | None = None
+    event_publish: list[str] = field(default_factory=list)
+    event_subscribe: list[str] = field(default_factory=list)
     state: str = "unknown"
 
     def connect(self, **kwargs) -> grpc.Channel:
         """Create a gRPC channel to this plugin."""
         if not self.socket_path:
-            raise RuntimeError(f"Plugin {self.app_id} capability {self.capability_id} has no gRPC endpoint")
+            raise RuntimeError(
+                f"Plugin {self.app_id} capability {self.capability_id} has no gRPC endpoint"
+            )
         return grpc.insecure_channel(f"unix://{self.socket_path}", **kwargs)
 
     @property
@@ -55,10 +60,10 @@ class PluginDiscovery:
     def __init__(self, discovery_dir: str = DISCOVERY_DIR):
         self._dir = Path(discovery_dir)
         self._file = self._dir / DISCOVERY_FILE
-        self._data: Dict = {}
+        self._data: dict = {}
         self._lock = threading.Lock()
-        self._watchers: List[Callable] = []
-        self._watch_thread: Optional[threading.Thread] = None
+        self._watchers: list[Callable] = []
+        self._watch_thread: threading.Thread | None = None
         self._running = False
         self.reload()
 
@@ -73,7 +78,7 @@ class PluginDiscovery:
             except (json.JSONDecodeError, OSError):
                 self._data = {"plugins": {}}
 
-    def get(self, capability_id: str) -> Optional[PluginEndpoint]:
+    def get(self, capability_id: str) -> PluginEndpoint | None:
         """Find the first running plugin providing a capability."""
         with self._lock:
             plugins = self._data.get("plugins", {})
@@ -109,12 +114,12 @@ class PluginDiscovery:
             time.sleep(1.0)
         raise TimeoutError(f"Plugin capability {capability_id!r} not available within {timeout}s")
 
-    def list_plugins(self) -> Dict[str, dict]:
+    def list_plugins(self) -> dict[str, dict]:
         """Return all known plugins."""
         with self._lock:
             return dict(self._data.get("plugins", {}))
 
-    def list_capabilities(self) -> List[str]:
+    def list_capabilities(self) -> list[str]:
         """Return all known capability IDs."""
         result = []
         with self._lock:
@@ -164,11 +169,12 @@ class PluginServer:
     def __init__(self, plugin_id: str, socket_dir: str = DISCOVERY_DIR):
         self.plugin_id = plugin_id
         self.socket_path = os.path.join(socket_dir, f"{plugin_id}.sock")
-        self._server: Optional[grpc.Server] = None
+        self._server: grpc.Server | None = None
 
     def create_server(self, max_workers: int = 4, **kwargs) -> grpc.Server:
         """Create a gRPC server bound to the plugin socket."""
         from concurrent import futures
+
         self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers), **kwargs)
         self._server.add_insecure_port(f"unix://{self.socket_path}")
         return self._server

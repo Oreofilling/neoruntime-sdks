@@ -8,6 +8,8 @@ Zero CPU cost — drawing happens in camera-daemon before encoding.
 Uses gRPC over Unix domain socket, consistent with other SDK clients.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 
@@ -22,6 +24,7 @@ logger = logging.getLogger("neoruntime_ipc_sdk.overlay")
 @dataclass
 class OverlayConfig:
     """AI overlay configuration."""
+
     enabled: bool = True
     show_label: bool = True
     show_confidence: bool = True
@@ -99,12 +102,14 @@ class OverlayClient(GrpcClient):
         line_thickness: int = 2,
     ) -> None:
         """Enable AI overlay with specified settings."""
-        self._update(camera_pb2.AiOverlayConfig(
-            enabled=True,
-            show_label=show_label,
-            show_confidence=show_confidence,
-            line_thickness=line_thickness,
-        ))
+        self._update(
+            camera_pb2.AiOverlayConfig(
+                enabled=True,
+                show_label=show_label,
+                show_confidence=show_confidence,
+                line_thickness=line_thickness,
+            )
+        )
         logger.info("AI overlay enabled")
 
     def disable(self) -> None:

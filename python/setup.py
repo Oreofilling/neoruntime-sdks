@@ -23,6 +23,8 @@ setup(
         "Documentation": "https://camthink-ai.github.io/neoruntime-sdks/python/en/",
     },
     packages=find_packages(exclude=("tests", "tests.*")),
+    package_data={"neoruntime_ipc_sdk": ["py.typed"]},
+    zip_safe=False,
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",

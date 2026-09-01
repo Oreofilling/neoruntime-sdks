@@ -2,6 +2,8 @@
 Configuration Management
 """
 
+from __future__ import annotations
+
 import os
 
 
@@ -36,7 +38,6 @@ class Config:
     def get_shm_base_path() -> str:
         """Get base path for shared-memory IPC sockets"""
         return os.getenv("SHM_BASE_PATH", "/run/aipc/shm")
-
 
     @staticmethod
     def get_camera_control_endpoint() -> str:

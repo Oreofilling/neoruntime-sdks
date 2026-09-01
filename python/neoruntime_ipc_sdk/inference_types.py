@@ -1,7 +1,8 @@
 """Data types describing inference results and model metadata."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -27,11 +28,11 @@ class BoundingBox:
     y: float
     width: float
     height: float
-    
-    def to_xyxy(self) -> Tuple[float, float, float, float]:
+
+    def to_xyxy(self) -> tuple[float, float, float, float]:
         return (self.x, self.y, self.x + self.width, self.y + self.height)
-    
-    def to_xywh(self) -> Tuple[float, float, float, float]:
+
+    def to_xywh(self) -> tuple[float, float, float, float]:
         return (self.x, self.y, self.width, self.height)
 
 
@@ -41,7 +42,7 @@ class DetectedObject:
     score: float
     bbox: BoundingBox
     class_id: int = 0
-    track_id: Optional[int] = None
+    track_id: int | None = None
 
 
 @dataclass
@@ -54,7 +55,7 @@ class LandmarkPoint:
 @dataclass
 class LandmarkSet:
     type: str
-    points: List[LandmarkPoint] = field(default_factory=list)
+    points: list[LandmarkPoint] = field(default_factory=list)
 
 
 @dataclass
@@ -93,9 +94,10 @@ class SegmentationMask:
                         break
                     shift += 7
                 return val, pos
+
             start, i = read_varint(i)
             length, i = read_varint(i)
-            mask[start:start + length] = True
+            mask[start : start + length] = True
         return mask.reshape(self.mask_height, self.mask_width)
 
 
@@ -109,7 +111,7 @@ class OcrLine:
 @dataclass
 class Embedding:
     dim: int
-    data: List[float]
+    data: list[float]
 
 
 @dataclass
@@ -123,26 +125,26 @@ class DepthMap:
 class InferenceResult:
     frame_sequence: int
     timestamp_ns: int
-    objects: List[DetectedObject] = field(default_factory=list)
-    classifications: List[Classification] = field(default_factory=list)
-    landmarks: List[LandmarkSet] = field(default_factory=list)
-    masks: List[SegmentationMask] = field(default_factory=list)
-    ocr_lines: List[OcrLine] = field(default_factory=list)
-    embeddings: List[Embedding] = field(default_factory=list)
-    depth_maps: List[DepthMap] = field(default_factory=list)
-    raw_outputs: Optional[List[np.ndarray]] = None
+    objects: list[DetectedObject] = field(default_factory=list)
+    classifications: list[Classification] = field(default_factory=list)
+    landmarks: list[LandmarkSet] = field(default_factory=list)
+    masks: list[SegmentationMask] = field(default_factory=list)
+    ocr_lines: list[OcrLine] = field(default_factory=list)
+    embeddings: list[Embedding] = field(default_factory=list)
+    depth_maps: list[DepthMap] = field(default_factory=list)
+    raw_outputs: list[np.ndarray] | None = None
     infer_time_us: int = 0
     queue_time_us: int = 0
     hw_infer_time_us: int = 0  # Pure NPU hardware latency (microseconds), 0 if unavailable
     status_message: str = ""  # Diagnostic: "simulation" if no frame source
-    
+
     def has_person(self) -> bool:
         return any(obj.label == "person" for obj in self.objects)
-    
+
     def count_by_label(self, label: str) -> int:
         return sum(1 for obj in self.objects if obj.label == label)
-    
-    def get_objects_by_label(self, label: str) -> List[DetectedObject]:
+
+    def get_objects_by_label(self, label: str) -> list[DetectedObject]:
         return [obj for obj in self.objects if obj.label == label]
 
 
@@ -151,8 +153,8 @@ class ModelInfo:
     model_id: str
     model_path: str
     version: str = ""
-    inputs: List[Dict] = field(default_factory=list)
-    outputs: List[Dict] = field(default_factory=list)
+    inputs: list[dict] = field(default_factory=list)
+    outputs: list[dict] = field(default_factory=list)
     estimated_tops: float = 0.0
     estimated_memory: int = 0
     load_timestamp: int = 0
@@ -161,6 +163,7 @@ class ModelInfo:
 @dataclass
 class BatchInferItem:
     """A single inference request within a batch."""
+
     image: np.ndarray
     model_id: str
     timeout_ms: int = 5000

@@ -22,14 +22,16 @@ Example (standalone):
     server.stop()
 """
 
+from __future__ import annotations
+
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Iterator, Optional
+from typing import Iterator
 
 from .media import Frame
 
-BOUNDARY = b"frame"                      # multipart boundary token
+BOUNDARY = b"frame"  # multipart boundary token
 
 
 class MjpegStream:
@@ -37,7 +39,7 @@ class MjpegStream:
 
     def __init__(self):
         self._cond = threading.Condition()
-        self._jpeg: Optional[bytes] = None
+        self._jpeg: bytes | None = None
         self._seq = 0
 
     def push_jpeg(self, data: bytes) -> None:
@@ -51,7 +53,7 @@ class MjpegStream:
         """Encode a Frame to JPEG and publish it."""
         self.push_jpeg(frame.to_jpeg_bytes(quality=quality))
 
-    def latest(self) -> Optional[bytes]:
+    def latest(self) -> bytes | None:
         """Most recent JPEG bytes, or None before the first push."""
         with self._cond:
             return self._jpeg
@@ -103,8 +105,7 @@ def mjpeg_wsgi_app(source: MjpegStream, fps: float = 15):
 
     def app(environ, start_response):
         headers = [
-            ("Content-Type",
-             f"multipart/x-mixed-replace; boundary={BOUNDARY.decode()}"),
+            ("Content-Type", f"multipart/x-mixed-replace; boundary={BOUNDARY.decode()}"),
             ("Cache-Control", "no-store, private"),
             ("Pragma", "no-cache"),
             ("Access-Control-Allow-Origin", "*"),
@@ -116,9 +117,9 @@ def mjpeg_wsgi_app(source: MjpegStream, fps: float = 15):
 
 
 class _MjpegHandler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.0"        # close connection after each stream
+    protocol_version = "HTTP/1.0"  # close connection after each stream
 
-    def do_GET(self) -> None:            # noqa: N802 - http.server API
+    def do_GET(self) -> None:  # noqa: N802 - http.server API
         server: MjpegServer = self.server
         if self.path != server.path:
             self.send_error(404)
@@ -126,8 +127,8 @@ class _MjpegHandler(BaseHTTPRequestHandler):
         try:
             self.send_response(200)
             self.send_header(
-                "Content-Type",
-                f"multipart/x-mixed-replace; boundary={BOUNDARY.decode()}")
+                "Content-Type", f"multipart/x-mixed-replace; boundary={BOUNDARY.decode()}"
+            )
             self.send_header("Cache-Control", "no-store, private")
             self.send_header("Pragma", "no-cache")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -136,18 +137,23 @@ class _MjpegHandler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionError, OSError):
-            return                        # client disconnected - stop stream
+            return  # client disconnected - stop stream
 
     def log_message(self, format: str, *args) -> None:
-        pass                              # keep stdout clean inside apps
+        pass  # keep stdout clean inside apps
 
 
 class MjpegServer:
     """Standalone threaded HTTP server exposing one MJPEG stream."""
 
-    def __init__(self, port: int = 8080, host: str = "0.0.0.0",
-                 source: Optional[MjpegStream] = None, path: str = "/",
-                 fps: float = 15):
+    def __init__(
+        self,
+        port: int = 8080,
+        host: str = "0.0.0.0",
+        source: MjpegStream | None = None,
+        path: str = "/",
+        fps: float = 15,
+    ):
         if source is None:
             raise ValueError("source MjpegStream is required")
         self.source = source
@@ -155,8 +161,8 @@ class MjpegServer:
         self.fps = fps
         self._host = host
         self._requested_port = port
-        self._server: Optional[ThreadingHTTPServer] = None
-        self._thread: Optional[threading.Thread] = None
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
 
     @property
     def port(self) -> int:
@@ -169,15 +175,15 @@ class MjpegServer:
         """Bind and start serving in a daemon thread."""
         if self._server is not None:
             return
-        server = ThreadingHTTPServer((self._host, self._requested_port),
-                                     _MjpegHandler)
+        server = ThreadingHTTPServer((self._host, self._requested_port), _MjpegHandler)
         server.daemon_threads = True
-        server.source = self.source       # type: ignore[attr-defined]
-        server.path = self.path           # type: ignore[attr-defined]
-        server.fps = self.fps             # type: ignore[attr-defined]
+        server.source = self.source  # type: ignore[attr-defined]
+        server.path = self.path  # type: ignore[attr-defined]
+        server.fps = self.fps  # type: ignore[attr-defined]
         self._server = server
-        self._thread = threading.Thread(target=server.serve_forever,
-                                        daemon=True, name="mjpeg-server")
+        self._thread = threading.Thread(
+            target=server.serve_forever, daemon=True, name="mjpeg-server"
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -191,7 +197,7 @@ class MjpegServer:
         self._server = None
         self._thread = None
 
-    def __enter__(self) -> "MjpegServer":
+    def __enter__(self) -> MjpegServer:
         self.start()
         return self
 

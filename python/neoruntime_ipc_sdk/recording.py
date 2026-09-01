@@ -15,10 +15,12 @@ Example:
     # serve /var/tmp/hls/index.m3u8 over HTTP for hls.js
 """
 
+from __future__ import annotations
+
 import math
 import os
 from collections import deque
-from typing import Callable, Deque, Dict, List, Optional
+from typing import Callable
 
 from .media import EncodedFrame
 
@@ -36,6 +38,7 @@ _PTS_DTS_MASK = (1 << 33) - 1
 # low-level bit packing
 # --------------------------------------------------------------------------
 
+
 def _crc32_mpeg(data: bytes) -> bytes:
     """MPEG-2 CRC-32 (poly 0x04C11DB7, init 0xFFFFFFFF, MSB-first)."""
     crc = 0xFFFFFFFF
@@ -50,13 +53,15 @@ def _crc32_mpeg(data: bytes) -> bytes:
 def _ts_timestamp(value: int, marker: int) -> bytes:
     """Encode a 33-bit PTS/DTS into the 5-byte marker format (2^33 wrap)."""
     v = value & _PTS_DTS_MASK
-    return bytes([
-        marker | ((v >> 29) & 0x0E),
-        (v >> 22) & 0xFF,
-        0x01 | ((v >> 14) & 0xFE),
-        (v >> 7) & 0xFF,
-        0x01 | ((v << 1) & 0xFE),
-    ])
+    return bytes(
+        [
+            marker | ((v >> 29) & 0x0E),
+            (v >> 22) & 0xFF,
+            0x01 | ((v >> 14) & 0xFE),
+            (v >> 7) & 0xFF,
+            0x01 | ((v << 1) & 0xFE),
+        ]
+    )
 
 
 def _pcr_bytes(base: int) -> bytes:
@@ -78,31 +83,29 @@ def _psi_table(table_id: int, body: bytes) -> bytes:
 
 def _pat_table() -> bytes:
     body = (
-        b"\x00\x01"                                # transport_stream_id
-        b"\xc1\x00\x00"                            # version/section numbers
-        b"\x00\x01"                                # program_number 1
-        + bytes([0xE0 | (PMT_PID >> 8), PMT_PID & 0xFF])
+        b"\x00\x01"  # transport_stream_id
+        b"\xc1\x00\x00"  # version/section numbers
+        b"\x00\x01" + bytes([0xE0 | (PMT_PID >> 8), PMT_PID & 0xFF])  # program_number 1
     )
     return _psi_table(0x00, body)
 
 
 def _pmt_table(stream_type: int) -> bytes:
     body = (
-        b"\x00\x01"                                # program_number
-        b"\xc1\x00\x00"                            # version/section numbers
-        + bytes([0xE0 | (VIDEO_PID >> 8), VIDEO_PID & 0xFF])   # PCR_PID
-        + b"\xf0\x00"                              # program_info_length
-        + bytes([stream_type,
-                 0xE0 | (VIDEO_PID >> 8), VIDEO_PID & 0xFF,
-                 0xF0, 0x00])                      # ES loop
+        b"\x00\x01"  # program_number
+        b"\xc1\x00\x00"  # version/section numbers
+        + bytes([0xE0 | (VIDEO_PID >> 8), VIDEO_PID & 0xFF])  # PCR_PID
+        + b"\xf0\x00"  # program_info_length
+        + bytes([stream_type, 0xE0 | (VIDEO_PID >> 8), VIDEO_PID & 0xFF, 0xF0, 0x00])  # ES loop
     )
     return _psi_table(0x02, body)
 
 
-def _ts_packet(pid: int, payload: bytes, cc: int, unit_start: bool = False,
-               pcr_base: Optional[int] = None) -> bytes:
+def _ts_packet(
+    pid: int, payload: bytes, cc: int, unit_start: bool = False, pcr_base: int | None = None
+) -> bytes:
     """Build one 188-byte TS packet; adds an adaptation field when needed."""
-    afc = 0x01                                     # payload only
+    afc = 0x01  # payload only
     body = bytearray()
     if pcr_base is not None or len(payload) < TS_PACKET_SIZE - 4:
         if pcr_base is None and len(payload) == TS_PACKET_SIZE - 5:
@@ -122,12 +125,14 @@ def _ts_packet(pid: int, payload: bytes, cc: int, unit_start: bool = False,
             body.append(len(af))
             body += af
     body += payload
-    header = bytes([
-        0x47,
-        (0x40 if unit_start else 0x00) | ((pid >> 8) & 0x1F),
-        pid & 0xFF,
-        (afc << 4) | (cc & 0x0F),
-    ])
+    header = bytes(
+        [
+            0x47,
+            (0x40 if unit_start else 0x00) | ((pid >> 8) & 0x1F),
+            pid & 0xFF,
+            (afc << 4) | (cc & 0x0F),
+        ]
+    )
     return header + bytes(body)
 
 
@@ -141,7 +146,7 @@ def _build_pes(frame: EncodedFrame) -> bytes:
         flags = 0x80
         ext = _ts_timestamp(pts, 0x20)
     header = bytearray(b"\x00\x00\x01\xe0")
-    header += b"\x00\x00"                          # PES_packet_length (video)
+    header += b"\x00\x00"  # PES_packet_length (video)
     header += bytes([0x80, flags, len(ext)]) + ext
     return bytes(header) + frame.data
 
@@ -149,6 +154,7 @@ def _build_pes(frame: EncodedFrame) -> bytes:
 # --------------------------------------------------------------------------
 # TsWriter
 # --------------------------------------------------------------------------
+
 
 class TsWriter:
     """Single-file MPEG-TS recorder for EncodedFrame Annex-B payloads.
@@ -165,7 +171,7 @@ class TsWriter:
             raise ValueError(f"codec must be one of {sorted(STREAM_TYPES)}")
         self._stream_type = STREAM_TYPES[codec]
         self._f = open(path, "wb")
-        self._cc: Dict[int, int] = {}
+        self._cc: dict[int, int] = {}
         self._pcr_written = False
         self._write_psi()
 
@@ -175,10 +181,17 @@ class TsWriter:
         return cc
 
     def _write_psi(self) -> None:
-        self._f.write(_ts_packet(PAT_PID, b"\x00" + _pat_table(),
-                                 self._next_cc(PAT_PID), unit_start=True))
-        self._f.write(_ts_packet(PMT_PID, b"\x00" + _pmt_table(self._stream_type),
-                                 self._next_cc(PMT_PID), unit_start=True))
+        self._f.write(
+            _ts_packet(PAT_PID, b"\x00" + _pat_table(), self._next_cc(PAT_PID), unit_start=True)
+        )
+        self._f.write(
+            _ts_packet(
+                PMT_PID,
+                b"\x00" + _pmt_table(self._stream_type),
+                self._next_cc(PMT_PID),
+                unit_start=True,
+            )
+        )
 
     def write(self, frame: EncodedFrame) -> None:
         """Packetise one encoded frame into the TS stream."""
@@ -194,12 +207,18 @@ class TsWriter:
         while pos < len(pes):
             # adaptation field carrying the PCR costs 8 bytes (length +
             # flags + PCR), so the first chunk of a PES is capped lower
-            cap = (TS_PACKET_SIZE - 12) if (first and pcr is not None) \
-                else (TS_PACKET_SIZE - 4)
-            chunk = pes[pos:pos + cap]
+            cap = (TS_PACKET_SIZE - 12) if (first and pcr is not None) else (TS_PACKET_SIZE - 4)
+            chunk = pes[pos : pos + cap]
             pos += len(chunk)
-            self._f.write(_ts_packet(VIDEO_PID, chunk, self._next_cc(VIDEO_PID),
-                                     unit_start=first, pcr_base=pcr if first else None))
+            self._f.write(
+                _ts_packet(
+                    VIDEO_PID,
+                    chunk,
+                    self._next_cc(VIDEO_PID),
+                    unit_start=first,
+                    pcr_base=pcr if first else None,
+                )
+            )
             first = False
 
     def close(self) -> None:
@@ -207,7 +226,7 @@ class TsWriter:
             self._f.close()
             self._f = None
 
-    def __enter__(self) -> "TsWriter":
+    def __enter__(self) -> TsWriter:
         return self
 
     def __exit__(self, *exc) -> None:
@@ -217,6 +236,7 @@ class TsWriter:
 # --------------------------------------------------------------------------
 # HlsWriter
 # --------------------------------------------------------------------------
+
 
 class HlsWriter:
     """Keyframe-aligned HLS segmenter with a live-window m3u8 playlist.
@@ -232,8 +252,9 @@ class HlsWriter:
         hls.close()               # appends #EXT-X-ENDLIST
     """
 
-    def __init__(self, out_dir: str, segment_seconds: float = 6.0,
-                 window: int = 5, codec: str = "h264"):
+    def __init__(
+        self, out_dir: str, segment_seconds: float = 6.0, window: int = 5, codec: str = "h264"
+    ):
         if segment_seconds <= 0:
             raise ValueError("segment_seconds must be positive")
         if codec not in STREAM_TYPES:
@@ -243,13 +264,13 @@ class HlsWriter:
         self._seg_ns = int(segment_seconds * 1_000_000_000)
         self._window = max(1, int(window))
         self._codec = codec
-        self._segments: List[Dict] = []            # {name, duration, discont}
+        self._segments: list[dict] = []  # {name, duration, discont}
         self._started = 0
-        self._writer: Optional[TsWriter] = None
+        self._writer: TsWriter | None = None
         self._cur_name = ""
         self._cur_discont = False
         self._first_pts = 0
-        self._prev_pts: Optional[int] = None
+        self._prev_pts: int | None = None
         self._last_pts = 0
         self._closed = False
 
@@ -261,7 +282,7 @@ class HlsWriter:
             raise RuntimeError("HlsWriter is closed")
         if self._writer is None:
             if not frame.is_keyframe:
-                return                              # segments start on keyframes
+                return  # segments start on keyframes
             self._start_segment(frame, discont=False)
             return
         if frame.is_keyframe:
@@ -276,8 +297,7 @@ class HlsWriter:
         self._started += 1
         self._cur_name = f"seg{self._started:06d}.ts"
         self._cur_discont = discont
-        self._writer = TsWriter(os.path.join(self._dir, self._cur_name),
-                                codec=self._codec)
+        self._writer = TsWriter(os.path.join(self._dir, self._cur_name), codec=self._codec)
         self._first_pts = frame.pts_ns
         self._prev_pts = None
         self._append(frame)
@@ -287,19 +307,20 @@ class HlsWriter:
         self._prev_pts = self._last_pts
         self._last_pts = frame.pts_ns
 
-    def _close_segment(self, next_pts: Optional[int], final: bool) -> None:
+    def _close_segment(self, next_pts: int | None, final: bool) -> None:
         if next_pts is not None:
             duration = max((next_pts - self._first_pts) / 1e9, 0.1)
         elif self._prev_pts is not None:
-            duration = (self._last_pts - self._first_pts) / 1e9 + \
-                       max(self._last_pts - self._prev_pts, 0) / 1e9
+            duration = (self._last_pts - self._first_pts) / 1e9 + max(
+                self._last_pts - self._prev_pts, 0
+            ) / 1e9
         else:
             duration = 0.1
         self._writer.close()
         self._writer = None
-        self._segments.append({"name": self._cur_name,
-                               "duration": duration,
-                               "discont": self._cur_discont})
+        self._segments.append(
+            {"name": self._cur_name, "duration": duration, "discont": self._cur_discont}
+        )
         self._trim_window()
         self._write_playlist(final=final)
 
@@ -314,8 +335,9 @@ class HlsWriter:
     # -- playlist -----------------------------------------------------------
 
     def _write_playlist(self, final: bool) -> None:
-        target = max(1, math.ceil(max(s["duration"] for s in self._segments)
-                                  if self._segments else 1))
+        target = max(
+            1, math.ceil(max(s["duration"] for s in self._segments) if self._segments else 1)
+        )
         lines = [
             "#EXTM3U",
             "#EXT-X-VERSION:3",
@@ -344,7 +366,7 @@ class HlsWriter:
             self._write_playlist(final=True)
         self._closed = True
 
-    def __enter__(self) -> "HlsWriter":
+    def __enter__(self) -> HlsWriter:
         return self
 
     def __exit__(self, *exc) -> None:
@@ -354,6 +376,7 @@ class HlsWriter:
 # --------------------------------------------------------------------------
 # PrerollBuffer
 # --------------------------------------------------------------------------
+
 
 class PrerollBuffer:
     """Ring buffer of encoded frames for "seconds before the event" clips.
@@ -371,24 +394,22 @@ class PrerollBuffer:
         if seconds <= 0:
             raise ValueError("seconds must be positive")
         self._seconds_ns = int(seconds * 1_000_000_000)
-        self._frames: Deque[EncodedFrame] = deque()
+        self._frames: deque[EncodedFrame] = deque()
 
     def push(self, frame: EncodedFrame) -> None:
         """Add a frame and evict frames older than the window."""
         self._frames.append(frame)
-        while len(self._frames) > 1 and \
-                frame.pts_ns - self._frames[0].pts_ns > self._seconds_ns:
+        while len(self._frames) > 1 and frame.pts_ns - self._frames[0].pts_ns > self._seconds_ns:
             self._frames.popleft()
 
     @property
-    def frames(self) -> List[EncodedFrame]:
+    def frames(self) -> list[EncodedFrame]:
         return list(self._frames)
 
     def __len__(self) -> int:
         return len(self._frames)
 
-    def dump(self, path: str,
-             on_frame: Optional[Callable[[TsWriter], None]] = None) -> TsWriter:
+    def dump(self, path: str, on_frame: Callable[[TsWriter], None] | None = None) -> TsWriter:
         """Flush buffered preroll into a new .ts file and return the writer.
 
         on_frame(writer) is called right after the preroll flush - the

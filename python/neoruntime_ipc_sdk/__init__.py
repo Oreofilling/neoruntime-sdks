@@ -15,6 +15,8 @@ Provides clean API to access platform capabilities:
 - DSP offload: hardware resize/crop/multi-crop with CPU fallback
 """
 
+from __future__ import annotations
+
 __version__ = "0.6.0"
 
 from .app import (

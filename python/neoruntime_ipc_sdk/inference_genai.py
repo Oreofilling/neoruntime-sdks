@@ -6,10 +6,12 @@ from the core client so the hot infer path stays readable; mixed in as
 unchanged.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import queue
-from typing import Any, Iterator, List, Optional
+from typing import Any, Iterator
 
 from .config import Config
 from .proto import inference_pb2
@@ -21,7 +23,7 @@ class GenAiMixin:
     """Requires the host class to provide ``_invoke``, ``connect``,
     ``stub`` and ``_loop`` (see InferenceClient)."""
 
-    def encode_text(self, text: str, timeout_ms: int = 5000) -> List[float]:
+    def encode_text(self, text: str, timeout_ms: int = 5000) -> list[float]:
         """Encode a text string to a CLIP embedding via NPU.
 
         Returns a list of floats (512-dim for ViT-B/32).
@@ -44,9 +46,9 @@ class GenAiMixin:
 
     # ── GenAI (LLM/VLM) ──────────────────────────────────────────────────────
 
-    def genai_create_session(self, hef_path: str, kind: str = "llm",
-                             lora_name: str = "",
-                             optimize_memory: bool = False) -> str:
+    def genai_create_session(
+        self, hef_path: str, kind: str = "llm", lora_name: str = "", optimize_memory: bool = False
+    ) -> str:
         """Create a GenAI (LLM/VLM) session.
 
         Args:
@@ -67,7 +69,7 @@ class GenAiMixin:
             hef_path=host_path,
             kind=kind_map.get(kind, 0),
             lora_name=lora_name,
-            optimize_memory=optimize_memory
+            optimize_memory=optimize_memory,
         )
         response = self._invoke(
             self.stub.GenaiCreateSession,
@@ -98,14 +100,18 @@ class GenAiMixin:
         if response.code != 0:
             raise RuntimeError(f"GenAI destroy session failed: {response.message}")
 
-    def genai_generate(self, session_id: str, messages: List[str],
-                       images: Optional[List[bytes]] = None,
-                       stop_tokens: Optional[List[str]] = None,
-                       temperature: float = 0.0,
-                       top_p: float = 1.0,
-                       top_k: int = 0,
-                       max_tokens: int = 512,
-                       do_sample: bool = False) -> Iterator[str]:
+    def genai_generate(
+        self,
+        session_id: str,
+        messages: list[str],
+        images: list[bytes] | None = None,
+        stop_tokens: list[str] | None = None,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+        top_k: int = 0,
+        max_tokens: int = 512,
+        do_sample: bool = False,
+    ) -> Iterator[str]:
         """Stream generated tokens from a GenAI session.
 
         Args:
@@ -163,9 +169,9 @@ class GenAiMixin:
                 if isinstance(item, Exception):
                     raise item
                 resp = item
-                if resp.HasField('token'):
+                if resp.HasField("token"):
                     yield resp.token
-                elif resp.HasField('finish'):
+                elif resp.HasField("finish"):
                     break
         finally:
             if not pump_future.done():

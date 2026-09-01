@@ -7,10 +7,12 @@ Provides API for managing application containers:
 - Stream application logs
 """
 
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterator, List
+from typing import Iterator
 
 import grpc  # noqa: F401 — tests patch app.grpc.insecure_channel
 
@@ -21,6 +23,7 @@ from .proto import app_pb2, app_pb2_grpc
 @dataclass
 class AppInfo:
     """Application information"""
+
     id: str
     name: str
     version: str
@@ -38,6 +41,7 @@ class AppInfo:
 @dataclass
 class AppStats:
     """Application runtime statistics"""
+
     app_id: str
     cpu_usage_percent: float
     memory_usage_bytes: int
@@ -49,8 +53,9 @@ class AppStats:
 @dataclass
 class LogLine:
     """Single log line"""
+
     timestamp: int  # Unix timestamp in nanoseconds
-    level: str      # info, warn, error, debug
+    level: str  # info, warn, error, debug
     message: str
 
     @property
@@ -103,7 +108,7 @@ class AppClient(GrpcClient):
             stopped_at=app.stopped_at,
             restart_count=app.restart_count,
             manifest_path=app.manifest_path,
-            instance_path=app.instance_path
+            instance_path=app.instance_path,
         )
 
     def _parse_app_stats(self, stats: app_pb2.AppStats) -> AppStats:
@@ -113,15 +118,11 @@ class AppClient(GrpcClient):
             memory_usage_bytes=stats.memory_usage_bytes,
             memory_limit_bytes=stats.memory_limit_bytes,
             thread_count=stats.thread_count,
-            uptime_seconds=stats.uptime_seconds
+            uptime_seconds=stats.uptime_seconds,
         )
 
     def _parse_log_line(self, line: app_pb2.LogLine) -> LogLine:
-        return LogLine(
-            timestamp=line.timestamp,
-            level=line.level,
-            message=line.message
-        )
+        return LogLine(timestamp=line.timestamp, level=line.level, message=line.message)
 
     def register_web_url(self, path: str = "/") -> None:
         """Register a web access path for this app.
@@ -139,8 +140,9 @@ class AppClient(GrpcClient):
             self.connect()
         app_id = os.getenv("APP_ID")
         if not app_id:
-            raise RuntimeError("APP_ID env var not set — "
-                               "this method must be called inside an app container")
+            raise RuntimeError(
+                "APP_ID env var not set — this method must be called inside an app container"
+            )
         request = app_pb2.RegisterWebUrlRequest(app_id=app_id, path=path)
         response = self.stub.RegisterWebUrl(request)
         if not response.success:
@@ -160,10 +162,7 @@ class AppClient(GrpcClient):
         if self.stub is None:
             self.connect()
 
-        request = app_pb2.InstallRequest(
-            manifest_path=manifest_path,
-            image_path=image_path
-        )
+        request = app_pb2.InstallRequest(manifest_path=manifest_path, image_path=image_path)
         response = self.stub.InstallApp(request)
 
         if not response.status.success:
@@ -187,10 +186,7 @@ class AppClient(GrpcClient):
         if self.stub is None:
             self.connect()
 
-        request = app_pb2.StopRequest(
-            app_id=app_id,
-            timeout_seconds=timeout_seconds
-        )
+        request = app_pb2.StopRequest(app_id=app_id, timeout_seconds=timeout_seconds)
         response = self.stub.StopApp(request)
 
         if not response.success:
@@ -201,10 +197,7 @@ class AppClient(GrpcClient):
         if self.stub is None:
             self.connect()
 
-        request = app_pb2.UninstallRequest(
-            app_id=app_id,
-            keep_logs=keep_logs
-        )
+        request = app_pb2.UninstallRequest(app_id=app_id, keep_logs=keep_logs)
         response = self.stub.UninstallApp(request)
 
         if not response.success:
@@ -223,7 +216,7 @@ class AppClient(GrpcClient):
         self.stop_app(app_id, timeout_seconds=timeout_seconds)
         self.start_app(app_id)
 
-    def list_apps(self) -> List[AppInfo]:
+    def list_apps(self) -> list[AppInfo]:
         """List all installed applications"""
         if self.stub is None:
             self.connect()
@@ -253,10 +246,9 @@ class AppClient(GrpcClient):
 
         return self._parse_app_stats(response)
 
-    def get_logs(self,
-                 app_id: str,
-                 max_lines: int = 100,
-                 follow: bool = False) -> Iterator[LogLine]:
+    def get_logs(
+        self, app_id: str, max_lines: int = 100, follow: bool = False
+    ) -> Iterator[LogLine]:
         """
         Get application logs
 
@@ -283,19 +275,14 @@ class AppClient(GrpcClient):
         if self.stub is None:
             self.connect()
 
-        request = app_pb2.GetLogsRequest(
-            app_id=app_id,
-            max_lines=max_lines,
-            follow=follow
-        )
+        request = app_pb2.GetLogsRequest(app_id=app_id, max_lines=max_lines, follow=follow)
 
         for response in self.stub.GetAppLogs(request):
             yield self._parse_log_line(response)
 
-    def get_logs_text(self,
-                      app_id: str,
-                      max_lines: int = 100,
-                      follow: bool = False) -> Iterator[str]:
+    def get_logs_text(
+        self, app_id: str, max_lines: int = 100, follow: bool = False
+    ) -> Iterator[str]:
         """
         Get application logs as text lines
 

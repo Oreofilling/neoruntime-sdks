@@ -1,7 +1,8 @@
 """Data types returned by the camera control client."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import List, Optional
 
 __all__ = [
     "Capabilities",
@@ -19,28 +20,27 @@ __all__ = [
 ]
 
 
-
 @dataclass
 class ISPConfig:
-    brightness: int = -1       # [0..100], -1 = no change
-    contrast: int = -1         # [0..100]
-    saturation: int = -1       # [0..100]
-    sharpness: int = -1        # [0..100]
-    manual_mode: Optional[bool] = None
-    auto_exposure: Optional[bool] = None
-    backlight: int = -1        # [0..100]
+    brightness: int = -1  # [0..100], -1 = no change
+    contrast: int = -1  # [0..100]
+    saturation: int = -1  # [0..100]
+    sharpness: int = -1  # [0..100]
+    manual_mode: bool | None = None
+    auto_exposure: bool | None = None
+    backlight: int = -1  # [0..100]
     exposure_time_us: int = -1
     gain: int = -1
     noise_reduction: int = -1  # [0..100]
-    wdr_value: int = -1        # [0..100]
-    powerline_freq: int = -1   # 0=off, 1=50Hz, 2=60Hz
+    wdr_value: int = -1  # [0..100]
+    powerline_freq: int = -1  # 0=off, 1=50Hz, 2=60Hz
     awb_index: int = -1
 
 
 @dataclass
 class TransformConfig:
-    rotation: int = 0   # 0/1/2/3 => 0/90/180/270
-    flip: int = 0       # 0=none, 1=H, 2=V, 3=both
+    rotation: int = 0  # 0/1/2/3 => 0/90/180/270
+    flip: int = 0  # 0=none, 1=H, 2=V, 3=both
     dewarp: bool = False
     grayscale: bool = False
 
@@ -123,6 +123,7 @@ class EnvStatus:
 @dataclass
 class InfraredStatus:
     """Day/night imaging state reported by the camera pipeline."""
+
     mode: str
     transition: str
     output_source: str
@@ -148,6 +149,7 @@ class InfraredStatus:
 @dataclass
 class IrPreset:
     """Saved IR-light profile bound to a zoom ratio."""
+
     name: str
     zoom_ratio: float
     near_pwm: int
@@ -161,10 +163,11 @@ class PrivacyMaskSettings:
     regions is a list of dicts: {id, name, enabled, points_x, points_y}
     with normalized [0.0-1.0] polygon coordinates (up to 8 points).
     """
+
     color: int
     blur_radius: int
     enabled: bool
-    regions: List[dict]
+    regions: list[dict]
     dpm_enabled: bool
     dpm_labels: str
     dpm_mode: str

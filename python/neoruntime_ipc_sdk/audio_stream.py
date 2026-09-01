@@ -11,12 +11,13 @@ auto-detected and reported as 0/unknown until the daemon fills them.
 Socket path: /run/aipc/encoded/audio_capture.sock
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import socket
 import struct
 from dataclasses import dataclass
-from typing import Optional
 
 from ._transport import UdsStreamClient
 
@@ -45,8 +46,9 @@ _AUDIO_RATE_MIN = 8000
 _AUDIO_RATE_MAX = 192000
 
 
-def _audio_layout_plausible(rate: int, channels: int, bits: int,
-                            frame_size: int, payload_size: int) -> bool:
+def _audio_layout_plausible(
+    rate: int, channels: int, bits: int, frame_size: int, payload_size: int
+) -> bool:
     return (
         frame_size == payload_size
         and _AUDIO_RATE_MIN <= rate <= _AUDIO_RATE_MAX
@@ -81,15 +83,16 @@ def decode_audio_format(header: bytes, payload_size: int) -> tuple:
 @dataclass
 class AudioFrame:
     """Encoded or raw audio frame from the audio capture pipeline."""
-    codec: int          # 0=pcm, 1=aac, 2=g711a, 3=g711u
-    flags: int          # bit0 = keyframe
-    pts_ns: int         # Presentation timestamp (nanoseconds)
+
+    codec: int  # 0=pcm, 1=aac, 2=g711a, 3=g711u
+    flags: int  # bit0 = keyframe
+    pts_ns: int  # Presentation timestamp (nanoseconds)
     sample_rate: int
     channels: int
     bits_per_sample: int
-    data: bytes         # Raw audio payload
-    dts_ns: int = 0     # Decode timestamp; set only when the daemon sends the
-                        # video-style header tail (0 otherwise)
+    data: bytes  # Raw audio payload
+    dts_ns: int = 0  # Decode timestamp; set only when the daemon sends the
+    # video-style header tail (0 otherwise)
 
     @property
     def is_keyframe(self) -> bool:
@@ -97,12 +100,19 @@ class AudioFrame:
 
     @property
     def codec_name(self) -> str:
-        return {0: "pcm", 1: "aac", 2: "g711a", 3: "g711u"}.get(self.codec, f"unknown({self.codec})")
+        return {0: "pcm", 1: "aac", 2: "g711a", 3: "g711u"}.get(
+            self.codec, f"unknown({self.codec})"
+        )
 
     @property
     def duration_ms(self) -> float:
         """Estimated frame duration in ms based on PCM parameters."""
-        if self.codec == 0 and self.sample_rate > 0 and self.channels > 0 and self.bits_per_sample > 0:
+        if (
+            self.codec == 0
+            and self.sample_rate > 0
+            and self.channels > 0
+            and self.bits_per_sample > 0
+        ):
             bytes_per_sample = self.bits_per_sample // 8
             total_samples = len(self.data) // (bytes_per_sample * self.channels)
             return total_samples / self.sample_rate * 1000.0
@@ -131,7 +141,7 @@ class AudioStreamClient(UdsStreamClient):
         client.close()
     """
 
-    def __init__(self, socket_path: Optional[str] = None):
+    def __init__(self, socket_path: str | None = None):
         if socket_path is None:
             socket_path = os.getenv(
                 "AUDIO_CAPTURE_SOCK_PATH",
@@ -142,7 +152,7 @@ class AudioStreamClient(UdsStreamClient):
     # Socket lifecycle, reconnect, get_frame/subscribe/on_frame and close live
     # in UdsStreamClient; only the audio wire framing stays here.
 
-    def _recv_frame(self, sock: socket.socket) -> Optional[AudioFrame]:
+    def _recv_frame(self, sock: socket.socket) -> AudioFrame | None:
         try:
             header_data = self._recv_exact(sock, _HEADER_SIZE)
         except (ConnectionError, OSError):
@@ -163,7 +173,8 @@ class AudioStreamClient(UdsStreamClient):
             return None
 
         sample_rate, channels, bits_per_sample, dts_ns = decode_audio_format(
-            header_data, payload_size)
+            header_data, payload_size
+        )
 
         try:
             payload = self._recv_exact(sock, payload_size) if payload_size > 0 else b""
@@ -180,4 +191,3 @@ class AudioStreamClient(UdsStreamClient):
             data=payload,
             dts_ns=dts_ns,
         )
-

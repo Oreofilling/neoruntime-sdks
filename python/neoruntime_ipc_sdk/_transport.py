@@ -16,10 +16,12 @@ saturates a core in tight infer loops (see inference.py). Forcing it onto
 the synchronous base would reintroduce exactly that cost.
 """
 
+from __future__ import annotations
+
 import socket
 import struct
 import threading
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable
 
 import grpc
 
@@ -45,16 +47,17 @@ def check_status(resp, label: str) -> None:
         raise RuntimeError(f"{label} failed: {msg}")
 
 
-def recvmsg_with_fds(sock: socket.socket, bufsize: int,
-                     max_fds: int = 3) -> Tuple[bytes, List[int]]:
+def recvmsg_with_fds(
+    sock: socket.socket, bufsize: int, max_fds: int = 3
+) -> tuple[bytes, list[int]]:
     """Receive data + SCM_RIGHTS file descriptors via recvmsg."""
     fds_space = socket.CMSG_SPACE(max_fds * struct.calcsize("i"))
     data, ancdata, _flags, _addr = sock.recvmsg(bufsize, fds_space)
-    fds: List[int] = []
+    fds: list[int] = []
     for cmsg_level, cmsg_type, cmsg_data in ancdata:
         if cmsg_level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
             n = len(cmsg_data) // struct.calcsize("i")
-            fds.extend(struct.unpack(f"{n}i", cmsg_data[:n * struct.calcsize("i")]))
+            fds.extend(struct.unpack(f"{n}i", cmsg_data[: n * struct.calcsize("i")]))
     return data, fds
 
 
@@ -77,22 +80,23 @@ class GrpcClient:
     """
 
     _stub_factory: Callable[[Any], Any]
-    _endpoint_env: Optional[str] = None
-    _endpoint_default: Optional[str] = None
+    _endpoint_env: str | None = None
+    _endpoint_default: str | None = None
 
-    def __init__(self, endpoint: Optional[str] = None):
+    def __init__(self, endpoint: str | None = None):
         self.endpoint = endpoint or self._get_default_endpoint()
-        self._channel: Optional[grpc.Channel] = None
-        self._stub: Optional[Any] = None
+        self._channel: grpc.Channel | None = None
+        self._stub: Any | None = None
 
     def _get_default_endpoint(self) -> str:
         if self._endpoint_env is not None:
             import os
+
             return os.getenv(self._endpoint_env, self._endpoint_default or "")
         return Config.get_camera_control_endpoint()
 
     @property
-    def channel_options(self) -> List[Tuple[str, Any]]:
+    def channel_options(self) -> list[tuple[str, Any]]:
         """gRPC channel options applied at connect time."""
         return []
 
@@ -100,8 +104,7 @@ class GrpcClient:
         """Return the stub, creating the channel on first use."""
         if self._stub is not None:
             return self._stub
-        self._channel = grpc.insecure_channel(
-            self.endpoint, options=self.channel_options)
+        self._channel = grpc.insecure_channel(self.endpoint, options=self.channel_options)
         self._stub = self._stub_factory(self._channel)
         return self._stub
 
@@ -117,7 +120,7 @@ class GrpcClient:
         return self._channel is not None
 
     @property
-    def channel(self) -> Optional[grpc.Channel]:
+    def channel(self) -> grpc.Channel | None:
         return self._channel
 
     @property
@@ -156,7 +159,7 @@ class UdsStreamClient:
 
     def __init__(self, socket_path: str):
         self.socket_path = socket_path
-        self._sock: Optional[socket.socket] = None
+        self._sock: socket.socket | None = None
         self._lock = threading.Lock()
 
     def _connect(self) -> socket.socket:
@@ -176,8 +179,7 @@ class UdsStreamClient:
         while len(buf) < n:
             chunk = sock.recv(n - len(buf))
             if not chunk:
-                raise ConnectionError(
-                    f"{type(self).__name__}: socket closed")
+                raise ConnectionError(f"{type(self).__name__}: socket closed")
             buf.extend(chunk)
         return bytes(buf)
 
@@ -223,8 +225,8 @@ class UdsStreamClient:
                 sock = self._reconnect()
             except OSError:
                 from logging import getLogger
-                getLogger(__name__).warning(
-                    "%s: reconnect failed, retrying in 2s", name)
+
+                getLogger(__name__).warning("%s: reconnect failed, retrying in 2s", name)
                 time.sleep(2.0)
 
     def on_frame(self, callback: Callable[[Any], None]) -> threading.Thread:

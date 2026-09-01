@@ -2,9 +2,11 @@
 Device Control Client
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Iterator
 
 import grpc  # noqa: F401 — tests patch device.grpc.insecure_channel
 
@@ -43,7 +45,7 @@ class DeviceEvent:
         TEMPERATURE_ALERT = 2
         PTZ_MOVE_COMPLETE = 3
         FOCUS_COMPLETE = 4
-    
+
     type: EventType
     timestamp_ns: int
     gpio_pin: int = 0
@@ -55,6 +57,7 @@ class DeviceEvent:
 @dataclass
 class AfJob:
     """Result of starting an autofocus job (native AF RPCs)."""
+
     accepted: bool
     job_id: int
     message: str
@@ -63,6 +66,7 @@ class AfJob:
 @dataclass
 class AfStatus:
     """Full snapshot of the autofocus engine state."""
+
     job_id: int
     operation: str
     state: str
@@ -86,6 +90,7 @@ class AfStatus:
 @dataclass
 class AfMeasurement:
     """Per-window focus telemetry from the last AF measurement."""
+
     focus_energy: list
     mean_luma: list
     frame_id: int
@@ -94,17 +99,17 @@ class AfMeasurement:
 class DeviceClient(GrpcClient):
     """
     Device Control Client
-    
+
     Usage:
         dev = DeviceClient()
-        
+
         dev.set_white_light(80)
         dev.set_ir_led(True)
         dev.set_ircut(IrCutMode.NIGHT)
-        
+
         dev.pan_left(speed=50)
         dev.call_preset(3)
-        
+
         dev.zoom_in()
         dev.focus_auto()
     """
@@ -117,149 +122,149 @@ class DeviceClient(GrpcClient):
     def set_white_light(self, level: int) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.LightLevelRequest(level=level)
         response = self.stub.SetWhiteLight(request)
-        
+
         if not response.success:
             raise RuntimeError(f"SetWhiteLight failed: {response.message}")
-    
+
     def set_ir_led(self, on: bool) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.LightSwitchRequest(on=on)
         response = self.stub.SetIrLed(request)
-        
+
         if not response.success:
             raise RuntimeError(f"SetIrLed failed: {response.message}")
-    
+
     def set_ircut(self, mode: IrCutMode) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.IrCutRequest(mode=mode.value)
         response = self.stub.SetIrCut(request)
-        
+
         if not response.success:
             raise RuntimeError(f"SetIrCut failed: {response.message}")
-    
+
     def pan_left(self, speed: int = 50) -> None:
         self._pan(device_pb2.PAN_LEFT, speed)
-    
+
     def pan_right(self, speed: int = 50) -> None:
         self._pan(device_pb2.PAN_RIGHT, speed)
-    
+
     def pan_stop(self) -> None:
         self._pan(device_pb2.PAN_STOP, 0)
-    
+
     def _pan(self, direction: int, speed: int) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.PanRequest(direction=direction, speed=speed)
         response = self.stub.Pan(request)
-        
+
         if not response.success:
             raise RuntimeError(f"Pan failed: {response.message}")
-    
+
     def tilt_up(self, speed: int = 50) -> None:
         self._tilt(device_pb2.TILT_UP, speed)
-    
+
     def tilt_down(self, speed: int = 50) -> None:
         self._tilt(device_pb2.TILT_DOWN, speed)
-    
+
     def tilt_stop(self) -> None:
         self._tilt(device_pb2.TILT_STOP, 0)
-    
+
     def _tilt(self, direction: int, speed: int) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.TiltRequest(direction=direction, speed=speed)
         response = self.stub.Tilt(request)
-        
+
         if not response.success:
             raise RuntimeError(f"Tilt failed: {response.message}")
-    
+
     def ptz_stop(self) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.PTZStopRequest()
         response = self.stub.PTZStop(request)
-        
+
         if not response.success:
             raise RuntimeError(f"PTZStop failed: {response.message}")
-    
+
     def save_preset(self, preset_id: int) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.PresetRequest(preset_id=preset_id)
         response = self.stub.SavePreset(request)
-        
+
         if not response.success:
             raise RuntimeError(f"SavePreset failed: {response.message}")
-    
+
     def call_preset(self, preset_id: int) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.PresetRequest(preset_id=preset_id)
         response = self.stub.CallPreset(request)
-        
+
         if not response.success:
             raise RuntimeError(f"CallPreset failed: {response.message}")
-    
+
     def zoom_in(self, speed: int = 50) -> None:
         self.zoom(speed)
-    
+
     def zoom_out(self, speed: int = 50) -> None:
         self.zoom(-speed)
-    
+
     def zoom_stop(self) -> None:
         self.zoom(0)
-    
+
     def zoom(self, speed: int) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.ZoomRequest(speed=speed)
         response = self.stub.Zoom(request)
-        
+
         if not response.success:
             raise RuntimeError(f"Zoom failed: {response.message}")
-    
+
     def set_zoom_level(self, level: float) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.ZoomLevelRequest(level=level)
         response = self.stub.SetZoomLevel(request)
-        
+
         if not response.success:
             raise RuntimeError(f"SetZoomLevel failed: {response.message}")
-    
+
     def focus_in(self, speed: int = 50) -> None:
         self.focus(speed)
-    
+
     def focus_out(self, speed: int = 50) -> None:
         self.focus(-speed)
-    
+
     def focus_stop(self) -> None:
         self.focus(0)
-    
+
     def focus(self, speed: int) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.FocusRequest(speed=speed)
         response = self.stub.Focus(request)
-        
+
         if not response.success:
             raise RuntimeError(f"Focus failed: {response.message}")
-    
+
     def focus_auto(self, enable: bool = True) -> None:
         if self.stub is None:
             self.connect()
@@ -280,12 +285,12 @@ class DeviceClient(GrpcClient):
         if not response.success:
             raise RuntimeError(f"SetFocusLevel failed: {response.message}")
 
-    def get_lens_status(self) -> Dict[str, Any]:
+    def get_lens_status(self) -> dict[str, Any]:
         if self.stub is None:
             self.connect()
 
         response = self.stub.GetLensStatus(device_pb2.Empty())
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "zoom_pos": response.zoom_pos,
             "focus_pos": response.focus_pos,
             "zoom_state": response.zoom_state,
@@ -295,14 +300,22 @@ class DeviceClient(GrpcClient):
             "autofocus_enabled": response.autofocus_enabled,
         }
         if response.HasField("zoom_limit"):
-            result["zoom_limit"] = {"min_pos": response.zoom_limit.min_pos, "max_pos": response.zoom_limit.max_pos}
+            result["zoom_limit"] = {
+                "min_pos": response.zoom_limit.min_pos,
+                "max_pos": response.zoom_limit.max_pos,
+            }
         if response.HasField("focus_limit"):
-            result["focus_limit"] = {"min_pos": response.focus_limit.min_pos, "max_pos": response.focus_limit.max_pos}
+            result["focus_limit"] = {
+                "min_pos": response.focus_limit.min_pos,
+                "max_pos": response.focus_limit.max_pos,
+            }
         return result
 
-    def set_lens_limits(self,
-                        zoom_limit: Optional[Dict[str, int]] = None,
-                        focus_limit: Optional[Dict[str, int]] = None) -> None:
+    def set_lens_limits(
+        self,
+        zoom_limit: dict[str, int] | None = None,
+        focus_limit: dict[str, int] | None = None,
+    ) -> None:
         """Set lens axis position limits.
 
         Args:
@@ -399,10 +412,8 @@ class DeviceClient(GrpcClient):
 
         response = self.stub.StartOneShotAf(device_pb2.Empty())
         if not response.accepted:
-            raise RuntimeError(
-                f"StartOneShotAf rejected: {response.message}")
-        return AfJob(accepted=response.accepted, job_id=response.job_id,
-                     message=response.message)
+            raise RuntimeError(f"StartOneShotAf rejected: {response.message}")
+        return AfJob(accepted=response.accepted, job_id=response.job_id, message=response.message)
 
     def start_zoom_follow(self, ratio: float) -> AfJob:
         """Start continuous autofocus locked to a zoom ratio.
@@ -416,10 +427,8 @@ class DeviceClient(GrpcClient):
         request = device_pb2.ZoomFollowRequest(ratio=ratio)
         response = self.stub.StartZoomFollow(request)
         if not response.accepted:
-            raise RuntimeError(
-                f"StartZoomFollow rejected: {response.message}")
-        return AfJob(accepted=response.accepted, job_id=response.job_id,
-                     message=response.message)
+            raise RuntimeError(f"StartZoomFollow rejected: {response.message}")
+        return AfJob(accepted=response.accepted, job_id=response.job_id, message=response.message)
 
     def get_autofocus_status(self) -> AfStatus:
         """Snapshot of the autofocus engine (job, progress, lens positions)."""
@@ -428,16 +437,25 @@ class DeviceClient(GrpcClient):
 
         r = self.stub.GetAutofocusStatus(device_pb2.Empty())
         return AfStatus(
-            job_id=r.job_id, operation=r.operation, state=r.state,
-            progress=r.progress, busy=r.busy, anchor_valid=r.anchor_valid,
+            job_id=r.job_id,
+            operation=r.operation,
+            state=r.state,
+            progress=r.progress,
+            busy=r.busy,
+            anchor_valid=r.anchor_valid,
             requested_ratio=r.requested_ratio,
             effective_ratio=r.effective_ratio,
-            zoom_pos=r.zoom_pos, focus_pos=r.focus_pos,
-            best_focus=r.best_focus, metric=r.metric,
-            confidence=r.confidence, reproducibility=r.reproducibility,
+            zoom_pos=r.zoom_pos,
+            focus_pos=r.focus_pos,
+            best_focus=r.best_focus,
+            metric=r.metric,
+            confidence=r.confidence,
+            reproducibility=r.reproducibility,
             estimated_distance_m=r.estimated_distance_m,
-            elapsed_ms=r.elapsed_ms, error_code=r.error_code,
-            message=r.message)
+            elapsed_ms=r.elapsed_ms,
+            error_code=r.error_code,
+            message=r.message,
+        )
 
     def cancel_autofocus(self, job_id: int = 0) -> None:
         """Cancel an autofocus job.
@@ -451,8 +469,7 @@ class DeviceClient(GrpcClient):
         request = device_pb2.AfJobRequest(job_id=job_id)
         response = self.stub.CancelAutofocus(request)
         if not response.success:
-            raise RuntimeError(
-                f"CancelAutofocus failed: {response.message}")
+            raise RuntimeError(f"CancelAutofocus failed: {response.message}")
 
     def set_af_windows(self, enabled: bool, windows, stream_id: str = "main") -> None:
         """Set autofocus measurement windows for a stream.
@@ -468,8 +485,7 @@ class DeviceClient(GrpcClient):
 
         if len(windows) > 3:
             raise ValueError("at most 3 AF windows are supported")
-        request = device_pb2.SetAfWindowsRequest(enabled=enabled,
-                                                 stream_id=stream_id)
+        request = device_pb2.SetAfWindowsRequest(enabled=enabled, stream_id=stream_id)
         for x, y, w, h in windows:
             request.windows.add(x=x, y=y, w=w, h=h)
         response = self.stub.SetAfWindows(request)
@@ -482,9 +498,9 @@ class DeviceClient(GrpcClient):
             self.connect()
 
         r = self.stub.GetAfMeasurement(device_pb2.Empty())
-        return AfMeasurement(focus_energy=list(r.focus_energy),
-                             mean_luma=list(r.mean_luma),
-                             frame_id=r.frame_id)
+        return AfMeasurement(
+            focus_energy=list(r.focus_energy), mean_luma=list(r.mean_luma), frame_id=r.frame_id
+        )
 
     def set_wiegand_out(self, channel: int, enable: bool) -> None:
         """Enable or disable a Wiegand output channel.
@@ -607,7 +623,9 @@ class DeviceClient(GrpcClient):
         if self.stub is None:
             self.connect()
 
-        request = device_pb2.GotoRatioDistanceRequest(zoom_ratio=zoom_ratio, focus_distance_m=focus_distance_m)
+        request = device_pb2.GotoRatioDistanceRequest(
+            zoom_ratio=zoom_ratio, focus_distance_m=focus_distance_m
+        )
         response = self.stub.LensGotoRatioDistance(request)
 
         if not response.success:
@@ -616,31 +634,31 @@ class DeviceClient(GrpcClient):
     def gpio_set(self, pin: int, value: bool) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.GPIOWriteRequest(pin=pin, value=value)
         response = self.stub.GPIOWrite(request)
-        
+
         if not response.success:
             raise RuntimeError(f"GPIOWrite failed: {response.message}")
-    
+
     def gpio_get(self, pin: int) -> bool:
         if self.stub is None:
             self.connect()
-        
+
         request = device_pb2.GPIOReadRequest(pin=pin)
         response = self.stub.GPIORead(request)
-        
+
         if not response.status.success:
             raise RuntimeError(f"GPIORead failed: {response.status.message}")
-        
+
         return response.value
-    
+
     def get_device_status(self) -> DeviceStatus:
         if self.stub is None:
             self.connect()
-        
+
         response = self.stub.GetDeviceStatus(device_pb2.Empty())
-        
+
         return DeviceStatus(
             soc_temp_c=response.soc_temp_c,
             mcu_temp_c=response.mcu_temp_c,
@@ -654,27 +672,26 @@ class DeviceClient(GrpcClient):
             white_light_level=response.white_light_level,
             ir_led_on=response.ir_led_on,
             mcu_version=response.mcu_version,
-            mcu_uptime_ms=response.mcu_uptime_ms
+            mcu_uptime_ms=response.mcu_uptime_ms,
         )
-    
+
     def subscribe_events(self) -> Iterator[DeviceEvent]:
         if self.stub is None:
             self.connect()
-        
+
         for event_msg in self.stub.SubscribeEvents(device_pb2.Empty()):
             event = DeviceEvent(
-                type=DeviceEvent.EventType(event_msg.type),
-                timestamp_ns=event_msg.timestamp_ns
+                type=DeviceEvent.EventType(event_msg.type), timestamp_ns=event_msg.timestamp_ns
             )
-            
-            if event_msg.HasField('gpio_state'):
+
+            if event_msg.HasField("gpio_state"):
                 event.gpio_pin = event_msg.gpio_state.pin
                 event.gpio_value = event_msg.gpio_state.value
-            
-            if event_msg.HasField('light_sensor_value'):
+
+            if event_msg.HasField("light_sensor_value"):
                 event.light_sensor_value = event_msg.light_sensor_value
-            
-            if event_msg.HasField('temperature'):
+
+            if event_msg.HasField("temperature"):
                 event.temperature = event_msg.temperature
-            
+
             yield event

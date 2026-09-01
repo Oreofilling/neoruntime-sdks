@@ -4,7 +4,7 @@ Pure functions over ``inference_pb2`` messages — no client state, so
 they run identically in tests and in the client's hot paths.
 """
 
-from typing import List, Tuple
+from __future__ import annotations
 
 import numpy as np
 
@@ -34,14 +34,11 @@ def _numpy_to_tensor(arr: np.ndarray, name: str = "") -> inference_pb2.Tensor:
         np.int32: inference_pb2.INT32,
         np.uint32: inference_pb2.UINT32,
     }
-    
+
     dtype = dtype_map.get(arr.dtype.type, inference_pb2.FLOAT32)
-    
-    return inference_pb2.Tensor(
-        shape=list(arr.shape),
-        dtype=dtype,
-        data=arr.tobytes()
-    )
+
+    return inference_pb2.Tensor(shape=list(arr.shape), dtype=dtype, data=arr.tobytes())
+
 
 def _tensor_to_numpy(self, tensor: inference_pb2.Tensor) -> np.ndarray:
     dtype_map = {
@@ -67,58 +64,66 @@ def _tensor_to_numpy(self, tensor: inference_pb2.Tensor) -> np.ndarray:
             return arr
     return arr
 
-def _parse_post_result(self, post_result: inference_pb2.PostResult) -> Tuple[List[DetectedObject], List[Classification], List[LandmarkSet], List[SegmentationMask], List[OcrLine], List[Embedding], List[DepthMap]]:
+
+def _parse_post_result(
+    self, post_result: inference_pb2.PostResult
+) -> tuple[
+    list[DetectedObject],
+    list[Classification],
+    list[LandmarkSet],
+    list[SegmentationMask],
+    list[OcrLine],
+    list[Embedding],
+    list[DepthMap],
+]:
     objects = []
     for det in post_result.detections:
         obj = DetectedObject(
             label=det.label,
             score=det.confidence,
-            bbox=BoundingBox(
-                x=det.bbox.x,
-                y=det.bbox.y,
-                width=det.bbox.w,
-                height=det.bbox.h
-            ),
-            class_id=det.class_id
+            bbox=BoundingBox(x=det.bbox.x, y=det.bbox.y, width=det.bbox.w, height=det.bbox.h),
+            class_id=det.class_id,
         )
         objects.append(obj)
 
     classifications = []
     for cls in post_result.classifications:
-        classifications.append(Classification(
-            type=cls.type,
-            class_id=cls.class_id,
-            label=cls.label,
-            confidence=cls.confidence
-        ))
+        classifications.append(
+            Classification(
+                type=cls.type, class_id=cls.class_id, label=cls.label, confidence=cls.confidence
+            )
+        )
 
     landmarks = []
     for lm_set in post_result.landmarks:
-        points = [LandmarkPoint(x=p.x, y=p.y, confidence=p.confidence)
-                 for p in lm_set.points]
+        points = [LandmarkPoint(x=p.x, y=p.y, confidence=p.confidence) for p in lm_set.points]
         landmarks.append(LandmarkSet(type=lm_set.type, points=points))
 
     masks = []
     for m in post_result.masks:
-        masks.append(SegmentationMask(
-            class_id=m.class_id,
-            label=m.label,
-            confidence=m.confidence,
-            bbox=BoundingBox(x=m.bbox.x, y=m.bbox.y,
-                             width=m.bbox.w, height=m.bbox.h),
-            mask_rle=m.mask_rle,
-            mask_width=m.mask_width,
-            mask_height=m.mask_height,
-        ))
+        masks.append(
+            SegmentationMask(
+                class_id=m.class_id,
+                label=m.label,
+                confidence=m.confidence,
+                bbox=BoundingBox(x=m.bbox.x, y=m.bbox.y, width=m.bbox.w, height=m.bbox.h),
+                mask_rle=m.mask_rle,
+                mask_width=m.mask_width,
+                mask_height=m.mask_height,
+            )
+        )
 
     ocr_lines = []
     for line in post_result.ocr_lines:
-        ocr_lines.append(OcrLine(
-            text=line.text,
-            confidence=line.confidence,
-            bbox=BoundingBox(x=line.bbox.x, y=line.bbox.y,
-                             width=line.bbox.w, height=line.bbox.h),
-        ))
+        ocr_lines.append(
+            OcrLine(
+                text=line.text,
+                confidence=line.confidence,
+                bbox=BoundingBox(
+                    x=line.bbox.x, y=line.bbox.y, width=line.bbox.w, height=line.bbox.h
+                ),
+            )
+        )
 
     embeddings = []
     for emb in post_result.embeddings:
@@ -131,22 +136,25 @@ def _parse_post_result(self, post_result: inference_pb2.PostResult) -> Tuple[Lis
 
     return objects, classifications, landmarks, masks, ocr_lines, embeddings, depth_maps
 
+
 def _parse_infer_response(self, response: inference_pb2.InferResponse) -> InferenceResult:
     """Parse an InferResponse proto into an InferenceResult dataclass.
 
     Shared by infer() and infer_batch() to avoid duplication.
     """
-    objects: List[DetectedObject] = []
-    classifications: List[Classification] = []
-    landmarks: List[LandmarkSet] = []
-    masks: List[SegmentationMask] = []
-    ocr_lines: List[OcrLine] = []
-    embeddings: List[Embedding] = []
-    depth_maps: List[DepthMap] = []
+    objects: list[DetectedObject] = []
+    classifications: list[Classification] = []
+    landmarks: list[LandmarkSet] = []
+    masks: list[SegmentationMask] = []
+    ocr_lines: list[OcrLine] = []
+    embeddings: list[Embedding] = []
+    depth_maps: list[DepthMap] = []
 
     try:
-        if response.HasField('post_result'):
-            objects, classifications, landmarks, masks, ocr_lines, embeddings, depth_maps = _parse_post_result(response.post_result)
+        if response.HasField("post_result"):
+            objects, classifications, landmarks, masks, ocr_lines, embeddings, depth_maps = (
+                _parse_post_result(response.post_result)
+            )
     except (ValueError, AttributeError):
         pass
 
@@ -167,6 +175,6 @@ def _parse_infer_response(self, response: inference_pb2.InferResponse) -> Infere
         raw_outputs=raw_outputs,
         infer_time_us=response.infer_time_us,
         queue_time_us=response.queue_time_us,
-        hw_infer_time_us=getattr(response, 'hw_infer_time_us', 0),
+        hw_infer_time_us=getattr(response, "hw_infer_time_us", 0),
         status_message=response.status.message if not response.status.success else "",
     )

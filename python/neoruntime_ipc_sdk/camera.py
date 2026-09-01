@@ -5,8 +5,9 @@ Comprehensive camera pipeline control: ISP, encoder, RTSP, OSD,
 stream management, profiles, capabilities, and hardware status.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import List, Optional
 
 import grpc  # noqa: F401 — tests patch camera.grpc.insecure_channel
 
@@ -68,7 +69,7 @@ class CameraClient(GrpcClient):
 
     # -- ISP --
 
-    def set_isp(self, config: Optional[ISPConfig] = None, **kwargs) -> None:
+    def set_isp(self, config: ISPConfig | None = None, **kwargs) -> None:
         """Update ISP image pipeline settings."""
         cfg = config or ISPConfig()
         for k, v in kwargs.items():
@@ -144,40 +145,56 @@ class CameraClient(GrpcClient):
 
     def set_transform(self, cfg: TransformConfig) -> None:
         stub = self._connect()
-        resp = stub.SetTransformConfig(camera_pb2.TransformConfig(
-            rotation=cfg.rotation,
-            flip=cfg.flip,
-            dewarp=cfg.dewarp,
-            grayscale=cfg.grayscale,
-        ))
+        resp = stub.SetTransformConfig(
+            camera_pb2.TransformConfig(
+                rotation=cfg.rotation,
+                flip=cfg.flip,
+                dewarp=cfg.dewarp,
+                grayscale=cfg.grayscale,
+            )
+        )
         _check_status(resp, "SetTransformConfig")
 
     # -- Encoder --
 
-    def set_encoder(self, stream_name: str = "main", bitrate_bps: int = 0,
-                    framerate: int = 0, gop: int = 0) -> None:
+    def set_encoder(
+        self, stream_name: str = "main", bitrate_bps: int = 0, framerate: int = 0, gop: int = 0
+    ) -> None:
         """Dynamic encoder config (no restart)."""
         stub = self._connect()
-        resp = stub.UpdateEncoderConfig(camera_pb2.EncoderConfigRequest(
-            stream_name=stream_name,
-            bitrate_bps=bitrate_bps,
-            framerate=framerate,
-            gop=gop,
-        ))
+        resp = stub.UpdateEncoderConfig(
+            camera_pb2.EncoderConfigRequest(
+                stream_name=stream_name,
+                bitrate_bps=bitrate_bps,
+                framerate=framerate,
+                gop=gop,
+            )
+        )
         _check_status(resp, "UpdateEncoderConfig")
 
-    def reconfigure_encoder(self, stream_name: str, width: int = 0, height: int = 0,
-                            codec: str = "", bitrate_bps: int = 0,
-                            fps: int = 0, gop: int = 0) -> EncoderReconfigResult:
+    def reconfigure_encoder(
+        self,
+        stream_name: str,
+        width: int = 0,
+        height: int = 0,
+        codec: str = "",
+        bitrate_bps: int = 0,
+        fps: int = 0,
+        gop: int = 0,
+    ) -> EncoderReconfigResult:
         """Full encoder reconfiguration (brief restart, ~100ms)."""
         stub = self._connect()
-        resp = stub.ReconfigureEncoder(camera_pb2.EncoderReconfigRequest(
-            stream_name=stream_name,
-            width=width, height=height,
-            codec=codec,
-            bitrate_bps=bitrate_bps,
-            fps=fps, gop=gop,
-        ))
+        resp = stub.ReconfigureEncoder(
+            camera_pb2.EncoderReconfigRequest(
+                stream_name=stream_name,
+                width=width,
+                height=height,
+                codec=codec,
+                bitrate_bps=bitrate_bps,
+                fps=fps,
+                gop=gop,
+            )
+        )
         if not resp.success:
             raise RuntimeError(f"ReconfigureEncoder failed: {resp.message}")
         return EncoderReconfigResult(
@@ -195,7 +212,7 @@ class CameraClient(GrpcClient):
 
     # -- OSD --
 
-    def set_osd(self, streams: List[dict]) -> None:
+    def set_osd(self, streams: list[dict]) -> None:
         """Update OSD text and datetime overlays per stream.
 
         Args:
@@ -220,25 +237,35 @@ class CameraClient(GrpcClient):
 
     # -- AI Overlay (convenience) --
 
-    def set_ai_overlay(self, enabled: bool, show_label: bool = True,
-                       show_confidence: bool = True, line_thickness: int = 2) -> None:
+    def set_ai_overlay(
+        self,
+        enabled: bool,
+        show_label: bool = True,
+        show_confidence: bool = True,
+        line_thickness: int = 2,
+    ) -> None:
         stub = self._connect()
-        resp = stub.UpdateAiOverlay(camera_pb2.AiOverlayConfig(
-            enabled=enabled,
-            show_label=show_label,
-            show_confidence=show_confidence,
-            line_thickness=line_thickness,
-        ))
+        resp = stub.UpdateAiOverlay(
+            camera_pb2.AiOverlayConfig(
+                enabled=enabled,
+                show_label=show_label,
+                show_confidence=show_confidence,
+                line_thickness=line_thickness,
+            )
+        )
         _check_status(resp, "UpdateAiOverlay")
 
     # -- Day/night imaging & infrared --
 
-    def _to_infrared_status(self, resp: "camera_pb2.InfraredStatusResponse") -> InfraredStatus:
+    def _to_infrared_status(self, resp: camera_pb2.InfraredStatusResponse) -> InfraredStatus:
         return InfraredStatus(
-            mode=resp.mode, transition=resp.transition,
-            output_source=resp.output_source, auto_follow=resp.auto_follow,
+            mode=resp.mode,
+            transition=resp.transition,
+            output_source=resp.output_source,
+            auto_follow=resp.auto_follow,
             follow_active=resp.follow_active,
-            manual_override=resp.manual_override, degraded=resp.degraded,
+            manual_override=resp.manual_override,
+            degraded=resp.degraded,
             requested_near_pwm=resp.requested_near_pwm,
             requested_far_pwm=resp.requested_far_pwm,
             applied_near_pwm=resp.applied_near_pwm,
@@ -246,9 +273,13 @@ class CameraClient(GrpcClient):
             zoom_ratio=resp.zoom_ratio,
             active_profile=resp.active_profile,
             selected_mode=resp.selected_mode,
-            light_percent=resp.light_percent, light_mv=resp.light_mv,
-            light_milli=resp.light_milli, light_valid=resp.light_valid,
-            night_enter=resp.night_enter, day_enter=resp.day_enter)
+            light_percent=resp.light_percent,
+            light_mv=resp.light_mv,
+            light_milli=resp.light_milli,
+            light_valid=resp.light_valid,
+            night_enter=resp.night_enter,
+            day_enter=resp.day_enter,
+        )
 
     def set_imaging_mode(self, mode: str) -> InfraredStatus:
         """Switch day/night imaging mode.
@@ -272,11 +303,14 @@ class CameraClient(GrpcClient):
         _check_status(resp, "GetInfraredStatus")
         return self._to_infrared_status(resp)
 
-    def set_infrared_settings(self, auto_follow: Optional[bool] = None,
-                              near_pwm: Optional[int] = None,
-                              far_pwm: Optional[int] = None,
-                              night_enter: Optional[int] = None,
-                              day_enter: Optional[int] = None) -> InfraredStatus:
+    def set_infrared_settings(
+        self,
+        auto_follow: bool | None = None,
+        near_pwm: int | None = None,
+        far_pwm: int | None = None,
+        night_enter: int | None = None,
+        day_enter: int | None = None,
+    ) -> InfraredStatus:
         """Update IR light settings; omitted fields (None) are left unchanged.
 
         Args:
@@ -309,35 +343,41 @@ class CameraClient(GrpcClient):
 
     # -- IR presets --
 
-    def list_ir_presets(self) -> List[IrPreset]:
+    def list_ir_presets(self) -> list[IrPreset]:
         """Saved IR-light profiles (per zoom ratio)."""
         stub = self._connect()
         resp = stub.ListIrPresets(camera_pb2.Empty())
         _check_status(resp, "ListIrPresets")
-        return [IrPreset(name=p.name, zoom_ratio=p.zoom_ratio,
-                         near_pwm=p.near_pwm, far_pwm=p.far_pwm)
-                for p in resp.presets]
+        return [
+            IrPreset(name=p.name, zoom_ratio=p.zoom_ratio, near_pwm=p.near_pwm, far_pwm=p.far_pwm)
+            for p in resp.presets
+        ]
 
-    def save_ir_preset(self, name: str, zoom_ratio: float,
-                       near_pwm: int, far_pwm: int) -> List[IrPreset]:
+    def save_ir_preset(
+        self, name: str, zoom_ratio: float, near_pwm: int, far_pwm: int
+    ) -> list[IrPreset]:
         """Save (or overwrite) an IR preset and return the new list."""
         stub = self._connect()
-        resp = stub.SaveIrPreset(camera_pb2.IrPreset(
-            name=name, zoom_ratio=zoom_ratio,
-            near_pwm=near_pwm, far_pwm=far_pwm))
+        resp = stub.SaveIrPreset(
+            camera_pb2.IrPreset(
+                name=name, zoom_ratio=zoom_ratio, near_pwm=near_pwm, far_pwm=far_pwm
+            )
+        )
         _check_status(resp, "SaveIrPreset")
-        return [IrPreset(name=p.name, zoom_ratio=p.zoom_ratio,
-                         near_pwm=p.near_pwm, far_pwm=p.far_pwm)
-                for p in resp.presets]
+        return [
+            IrPreset(name=p.name, zoom_ratio=p.zoom_ratio, near_pwm=p.near_pwm, far_pwm=p.far_pwm)
+            for p in resp.presets
+        ]
 
-    def delete_ir_preset(self, name: str) -> List[IrPreset]:
+    def delete_ir_preset(self, name: str) -> list[IrPreset]:
         """Delete an IR preset by name and return the remaining list."""
         stub = self._connect()
         resp = stub.DeleteIrPreset(camera_pb2.DeleteIrPresetRequest(name=name))
         _check_status(resp, "DeleteIrPreset")
-        return [IrPreset(name=p.name, zoom_ratio=p.zoom_ratio,
-                         near_pwm=p.near_pwm, far_pwm=p.far_pwm)
-                for p in resp.presets]
+        return [
+            IrPreset(name=p.name, zoom_ratio=p.zoom_ratio, near_pwm=p.near_pwm, far_pwm=p.far_pwm)
+            for p in resp.presets
+        ]
 
     # -- Privacy mask --
 
@@ -346,24 +386,38 @@ class CameraClient(GrpcClient):
         stub = self._connect()
         cfg = stub.GetPrivacyMaskConfig(camera_pb2.Empty())
         return PrivacyMaskSettings(
-            color=cfg.color, blur_radius=cfg.blur_radius,
+            color=cfg.color,
+            blur_radius=cfg.blur_radius,
             enabled=cfg.enabled,
-            regions=[{"id": r.id, "name": r.name, "enabled": r.enabled,
-                      "points_x": list(r.points_x),
-                      "points_y": list(r.points_y)}
-                     for r in cfg.regions],
-            dpm_enabled=cfg.dpm_enabled, dpm_labels=cfg.dpm_labels,
-            dpm_mode=cfg.dpm_mode, dpm_color=cfg.dpm_color)
+            regions=[
+                {
+                    "id": r.id,
+                    "name": r.name,
+                    "enabled": r.enabled,
+                    "points_x": list(r.points_x),
+                    "points_y": list(r.points_y),
+                }
+                for r in cfg.regions
+            ],
+            dpm_enabled=cfg.dpm_enabled,
+            dpm_labels=cfg.dpm_labels,
+            dpm_mode=cfg.dpm_mode,
+            dpm_color=cfg.dpm_color,
+        )
 
-    def set_privacy_mask(self, settings: Optional[PrivacyMaskSettings] = None, *,
-                         color: Optional[int] = None,
-                         blur_radius: Optional[int] = None,
-                         enabled: Optional[bool] = None,
-                         regions: Optional[List[dict]] = None,
-                         dpm_enabled: Optional[bool] = None,
-                         dpm_labels: Optional[str] = None,
-                         dpm_mode: Optional[str] = None,
-                         dpm_color: Optional[int] = None) -> None:
+    def set_privacy_mask(
+        self,
+        settings: PrivacyMaskSettings | None = None,
+        *,
+        color: int | None = None,
+        blur_radius: int | None = None,
+        enabled: bool | None = None,
+        regions: list[dict] | None = None,
+        dpm_enabled: bool | None = None,
+        dpm_labels: str | None = None,
+        dpm_mode: str | None = None,
+        dpm_color: int | None = None,
+    ) -> None:
         """Update privacy-mask configuration with merge semantics.
 
         Only the fields given as arguments are changed; everything else
@@ -382,11 +436,14 @@ class CameraClient(GrpcClient):
         stub = self._connect()
         if settings is not None:
             cfg = camera_pb2.PrivacyMaskConfig(
-                color=settings.color, blur_radius=settings.blur_radius,
+                color=settings.color,
+                blur_radius=settings.blur_radius,
                 enabled=settings.enabled,
                 dpm_enabled=settings.dpm_enabled,
                 dpm_labels=settings.dpm_labels,
-                dpm_mode=settings.dpm_mode, dpm_color=settings.dpm_color)
+                dpm_mode=settings.dpm_mode,
+                dpm_color=settings.dpm_color,
+            )
             regions = settings.regions
             if regions is not None:
                 for region in regions:
@@ -417,8 +474,7 @@ class CameraClient(GrpcClient):
         _check_status(resp, "SetPrivacyMaskConfig")
 
     @staticmethod
-    def _add_mask_region(cfg: "camera_pb2.PrivacyMaskConfig",
-                         region: dict) -> None:
+    def _add_mask_region(cfg: camera_pb2.PrivacyMaskConfig, region: dict) -> None:
         r = cfg.regions.add()
         r.id = region.get("id", "")
         r.name = region.get("name", "")
@@ -428,7 +484,7 @@ class CameraClient(GrpcClient):
 
     # -- OSD read-back --
 
-    def get_osd(self) -> List[dict]:
+    def get_osd(self) -> list[dict]:
         """Read back OSD overlay config, shaped like set_osd() input.
 
         Returns: list of {stream_name, text_overlays, datetime_overlays,
@@ -446,23 +502,47 @@ class CameraClient(GrpcClient):
                 "image_overlays": [],
             }
             for tc in sc.text_overlays:
-                entry["text_overlays"].append({
-                    "id": tc.id, "text": tc.text, "x": tc.x, "y": tc.y,
-                    "font_size": tc.font_size, "text_color": tc.text_color,
-                    "enabled": tc.enabled, "h_align": tc.h_align,
-                    "v_align": tc.v_align})
+                entry["text_overlays"].append(
+                    {
+                        "id": tc.id,
+                        "text": tc.text,
+                        "x": tc.x,
+                        "y": tc.y,
+                        "font_size": tc.font_size,
+                        "text_color": tc.text_color,
+                        "enabled": tc.enabled,
+                        "h_align": tc.h_align,
+                        "v_align": tc.v_align,
+                    }
+                )
             for dc in sc.datetime_overlays:
-                entry["datetime_overlays"].append({
-                    "id": dc.id, "x": dc.x, "y": dc.y, "format": dc.format,
-                    "font_size": dc.font_size, "text_color": dc.text_color,
-                    "enabled": dc.enabled, "h_align": dc.h_align,
-                    "v_align": dc.v_align})
+                entry["datetime_overlays"].append(
+                    {
+                        "id": dc.id,
+                        "x": dc.x,
+                        "y": dc.y,
+                        "format": dc.format,
+                        "font_size": dc.font_size,
+                        "text_color": dc.text_color,
+                        "enabled": dc.enabled,
+                        "h_align": dc.h_align,
+                        "v_align": dc.v_align,
+                    }
+                )
             for ic in sc.image_overlays:
-                entry["image_overlays"].append({
-                    "id": ic.id, "image_path": ic.image_path, "x": ic.x,
-                    "y": ic.y, "width": ic.width, "height": ic.height,
-                    "enabled": ic.enabled, "h_align": ic.h_align,
-                    "v_align": ic.v_align})
+                entry["image_overlays"].append(
+                    {
+                        "id": ic.id,
+                        "image_path": ic.image_path,
+                        "x": ic.x,
+                        "y": ic.y,
+                        "width": ic.width,
+                        "height": ic.height,
+                        "enabled": ic.enabled,
+                        "h_align": ic.h_align,
+                        "v_align": ic.v_align,
+                    }
+                )
             streams.append(entry)
         return streams
 
@@ -477,8 +557,7 @@ class CameraClient(GrpcClient):
         Returns: the current value encoded as a string.
         """
         stub = self._connect()
-        resp = stub.GetConfigField(
-            camera_pb2.GetConfigFieldRequest(field_path=field_path))
+        resp = stub.GetConfigField(camera_pb2.GetConfigFieldRequest(field_path=field_path))
         _check_status(resp, "GetConfigField")
         return resp.value
 
@@ -491,14 +570,16 @@ class CameraClient(GrpcClient):
                 non-str values are converted with str().
         """
         stub = self._connect()
-        resp = stub.SetConfigField(camera_pb2.SetConfigFieldRequest(
-            field_path=field_path,
-            value=value if isinstance(value, str) else str(value)))
+        resp = stub.SetConfigField(
+            camera_pb2.SetConfigFieldRequest(
+                field_path=field_path, value=value if isinstance(value, str) else str(value)
+            )
+        )
         _check_status(resp, "SetConfigField")
 
     # -- Stream management --
 
-    def get_stream_status(self) -> List[StreamStatus]:
+    def get_stream_status(self) -> list[StreamStatus]:
         stub = self._connect()
         resp = stub.GetStreamStatus(camera_pb2.GetStreamStatusRequest())
         return [
@@ -516,15 +597,28 @@ class CameraClient(GrpcClient):
             for s in resp.streams
         ]
 
-    def add_stream(self, stream_id: str, width: int, height: int, fps: int,
-                   codec: str = "h264", bitrate: int = 4_000_000,
-                   gop: int = 30) -> None:
+    def add_stream(
+        self,
+        stream_id: str,
+        width: int,
+        height: int,
+        fps: int,
+        codec: str = "h264",
+        bitrate: int = 4_000_000,
+        gop: int = 30,
+    ) -> None:
         stub = self._connect()
-        resp = stub.AddStream(camera_pb2.AddStreamRequest(
-            stream_id=stream_id,
-            width=width, height=height, fps=fps,
-            codec=codec, bitrate=bitrate, gop=gop,
-        ))
+        resp = stub.AddStream(
+            camera_pb2.AddStreamRequest(
+                stream_id=stream_id,
+                width=width,
+                height=height,
+                fps=fps,
+                codec=codec,
+                bitrate=bitrate,
+                gop=gop,
+            )
+        )
         if not resp.success:
             raise RuntimeError(f"AddStream failed: {resp.message}")
 
@@ -536,7 +630,7 @@ class CameraClient(GrpcClient):
 
     # -- Pipeline reconfiguration --
 
-    def reconfigure_pipeline(self, streams: List[PipelineStreamConfig]) -> EncoderReconfigResult:
+    def reconfigure_pipeline(self, streams: list[PipelineStreamConfig]) -> EncoderReconfigResult:
         req = camera_pb2.ReconfigurePipelineRequest()
         for s in streams:
             sc = req.streams.add()
@@ -645,9 +739,12 @@ class CameraClient(GrpcClient):
 
     def set_led_duty(self, led_id: int, duty_percent: int) -> None:
         stub = self._connect()
-        resp = stub.SetLedDuty(camera_pb2.SetLedDutyRequest(
-            led_id=led_id, duty_percent=duty_percent,
-        ))
+        resp = stub.SetLedDuty(
+            camera_pb2.SetLedDutyRequest(
+                led_id=led_id,
+                duty_percent=duty_percent,
+            )
+        )
         if not resp.success:
             raise RuntimeError(f"SetLedDuty failed: {resp.message}")
 

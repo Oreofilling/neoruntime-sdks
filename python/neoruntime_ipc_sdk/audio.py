@@ -5,8 +5,10 @@ Provides audio capture, playback, and device enumeration through
 the camera-daemon gRPC service.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Iterator, List, Optional
+from typing import Iterator
 
 from ._transport import GrpcClient
 from .proto import camera_pb2, camera_pb2_grpc
@@ -60,27 +62,19 @@ class AudioClient(GrpcClient):
 
     # -- Device enumeration --
 
-    def list_capture_devices(self) -> List[AudioDevice]:
+    def list_capture_devices(self) -> list[AudioDevice]:
         """List available audio capture devices."""
         stub = self._ensure_connected()
-        resp: camera_pb2.ListAudioDevicesResponse = stub.ListAudioCaptureDevices(
-            camera_pb2.Empty()
-        )
-        return [
-            AudioDevice(name=d.name, description=d.description)
-            for d in resp.devices
-        ]
+        resp: camera_pb2.ListAudioDevicesResponse = stub.ListAudioCaptureDevices(camera_pb2.Empty())
+        return [AudioDevice(name=d.name, description=d.description) for d in resp.devices]
 
-    def list_playback_devices(self) -> List[AudioDevice]:
+    def list_playback_devices(self) -> list[AudioDevice]:
         """List available audio playback devices."""
         stub = self._ensure_connected()
         resp: camera_pb2.ListAudioDevicesResponse = stub.ListAudioPlaybackDevices(
             camera_pb2.Empty()
         )
-        return [
-            AudioDevice(name=d.name, description=d.description)
-            for d in resp.devices
-        ]
+        return [AudioDevice(name=d.name, description=d.description) for d in resp.devices]
 
     # -- Capture --
 
@@ -145,9 +139,7 @@ class AudioClient(GrpcClient):
     def get_status(self) -> AudioStatus:
         """Get current audio status."""
         stub = self._ensure_connected()
-        resp: camera_pb2.AudioStatusResponse = stub.GetAudioStatus(
-            camera_pb2.Empty()
-        )
+        resp: camera_pb2.AudioStatusResponse = stub.GetAudioStatus(camera_pb2.Empty())
         return AudioStatus(
             capturing=resp.capturing,
             playing=resp.playing,
@@ -167,7 +159,7 @@ class AudioClient(GrpcClient):
         codec: str = "",
         bitrate: int = 0,
         volume: float = -1.0,
-        mute: Optional[bool] = None,
+        mute: bool | None = None,
     ) -> None:
         """Update audio configuration (volume, mute, codec, etc.).
 

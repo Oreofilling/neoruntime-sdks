@@ -8,6 +8,8 @@ tests and internal callers patch — so ``from .media import X`` keeps
 working unchanged.
 """
 
+from __future__ import annotations
+
 from ._transport import recvmsg_with_fds as _recvmsg_with_fds  # noqa: F401
 from ._transport import sendmsg_plain as _sendmsg_plain  # noqa: F401
 from .encoded import (  # noqa: F401  # noqa: F401

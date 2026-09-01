@@ -2,12 +2,14 @@
 AI Inference Client
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import queue
 import threading
 from concurrent.futures import Future
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Iterator
 
 import grpc
 import numpy as np
@@ -54,22 +56,23 @@ class InferenceClient(GenAiMixin):
         for frame, res in inf.subscribe(stream="cam0_main", model="person_v1", fps=10):
             print(f"Detected {len(res.objects)} objects")
     """
-    
-    def __init__(self, endpoint: Optional[str] = None):
+
+    def __init__(self, endpoint: str | None = None):
         if endpoint is None:
             endpoint = self._get_default_endpoint()
 
         self.endpoint = endpoint
-        self.channel: Optional[grpc.aio.Channel] = None
-        self.stub: Optional[inference_pb2_grpc.InferenceServiceStub] = None
+        self.channel: grpc.aio.Channel | None = None
+        self.stub: inference_pb2_grpc.InferenceServiceStub | None = None
         # Background asyncio loop running grpc.aio. Sync callers bridge via
         # run_coroutine_threadsafe(...).result() — the caller thread blocks on
         # a futex, NOT a sched_yield busy-poll, eliminating the sync-CQ spin.
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._loop_thread: Optional[threading.Thread] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread: threading.Thread | None = None
 
     def _get_default_endpoint(self) -> str:
         import os
+
         return os.getenv("AI_RUNTIME_ENDPOINT", "unix:///run/aipc/ai-runtime.sock")
 
     def connect(self) -> None:
@@ -115,12 +118,10 @@ class InferenceClient(GenAiMixin):
     @property
     def connected(self) -> bool:
         return self.channel is not None
-    
+
     def close(self) -> None:
         if self.channel:
-            asyncio.run_coroutine_threadsafe(
-                self.channel.close(), self._loop
-            ).result(timeout=5)
+            asyncio.run_coroutine_threadsafe(self.channel.close(), self._loop).result(timeout=5)
             self.channel = None
             self.stub = None
         if self._loop:
@@ -129,14 +130,14 @@ class InferenceClient(GenAiMixin):
                 self._loop_thread.join(timeout=5)
             self._loop = None
             self._loop_thread = None
-    
+
     def __enter__(self):
         self.connect()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-    
+
     def _numpy_to_tensor(self, arr: np.ndarray, name: str = "") -> inference_pb2.Tensor:
         dtype_map = {
             np.uint8: inference_pb2.UINT8,
@@ -148,15 +149,11 @@ class InferenceClient(GenAiMixin):
             np.int32: inference_pb2.INT32,
             np.uint32: inference_pb2.UINT32,
         }
-        
+
         dtype = dtype_map.get(arr.dtype.type, inference_pb2.FLOAT32)
-        
-        return inference_pb2.Tensor(
-            shape=list(arr.shape),
-            dtype=dtype,
-            data=arr.tobytes()
-        )
-    
+
+        return inference_pb2.Tensor(shape=list(arr.shape), dtype=dtype, data=arr.tobytes())
+
     def _tensor_to_numpy(self, tensor: inference_pb2.Tensor) -> np.ndarray:
         dtype_map = {
             inference_pb2.UINT8: np.uint8,
@@ -180,59 +177,66 @@ class InferenceClient(GenAiMixin):
                 # Shape doesn't match data size, return flat array
                 return arr
         return arr
-    
-    def _parse_post_result(self, post_result: inference_pb2.PostResult) -> Tuple[List[DetectedObject], List[Classification], List[LandmarkSet], List[SegmentationMask], List[OcrLine], List[Embedding], List[DepthMap]]:
+
+    def _parse_post_result(
+        self, post_result: inference_pb2.PostResult
+    ) -> tuple[
+        list[DetectedObject],
+        list[Classification],
+        list[LandmarkSet],
+        list[SegmentationMask],
+        list[OcrLine],
+        list[Embedding],
+        list[DepthMap],
+    ]:
         objects = []
         for det in post_result.detections:
             obj = DetectedObject(
                 label=det.label,
                 score=det.confidence,
-                bbox=BoundingBox(
-                    x=det.bbox.x,
-                    y=det.bbox.y,
-                    width=det.bbox.w,
-                    height=det.bbox.h
-                ),
-                class_id=det.class_id
+                bbox=BoundingBox(x=det.bbox.x, y=det.bbox.y, width=det.bbox.w, height=det.bbox.h),
+                class_id=det.class_id,
             )
             objects.append(obj)
 
         classifications = []
         for cls in post_result.classifications:
-            classifications.append(Classification(
-                type=cls.type,
-                class_id=cls.class_id,
-                label=cls.label,
-                confidence=cls.confidence
-            ))
+            classifications.append(
+                Classification(
+                    type=cls.type, class_id=cls.class_id, label=cls.label, confidence=cls.confidence
+                )
+            )
 
         landmarks = []
         for lm_set in post_result.landmarks:
-            points = [LandmarkPoint(x=p.x, y=p.y, confidence=p.confidence)
-                     for p in lm_set.points]
+            points = [LandmarkPoint(x=p.x, y=p.y, confidence=p.confidence) for p in lm_set.points]
             landmarks.append(LandmarkSet(type=lm_set.type, points=points))
 
         masks = []
         for m in post_result.masks:
-            masks.append(SegmentationMask(
-                class_id=m.class_id,
-                label=m.label,
-                confidence=m.confidence,
-                bbox=BoundingBox(x=m.bbox.x, y=m.bbox.y,
-                                 width=m.bbox.w, height=m.bbox.h),
-                mask_rle=m.mask_rle,
-                mask_width=m.mask_width,
-                mask_height=m.mask_height,
-            ))
+            masks.append(
+                SegmentationMask(
+                    class_id=m.class_id,
+                    label=m.label,
+                    confidence=m.confidence,
+                    bbox=BoundingBox(x=m.bbox.x, y=m.bbox.y, width=m.bbox.w, height=m.bbox.h),
+                    mask_rle=m.mask_rle,
+                    mask_width=m.mask_width,
+                    mask_height=m.mask_height,
+                )
+            )
 
         ocr_lines = []
         for line in post_result.ocr_lines:
-            ocr_lines.append(OcrLine(
-                text=line.text,
-                confidence=line.confidence,
-                bbox=BoundingBox(x=line.bbox.x, y=line.bbox.y,
-                                 width=line.bbox.w, height=line.bbox.h),
-            ))
+            ocr_lines.append(
+                OcrLine(
+                    text=line.text,
+                    confidence=line.confidence,
+                    bbox=BoundingBox(
+                        x=line.bbox.x, y=line.bbox.y, width=line.bbox.w, height=line.bbox.h
+                    ),
+                )
+            )
 
         embeddings = []
         for emb in post_result.embeddings:
@@ -250,17 +254,19 @@ class InferenceClient(GenAiMixin):
 
         Shared by infer() and infer_batch() to avoid duplication.
         """
-        objects: List[DetectedObject] = []
-        classifications: List[Classification] = []
-        landmarks: List[LandmarkSet] = []
-        masks: List[SegmentationMask] = []
-        ocr_lines: List[OcrLine] = []
-        embeddings: List[Embedding] = []
-        depth_maps: List[DepthMap] = []
+        objects: list[DetectedObject] = []
+        classifications: list[Classification] = []
+        landmarks: list[LandmarkSet] = []
+        masks: list[SegmentationMask] = []
+        ocr_lines: list[OcrLine] = []
+        embeddings: list[Embedding] = []
+        depth_maps: list[DepthMap] = []
 
         try:
-            if response.HasField('post_result'):
-                objects, classifications, landmarks, masks, ocr_lines, embeddings, depth_maps = self._parse_post_result(response.post_result)
+            if response.HasField("post_result"):
+                objects, classifications, landmarks, masks, ocr_lines, embeddings, depth_maps = (
+                    self._parse_post_result(response.post_result)
+                )
         except (ValueError, AttributeError):
             pass
 
@@ -281,7 +287,7 @@ class InferenceClient(GenAiMixin):
             raw_outputs=raw_outputs,
             infer_time_us=response.infer_time_us,
             queue_time_us=response.queue_time_us,
-            hw_infer_time_us=getattr(response, 'hw_infer_time_us', 0),
+            hw_infer_time_us=getattr(response, "hw_infer_time_us", 0),
             status_message=response.status.message if not response.status.success else "",
         )
 
@@ -299,12 +305,14 @@ class InferenceClient(GenAiMixin):
     def _parse_infer_response(self, response: inference_pb2.InferResponse) -> InferenceResult:
         return _parse_infer_response(response)
 
-    def infer(self,
-              image: np.ndarray,
-              model_id: str,
-              timeout_ms: int = 5000,
-              priority: int = 4,
-              session_id: str = "") -> InferenceResult:
+    def infer(
+        self,
+        image: np.ndarray,
+        model_id: str,
+        timeout_ms: int = 5000,
+        priority: int = 4,
+        session_id: str = "",
+    ) -> InferenceResult:
         if self.stub is None:
             self.connect()
 
@@ -315,12 +323,10 @@ class InferenceClient(GenAiMixin):
             inputs=[tensor],
             timeout_ms=timeout_ms,
             priority=priority,
-            session_id=session_id
+            session_id=session_id,
         )
 
-        fut = asyncio.run_coroutine_threadsafe(
-            self._infer_async(request, timeout_ms), self._loop
-        )
+        fut = asyncio.run_coroutine_threadsafe(self._infer_async(request, timeout_ms), self._loop)
         # +5s slack covers NPU cold start / HEF context init; the gRPC deadline
         # itself is timeout_ms/1000.
         response = fut.result(timeout=timeout_ms / 1000 + 5)
@@ -345,12 +351,14 @@ class InferenceClient(GenAiMixin):
             raise RuntimeError(f"Inference failed: {response.status.message}")
         return self._parse_infer_response(response)
 
-    def infer_async(self,
-                    image: np.ndarray,
-                    model_id: str,
-                    timeout_ms: int = 5000,
-                    priority: int = 4,
-                    session_id: str = "") -> Future:
+    def infer_async(
+        self,
+        image: np.ndarray,
+        model_id: str,
+        timeout_ms: int = 5000,
+        priority: int = 4,
+        session_id: str = "",
+    ) -> Future:
         """Non-blocking infer: returns a concurrent.futures.Future that resolves
         to a parsed InferenceResult. The caller MUST call fut.result(timeout=...)
         to obtain the result (or propagate the error).
@@ -375,9 +383,9 @@ class InferenceClient(GenAiMixin):
             self._infer_full_async(request, timeout_ms), self._loop
         )
 
-    def infer_batch(self,
-                    items: List[BatchInferItem],
-                    timeout_ms: int = 10000) -> List[InferenceResult]:
+    def infer_batch(
+        self, items: list[BatchInferItem], timeout_ms: int = 10000
+    ) -> list[InferenceResult]:
         """Submit multiple model inferences in a single batch RPC.
 
         ai-runtime runs them in parallel on the NPU via shared VDevice
@@ -396,12 +404,14 @@ class InferenceClient(GenAiMixin):
         requests = []
         for item in items:
             tensor = self._numpy_to_tensor(item.image, "input")
-            requests.append(inference_pb2.InferRequest(
-                model_id=item.model_id,
-                inputs=[tensor],
-                timeout_ms=item.timeout_ms,
-                priority=item.priority,
-            ))
+            requests.append(
+                inference_pb2.InferRequest(
+                    model_id=item.model_id,
+                    inputs=[tensor],
+                    timeout_ms=item.timeout_ms,
+                    priority=item.priority,
+                )
+            )
 
         batch_request = inference_pb2.InferBatchRequest(
             requests=requests,
@@ -436,9 +446,7 @@ class InferenceClient(GenAiMixin):
             results.append(self._parse_infer_response(resp))
         return results
 
-    def infer_batch_async(self,
-                          items: List[BatchInferItem],
-                          timeout_ms: int = 10000) -> Future:
+    def infer_batch_async(self, items: list[BatchInferItem], timeout_ms: int = 10000) -> Future:
         """Non-blocking infer_batch: returns a concurrent.futures.Future that
         resolves to List[InferenceResult] (one per item, in submission order).
         The caller MUST call fut.result(timeout=...). Symmetric to infer_batch();
@@ -451,12 +459,14 @@ class InferenceClient(GenAiMixin):
         requests = []
         for item in items:
             tensor = self._numpy_to_tensor(item.image, "input")
-            requests.append(inference_pb2.InferRequest(
-                model_id=item.model_id,
-                inputs=[tensor],
-                timeout_ms=item.timeout_ms,
-                priority=item.priority,
-            ))
+            requests.append(
+                inference_pb2.InferRequest(
+                    model_id=item.model_id,
+                    inputs=[tensor],
+                    timeout_ms=item.timeout_ms,
+                    priority=item.priority,
+                )
+            )
 
         batch_request = inference_pb2.InferBatchRequest(
             requests=requests,
@@ -466,26 +476,25 @@ class InferenceClient(GenAiMixin):
             self._infer_batch_full_async(batch_request, timeout_ms), self._loop
         )
 
-    def infer_with_tensors(self,
-                           model_id: str,
-                           inputs: List[np.ndarray],
-                           input_names: Optional[List[str]] = None,
-                           timeout_ms: int = 5000) -> List[np.ndarray]:
+    def infer_with_tensors(
+        self,
+        model_id: str,
+        inputs: list[np.ndarray],
+        input_names: list[str] | None = None,
+        timeout_ms: int = 5000,
+    ) -> list[np.ndarray]:
         if self.stub is None:
             self.connect()
-        
+
         if input_names is None:
             input_names = [f"input_{i}" for i in range(len(inputs))]
-        
-        tensors = [self._numpy_to_tensor(arr, name) 
-                   for arr, name in zip(inputs, input_names)]
-        
+
+        tensors = [self._numpy_to_tensor(arr, name) for arr, name in zip(inputs, input_names)]
+
         request = inference_pb2.InferRequest(
-            model_id=model_id,
-            inputs=tensors,
-            timeout_ms=timeout_ms
+            model_id=model_id, inputs=tensors, timeout_ms=timeout_ms
         )
-        
+
         fut = asyncio.run_coroutine_threadsafe(
             self._infer_tensors_async(request, timeout_ms), self._loop
         )
@@ -498,14 +507,16 @@ class InferenceClient(GenAiMixin):
 
     async def _infer_tensors_async(self, request, timeout_ms):
         return await self.stub.Infer(request, timeout=timeout_ms / 1000)
-    
-    def subscribe(self,
-                  stream: str,
-                  model: str,
-                  fps: int = 10,
-                  session_id: str = "",
-                  raw_output_only: bool = False,
-                  max_consecutive_failures: Optional[int] = 10) -> Iterator[Tuple[int, InferenceResult]]:
+
+    def subscribe(
+        self,
+        stream: str,
+        model: str,
+        fps: int = 10,
+        session_id: str = "",
+        raw_output_only: bool = False,
+        max_consecutive_failures: int | None = 10,
+    ) -> Iterator[tuple[int, InferenceResult]]:
         """Yield (frame_sequence, InferenceResult) for a camera stream subscription.
 
         Failed frames are skipped with a warning. If ``max_consecutive_failures``
@@ -514,13 +525,13 @@ class InferenceClient(GenAiMixin):
         """
         if self.stub is None:
             self.connect()
-        
+
         request = inference_pb2.StreamInferRequest(
             model_id=model,
             stream_id=stream,
             fps_limit=fps,
             session_id=session_id,
-            raw_output_only=raw_output_only
+            raw_output_only=raw_output_only,
         )
 
         # Bridge the async server-stream to a sync generator via a queue. The
@@ -561,15 +572,22 @@ class InferenceClient(GenAiMixin):
                         logger.warning(
                             "subscribe(stream=%r, model=%r): inference failed for frame %d "
                             "(%d consecutive): %s",
-                            stream, model, response.frame_sequence,
-                            consecutive_failures, response.status.message)
-                    if max_consecutive_failures and \
-                            consecutive_failures >= max_consecutive_failures:
+                            stream,
+                            model,
+                            response.frame_sequence,
+                            consecutive_failures,
+                            response.status.message,
+                        )
+                    if (
+                        max_consecutive_failures
+                        and consecutive_failures >= max_consecutive_failures
+                    ):
                         raise RuntimeError(
                             f"Stream inference failed {consecutive_failures} consecutive times "
                             f"(stream={stream!r}, model={model!r}, "
                             f"last frame={response.frame_sequence}): "
-                            f"{response.status.message!r}")
+                            f"{response.status.message!r}"
+                        )
                     continue
                 consecutive_failures = 0
 
@@ -581,8 +599,16 @@ class InferenceClient(GenAiMixin):
                 embeddings = []
                 depth_maps = []
 
-                if response.HasField('post_result'):
-                    objects, classifications, landmarks, masks, ocr_lines, embeddings, depth_maps = self._parse_post_result(response.post_result)
+                if response.HasField("post_result"):
+                    (
+                        objects,
+                        classifications,
+                        landmarks,
+                        masks,
+                        ocr_lines,
+                        embeddings,
+                        depth_maps,
+                    ) = self._parse_post_result(response.post_result)
 
                 raw_outputs = None
                 if response.outputs:
@@ -599,64 +625,63 @@ class InferenceClient(GenAiMixin):
                     embeddings=embeddings,
                     depth_maps=depth_maps,
                     raw_outputs=raw_outputs,
-                    status_message=response.status.message
+                    status_message=response.status.message,
                 )
 
                 yield response.frame_sequence, result
         finally:
             if not pump_future.done():
                 pump_future.cancel()
-    
-    def register_model(self,
-                       model_path: str,
-                       model_id: Optional[str] = None,
-                       owner_id: Optional[str] = None,
-                       model_type: Optional[str] = None,
-                       model_variant: Optional[str] = None,
-                       inputs: Optional[List[Dict]] = None,
-                       outputs: Optional[List[Dict]] = None) -> str:
+
+    def register_model(
+        self,
+        model_path: str,
+        model_id: str | None = None,
+        owner_id: str | None = None,
+        model_type: str | None = None,
+        model_variant: str | None = None,
+        inputs: list[dict] | None = None,
+        outputs: list[dict] | None = None,
+    ) -> str:
         if self.stub is None:
             self.connect()
 
         # Translate container path to host path for ai-runtime
         host_path = Config.translate_path_to_host(model_path)
 
-        request = inference_pb2.ModelRegisterRequest(
-            model_path=host_path,
-            model_id=model_id or ""
-        )
+        request = inference_pb2.ModelRegisterRequest(model_path=host_path, model_id=model_id or "")
         if owner_id:
             request.owner_id = owner_id
         if model_type:
             request.model_type = model_type
         if model_variant:
             request.model_variant = model_variant
-        
+
         if inputs:
             for inp in inputs:
                 spec = inference_pb2.TensorSpec(
                     shape=inp.get("shape", []),
                     dtype=self._dtype_str_to_enum(inp.get("dtype", "float32")),
-                    name=inp.get("name", "")
+                    name=inp.get("name", ""),
                 )
                 request.inputs.append(spec)
-        
+
         if outputs:
             for out in outputs:
                 spec = inference_pb2.TensorSpec(
                     shape=out.get("shape", []),
                     dtype=self._dtype_str_to_enum(out.get("dtype", "float32")),
-                    name=out.get("name", "")
+                    name=out.get("name", ""),
                 )
                 request.outputs.append(spec)
-        
+
         response = self._invoke(self.stub.RegisterModel, request, result_timeout=120)
 
         if not response.status.success:
             raise RuntimeError(f"Model registration failed: {response.status.message}")
 
         return response.model_id
-    
+
     def _dtype_str_to_enum(self, dtype_str: str) -> int:
         dtype_map = {
             "uint8": inference_pb2.UINT8,
@@ -669,62 +694,65 @@ class InferenceClient(GenAiMixin):
             "uint32": inference_pb2.UINT32,
         }
         return dtype_map.get(dtype_str.lower(), inference_pb2.FLOAT32)
-    
+
     def unregister_model(self, model_id: str) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = inference_pb2.ModelInfo(model_id=model_id)
         response = self._invoke(self.stub.UnregisterModel, request, result_timeout=30)
 
         if not response.success:
             raise RuntimeError(f"Model unregistration failed: {response.message}")
-    
-    def list_models(self) -> List[ModelInfo]:
+
+    def list_models(self) -> list[ModelInfo]:
         if self.stub is None:
             self.connect()
-        
+
         response = self._invoke(self.stub.ListModels, inference_pb2.Empty(), result_timeout=30)
-        
+
         models = []
         for m in response.models:
-            models.append(ModelInfo(
-                model_id=m.model_id,
-                model_path=m.model_path,
-                version=m.version,
-                inputs=[{"shape": list(i.shape), "dtype": i.dtype, "name": i.name} 
-                       for i in m.inputs],
-                outputs=[{"shape": list(o.shape), "dtype": o.dtype, "name": o.name} 
-                        for o in m.outputs],
-                estimated_tops=m.estimated_tops,
-                estimated_memory=m.estimated_memory,
-                load_timestamp=m.load_timestamp
-            ))
-        
+            models.append(
+                ModelInfo(
+                    model_id=m.model_id,
+                    model_path=m.model_path,
+                    version=m.version,
+                    inputs=[
+                        {"shape": list(i.shape), "dtype": i.dtype, "name": i.name} for i in m.inputs
+                    ],
+                    outputs=[
+                        {"shape": list(o.shape), "dtype": o.dtype, "name": o.name}
+                        for o in m.outputs
+                    ],
+                    estimated_tops=m.estimated_tops,
+                    estimated_memory=m.estimated_memory,
+                    load_timestamp=m.load_timestamp,
+                )
+            )
+
         return models
-    
-    def get_model_info(self, model_id: str) -> Optional[ModelInfo]:
+
+    def get_model_info(self, model_id: str) -> ModelInfo | None:
         if self.stub is None:
             self.connect()
-        
+
         request = inference_pb2.ModelInfo(model_id=model_id)
         response = self._invoke(self.stub.GetModelInfo, request, result_timeout=30)
-        
+
         if not response.model_id:
             return None
-        
+
         return ModelInfo(
-            model_id=response.model_id,
-            model_path=response.model_path,
-            version=response.version
+            model_id=response.model_id, model_path=response.model_path, version=response.version
         )
-    
-    def get_stats(self) -> Dict[str, Any]:
+
+    def get_stats(self) -> dict[str, Any]:
         if self.stub is None:
             self.connect()
-        
+
         response = self._invoke(self.stub.GetStats, inference_pb2.Empty(), result_timeout=30)
-        
+
         return {
             "device_utilization": response.device_utilization,
             "device_temperature": response.device_temperature,
@@ -742,44 +770,46 @@ class InferenceClient(GenAiMixin):
                     "avg_latency_us": s.avg_latency_us,
                     "current_qps": s.current_qps,
                     "queue_depth": s.queue_depth,
-                    "hw_fps": getattr(s, 'hw_fps', 0),
+                    "hw_fps": getattr(s, "hw_fps", 0),
                 }
                 for s in response.model_stats
-            ]
+            ],
         }
-    
-    def create_session(self, 
-                       session_id: str,
-                       app_id: str = "",
-                       allowed_models: Optional[List[str]] = None,
-                       max_qps: int = 0,
-                       max_concurrent: int = 0,
-                       priority: int = 4) -> str:
+
+    def create_session(
+        self,
+        session_id: str,
+        app_id: str = "",
+        allowed_models: list[str] | None = None,
+        max_qps: int = 0,
+        max_concurrent: int = 0,
+        priority: int = 4,
+    ) -> str:
         if self.stub is None:
             self.connect()
-        
+
         request = inference_pb2.SessionConfig(
             session_id=session_id,
             app_id=app_id,
             max_qps=max_qps,
             max_concurrent=max_concurrent,
-            priority=priority
+            priority=priority,
         )
-        
+
         if allowed_models:
             request.allowed_models.extend(allowed_models)
-        
+
         response = self._invoke(self.stub.CreateSession, request, result_timeout=30)
 
         if not response.status.success:
             raise RuntimeError(f"Session creation failed: {response.status.message}")
 
         return response.session_id
-    
+
     def destroy_session(self, session_id: str) -> None:
         if self.stub is None:
             self.connect()
-        
+
         request = inference_pb2.SessionConfig(session_id=session_id)
         response = self._invoke(self.stub.DestroySession, request, result_timeout=30)
 
@@ -798,8 +828,7 @@ class InferenceClient(GenAiMixin):
             self.connect()
 
         request = inference_pb2.UpdatePostprocessConfigRequest(
-            model_id=model_id,
-            config_json=config_json
+            model_id=model_id, config_json=config_json
         )
         response = self._invoke(self.stub.UpdatePostprocessConfig, request, result_timeout=30)
 

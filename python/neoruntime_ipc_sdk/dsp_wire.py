@@ -5,30 +5,32 @@ and include/fd_protocol.h) so client modules can encode/decode without
 knowing socket plumbing. Pure data + pure functions; no I/O.
 """
 
+from __future__ import annotations
+
 import struct
-from typing import List, Optional, Sequence, Tuple
+from typing import Sequence
 
 from .proto import camera_pb2
 
 # ---- UDS wire constants (platform camera-daemon include/fd_protocol.h) ----
-_FD_PUB_MSG_OK = 5                                 # control ack — no payload
-_FD_PUB_MSG_ERROR = 6                              # control error ack
+_FD_PUB_MSG_OK = 5  # control ack — no payload
+_FD_PUB_MSG_ERROR = 6  # control error ack
 _FD_PUB_MSG_DSP_ALLOC = 7
 _FD_PUB_MSG_DSP_ALLOC_RESP = 8
 _FD_PUB_MSG_DSP_BUF_RELEASE = 9
 _FD_PUB_MSG_DSP_IMPORT = 10
 _FD_PUB_MSG_DSP_IMPORT_RESP = 11
 
-_ALLOC_REQ_FMT = "<IIIIII"                         # hdr + w, h, fmt, count
+_ALLOC_REQ_FMT = "<IIIIII"  # hdr + w, h, fmt, count
 _ALLOC_REQ_SIZE = struct.calcsize(_ALLOC_REQ_FMT)  # 24
-_ALLOC_RESP_FMT = "<II i I I 3I 3I 4x 64Q"         # C layout incl. u64 align
+_ALLOC_RESP_FMT = "<II i I I 3I 3I 4x 64Q"  # C layout incl. u64 align
 _ALLOC_RESP_SIZE = struct.calcsize(_ALLOC_RESP_FMT)
 _RELEASE_FMT = "<IIQ"
-_IMPORT_REQ_FMT = "<12I"                           # hdr + w,h,fmt,planes,strides[3],sizes[3]
-_IMPORT_REQ_SIZE = struct.calcsize(_IMPORT_REQ_FMT)   # 48
-_IMPORT_RESP_FMT = "<IIi4xq"                       # hdr + code, pad, import_id
+_IMPORT_REQ_FMT = "<12I"  # hdr + w,h,fmt,planes,strides[3],sizes[3]
+_IMPORT_REQ_SIZE = struct.calcsize(_IMPORT_REQ_FMT)  # 48
+_IMPORT_RESP_FMT = "<IIi4xq"  # hdr + code, pad, import_id
 _IMPORT_RESP_SIZE = struct.calcsize(_IMPORT_RESP_FMT)  # 24
-_DSP_MAX_FDS = 64                                  # FD_PUB_DSP_MAX_FDS
+_DSP_MAX_FDS = 64  # FD_PUB_DSP_MAX_FDS
 
 # HalPixelFormat wire values (hal_v2 hal_buffer.h) — deliberately separate
 # from the SDK PixelFormat enum, whose numbering does not match the wire.
@@ -79,7 +81,7 @@ _PRIORITY_WIRE = {
 class DspError(Exception):
     """DSP job or buffer error. ``code`` mirrors the daemon error codes."""
 
-    def __init__(self, message: str, code: Optional[int] = None):
+    def __init__(self, message: str, code: int | None = None):
         super().__init__(message)
         self.code = code
 
@@ -88,40 +90,56 @@ class _DspUnavailable(DspError):
     """Internal: daemon lacks the DSP surface — take the CPU fallback."""
 
 
-def alloc_request_bytes(width: int, height: int, fmt_wire: int,
-                        count: int) -> bytes:
+def alloc_request_bytes(width: int, height: int, fmt_wire: int, count: int) -> bytes:
     """Encode FD_PUB_MSG_DSP_ALLOC (24 bytes)."""
-    return struct.pack(_ALLOC_REQ_FMT, _FD_PUB_MSG_DSP_ALLOC,
-                       _ALLOC_REQ_SIZE, width, height, fmt_wire, count)
+    return struct.pack(
+        _ALLOC_REQ_FMT, _FD_PUB_MSG_DSP_ALLOC, _ALLOC_REQ_SIZE, width, height, fmt_wire, count
+    )
 
 
-def parse_alloc_resp(payload: bytes) -> Tuple[int, int, int, List[int],
-                                              List[int], List[int]]:
+def parse_alloc_resp(payload: bytes) -> tuple[int, int, int, list[int], list[int], list[int]]:
     """Decode FD_PUB_MSG_DSP_ALLOC_RESP (560 bytes; fds arrive separately).
 
     Returns ``(code, count, num_planes, strides[3], sizes[3], ids[count])``.
     """
     if len(payload) < _ALLOC_RESP_SIZE:
         raise DspError(f"short DSP alloc response: {len(payload)} bytes")
-    mtype, _size, code, count, num_planes, s0, s1, s2, z0, z1, z2 = \
-        struct.unpack_from("<II i I I 3I 3I", payload, 0)
+    mtype, _size, code, count, num_planes, s0, s1, s2, z0, z1, z2 = struct.unpack_from(
+        "<II i I I 3I 3I", payload, 0
+    )
     if mtype != _FD_PUB_MSG_DSP_ALLOC_RESP:
         raise DspError(f"unexpected DSP alloc response type {mtype}")
     ids = list(struct.unpack_from("<64Q", payload, 48))[:count]
     return code, count, num_planes, [s0, s1, s2], [z0, z1, z2], ids
 
 
-def import_request_bytes(width: int, height: int, fmt_wire: int,
-                         num_planes: int, strides: Sequence[int],
-                         sizes: Sequence[int]) -> bytes:
+def import_request_bytes(
+    width: int,
+    height: int,
+    fmt_wire: int,
+    num_planes: int,
+    strides: Sequence[int],
+    sizes: Sequence[int],
+) -> bytes:
     """Encode FD_PUB_MSG_DSP_IMPORT (48 bytes; fds travel via SCM_RIGHTS)."""
-    return struct.pack(_IMPORT_REQ_FMT, _FD_PUB_MSG_DSP_IMPORT,
-                       _IMPORT_REQ_SIZE, width, height, fmt_wire, num_planes,
-                       strides[0], strides[1], strides[2],
-                       sizes[0], sizes[1], sizes[2])
+    return struct.pack(
+        _IMPORT_REQ_FMT,
+        _FD_PUB_MSG_DSP_IMPORT,
+        _IMPORT_REQ_SIZE,
+        width,
+        height,
+        fmt_wire,
+        num_planes,
+        strides[0],
+        strides[1],
+        strides[2],
+        sizes[0],
+        sizes[1],
+        sizes[2],
+    )
 
 
-def parse_import_resp(payload: bytes) -> Tuple[int, int]:
+def parse_import_resp(payload: bytes) -> tuple[int, int]:
     """Decode FD_PUB_MSG_DSP_IMPORT_RESP (24 bytes).
 
     Returns ``(code, import_id)``; ``code`` mirrors the daemon error codes
@@ -135,7 +153,7 @@ def parse_import_resp(payload: bytes) -> Tuple[int, int]:
     return code, import_id
 
 
-def _plane_rows(fmt: str, width: int, height: int) -> List[Tuple[int, int]]:
+def _plane_rows(fmt: str, width: int, height: int) -> list[tuple[int, int]]:
     """(row_bytes, rows) per plane for a tightly-packed geometry."""
     if fmt == "nv12":
         return [(width, height), (width, height // 2)]
@@ -152,8 +170,8 @@ def _validate_geometry(width: int, height: int, fmt: str, what: str) -> None:
     if fmt not in _DSP_FORMATS:
         raise DspError(f"unsupported format {fmt!r} (nv12/rgb24/gray8)")
     if fmt == "nv12" and (width % 2 or height % 2):
-        raise DspError(f"{what}: nv12 needs even width/height "
-                       f"(got {width}x{height})")
+        raise DspError(f"{what}: nv12 needs even width/height (got {width}x{height})")
     if not (_MIN_DIM <= width <= _MAX_DIM and _MIN_DIM <= height <= _MAX_DIM):
-        raise DspError(f"{what}: dims {width}x{height} outside daemon range "
-                       f"[{_MIN_DIM}, {_MAX_DIM}]")
+        raise DspError(
+            f"{what}: dims {width}x{height} outside daemon range [{_MIN_DIM}, {_MAX_DIM}]"
+        )
