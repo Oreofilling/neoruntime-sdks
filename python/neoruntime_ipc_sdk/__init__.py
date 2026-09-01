@@ -12,6 +12,7 @@ Provides clean API to access platform capabilities:
 - AI overlay control (detection boxes on RTSP/Web)
 - App toolkit: frame crop/resize/JPEG, detection drawing, TS/HLS
   recording, MJPEG serving
+- DSP offload: hardware resize/crop/multi-crop with CPU fallback
 """
 
 __version__ = "0.6.0"
@@ -60,6 +61,11 @@ from .draw import (
     draw_boxes,
     draw_detections,
     draw_text,
+)
+from .dsp import (
+    DspBufferPool,
+    DspClient,
+    DspError,
 )
 from .events import (
     Event,
@@ -154,6 +160,10 @@ __all__ = [
     "MjpegStream",
     "mjpeg_wsgi_app",
     "MjpegServer",
+    # DSP offload
+    "DspClient",
+    "DspBufferPool",
+    "DspError",
     # Config & Plugin
     "Config",
     "PluginDiscovery",
