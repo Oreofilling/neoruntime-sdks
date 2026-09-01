@@ -140,8 +140,15 @@ hence quota-first, open-by-opt-in.
 ## Phased rollout
 
 1. **P0 (probe)**: daemon exposes `SubmitDspJob` with
-   `DSP_OP_CROP_AND_RESIZE` only, quota hard-coded low; SDK gains
-   `DspClient.resize_hw(frame, w, h)`. Measure encoder impact on 93.72.
+   `DSP_OP_CROP_AND_RESIZE` **and `DSP_OP_MULTI_CROP_AND_RESIZE`** —
+   batching is day-one, not a follow-up, per the experiment
+   conclusions (the ~7-10 ms per-op submission path dominates, so
+   per-tile jobs would each pay it in full). Quota hard-coded low
+   (~30 jobs/s, ~60 MPix/s per app — anchored to the measured
+   contended floor); SDK gains `DspClient.resize_hw(frame, w, h)`.
+   Acceptance gate: encoder-drop soak under app load (E2b proved
+   coexistence safe but did not measure encoder drops). Itemized
+   per-layer work: [hardware-first-roadmap.md](hardware-first-roadmap.md).
 2. **P1**: add `BLEND` + buffer allocation RPC; port SDK
    `Frame.resize` fast path to it opportunistically (keep numpy
    fallback).

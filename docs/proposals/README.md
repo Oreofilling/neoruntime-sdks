@@ -12,8 +12,10 @@ the work.
 | [frame-injection.md](frame-injection.md) | `PushFrame` — app frames into the encoded stream | dsp-offload (P1) | media-graph wiring |
 | [web-stream-url.md](web-stream-url.md) | `GetWebStreamUrl` — console-origin video URLs for app pages | none | RPC + nginx |
 | [ai-overlay-extended.md](ai-overlay-extended.md) | `AiOverlayConfig` v2 — polygons, tracks, per-app sources | dsp-offload (P1, optional) | renderer extension |
+| [hardware-first-roadmap.md](hardware-first-roadmap.md) | post-P0 work breakdown: HAL + platform + SDK items | dsp-offload experiments | cross-team checklist |
 
 Suggested reading order for reviewers: `dsp-offload` (foundation) →
+`hardware-first-roadmap` (what the experiments commit each layer to) →
 `ai-overlay-extended` (cheapest win) → `frame-injection` →
 `web-stream-url`.
 
