@@ -47,13 +47,52 @@ from typing import List, Optional, Sequence, Tuple, Union
 import grpc
 import numpy as np
 
-try:  # cv2 accelerates the CPU fallback only; never required
-    import cv2 as _cv2
-except ImportError:  # pragma: no cover
-    _cv2 = None
-
 from ._transport import GrpcClient
 from ._transport import recvmsg_with_fds as _recvmsg_with_fds
+from .dsp_format import (  # noqa: F401 — re-exported for API compat
+    _CV_INTERP,
+    _FRAME_FMT_TO_DSP,
+    _as_pixels,
+    _cpu_crop,
+    _cpu_crop_resize,
+    _cpu_resize,
+    _infer_fmt,
+    _src_dims,
+    _validated_rect,
+)
+from .dsp_wire import (  # noqa: F401 — re-exported for API compat
+    _ALLOC_RESP_SIZE,
+    _DSP_MAX_FDS,
+    _ERROR_TEXT,
+    _FD_PUB_MSG_DSP_ALLOC,
+    _FD_PUB_MSG_DSP_ALLOC_RESP,
+    _FD_PUB_MSG_DSP_BUF_RELEASE,
+    _FD_PUB_MSG_DSP_IMPORT,
+    _FD_PUB_MSG_DSP_IMPORT_RESP,
+    _FD_PUB_MSG_ERROR,
+    _FD_PUB_MSG_OK,
+    _HAL_PIXEL_FORMAT,
+    _INTERP_WIRE,
+    _MAX_BATCH,
+    _MAX_DIM,
+    _MIN_DIM,
+    _OP_CROP_AND_RESIZE,
+    _OP_MULTI_CROP,
+    _OP_RESIZE,
+    _PRIORITY_WIRE,
+    _RELEASE_FMT,
+    _SCALING_WIRE,
+    DSP_SERVICE_UNAVAILABLE,
+    DspError,
+    _DspUnavailable,
+    _plane_count,
+    _plane_rows,
+    _validate_geometry,
+    alloc_request_bytes,
+    import_request_bytes,
+    parse_alloc_resp,
+    parse_import_resp,
+)
 from .frame import (
     _DMA_BUF_SYNC_END,
     _DMA_BUF_SYNC_READ,
@@ -67,170 +106,7 @@ from .proto import camera_pb2, camera_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
-#: Anything the ``*_hw`` methods accept as a job source: a numpy array
-#: (copied into a daemon buffer) or a keep-fd Frame / FrameHandle
-#: (imported zero-copy via DSP_IMPORT).
 JobSource = Union[np.ndarray, Frame, FrameHandle]
-
-# ---- UDS wire constants (platform camera-daemon include/fd_protocol.h) ----
-_FD_PUB_MSG_OK = 5                                 # control ack — no payload
-_FD_PUB_MSG_ERROR = 6                              # control error ack
-_FD_PUB_MSG_DSP_ALLOC = 7
-_FD_PUB_MSG_DSP_ALLOC_RESP = 8
-_FD_PUB_MSG_DSP_BUF_RELEASE = 9
-_FD_PUB_MSG_DSP_IMPORT = 10
-_FD_PUB_MSG_DSP_IMPORT_RESP = 11
-
-_ALLOC_REQ_FMT = "<IIIIII"                         # hdr + w, h, fmt, count
-_ALLOC_REQ_SIZE = struct.calcsize(_ALLOC_REQ_FMT)  # 24
-_ALLOC_RESP_FMT = "<II i I I 3I 3I 4x 64Q"         # C layout incl. u64 align
-_ALLOC_RESP_SIZE = struct.calcsize(_ALLOC_RESP_FMT)
-_RELEASE_FMT = "<IIQ"
-_IMPORT_REQ_FMT = "<12I"                           # hdr + w,h,fmt,planes,strides[3],sizes[3]
-_IMPORT_REQ_SIZE = struct.calcsize(_IMPORT_REQ_FMT)   # 48
-_IMPORT_RESP_FMT = "<IIi4xq"                       # hdr + code, pad, import_id
-_IMPORT_RESP_SIZE = struct.calcsize(_IMPORT_RESP_FMT)  # 24
-_DSP_MAX_FDS = 64                                  # FD_PUB_DSP_MAX_FDS
-
-# HalPixelFormat wire values (hal_v2 hal_buffer.h) — deliberately separate
-# from the SDK PixelFormat enum, whose numbering does not match the wire.
-_HAL_PIXEL_FORMAT = {"nv12": 0, "rgb24": 4, "gray8": 8}
-_DSP_FORMATS = ("nv12", "rgb24", "gray8")
-
-# Frame.format names (media.py PIXEL_FORMAT_NAMES) a handle may carry into
-# an import. RGB and BGR both map to rgb24: these ops are byte-order
-# agnostic per-pixel geometry transforms, so the plane imports verbatim.
-_FRAME_FMT_TO_DSP = {"NV12": "nv12", "RGB": "rgb24", "BGR": "rgb24",
-                     "GRAY8": "gray8"}
-
-# ---- daemon caps (dsp_service.cpp), mirrored for fail-fast validation ----
-_MIN_DIM = 16
-_MAX_DIM = 8192
-_MAX_BATCH = 64
-
-# ---- DspService error codes ----
-DSP_SERVICE_UNAVAILABLE = -5
-
-_ERROR_TEXT = {
-    -1: "invalid request",
-    -2: "no such buffer id",
-    -3: "quota exceeded",
-    -4: "job timeout",
-    -5: "dsp service unavailable",
-    -6: "out of memory",
-    -7: "client limit exceeded",
-}
-
-_OP_RESIZE = 0
-_OP_CROP_AND_RESIZE = 1
-_OP_MULTI_CROP = 2
-
-_INTERP_WIRE = {
-    "nearest": camera_pb2.DSP_INTERP_NEAREST,
-    "bilinear": camera_pb2.DSP_INTERP_BILINEAR,
-    "area": camera_pb2.DSP_INTERP_AREA,
-    "bicubic": camera_pb2.DSP_INTERP_BICUBIC,
-}
-_CV_INTERP = {
-    "nearest": "INTER_NEAREST",
-    "bilinear": "INTER_LINEAR",
-    "area": "INTER_AREA",
-    "bicubic": "INTER_CUBIC",
-}
-_SCALING_WIRE = {
-    "stretch": camera_pb2.DSP_SCALING_STRETCH,
-    "letterbox": camera_pb2.DSP_SCALING_LETTERBOX_MIDDLE,
-    "letterbox_middle": camera_pb2.DSP_SCALING_LETTERBOX_MIDDLE,
-    "letterbox_up_left": camera_pb2.DSP_SCALING_LETTERBOX_UP_LEFT,
-    "scale_crop": camera_pb2.DSP_SCALING_SCALE_AND_CROP,
-}
-_PRIORITY_WIRE = {
-    "background": camera_pb2.DSP_PRIORITY_BACKGROUND,
-    "normal": camera_pb2.DSP_PRIORITY_NORMAL,
-}
-
-
-class DspError(Exception):
-    """DSP job or buffer error. ``code`` mirrors the daemon error codes."""
-
-    def __init__(self, message: str, code: Optional[int] = None):
-        super().__init__(message)
-        self.code = code
-
-
-class _DspUnavailable(DspError):
-    """Internal: daemon lacks the DSP surface — take the CPU fallback."""
-
-
-def alloc_request_bytes(width: int, height: int, fmt_wire: int,
-                        count: int) -> bytes:
-    """Encode FD_PUB_MSG_DSP_ALLOC (24 bytes)."""
-    return struct.pack(_ALLOC_REQ_FMT, _FD_PUB_MSG_DSP_ALLOC,
-                       _ALLOC_REQ_SIZE, width, height, fmt_wire, count)
-
-
-def parse_alloc_resp(payload: bytes) -> Tuple[int, int, int, List[int],
-                                              List[int], List[int]]:
-    """Decode FD_PUB_MSG_DSP_ALLOC_RESP (560 bytes; fds arrive separately).
-
-    Returns ``(code, count, num_planes, strides[3], sizes[3], ids[count])``.
-    """
-    if len(payload) < _ALLOC_RESP_SIZE:
-        raise DspError(f"short DSP alloc response: {len(payload)} bytes")
-    mtype, _size, code, count, num_planes, s0, s1, s2, z0, z1, z2 = \
-        struct.unpack_from("<II i I I 3I 3I", payload, 0)
-    if mtype != _FD_PUB_MSG_DSP_ALLOC_RESP:
-        raise DspError(f"unexpected DSP alloc response type {mtype}")
-    ids = list(struct.unpack_from("<64Q", payload, 48))[:count]
-    return code, count, num_planes, [s0, s1, s2], [z0, z1, z2], ids
-
-
-def import_request_bytes(width: int, height: int, fmt_wire: int,
-                         num_planes: int, strides: Sequence[int],
-                         sizes: Sequence[int]) -> bytes:
-    """Encode FD_PUB_MSG_DSP_IMPORT (48 bytes; fds travel via SCM_RIGHTS)."""
-    return struct.pack(_IMPORT_REQ_FMT, _FD_PUB_MSG_DSP_IMPORT,
-                       _IMPORT_REQ_SIZE, width, height, fmt_wire, num_planes,
-                       strides[0], strides[1], strides[2],
-                       sizes[0], sizes[1], sizes[2])
-
-
-def parse_import_resp(payload: bytes) -> Tuple[int, int]:
-    """Decode FD_PUB_MSG_DSP_IMPORT_RESP (24 bytes).
-
-    Returns ``(code, import_id)``; ``code`` mirrors the daemon error codes
-    (0 on success, -1 validation failure, -7 client import cap).
-    """
-    if len(payload) < _IMPORT_RESP_SIZE:
-        raise DspError(f"short DSP import response: {len(payload)} bytes")
-    mtype, _size, code, import_id = struct.unpack(_IMPORT_RESP_FMT, payload)
-    if mtype != _FD_PUB_MSG_DSP_IMPORT_RESP:
-        raise DspError(f"unexpected DSP import response type {mtype}")
-    return code, import_id
-
-
-def _plane_rows(fmt: str, width: int, height: int) -> List[Tuple[int, int]]:
-    """(row_bytes, rows) per plane for a tightly-packed geometry."""
-    if fmt == "nv12":
-        return [(width, height), (width, height // 2)]
-    if fmt == "rgb24":
-        return [(width * 3, height)]
-    return [(width, height)]
-
-
-def _plane_count(fmt: str) -> int:
-    return 2 if fmt == "nv12" else 1
-
-
-def _validate_geometry(width: int, height: int, fmt: str, what: str) -> None:
-    if fmt not in _DSP_FORMATS:
-        raise DspError(f"unsupported format {fmt!r} (nv12/rgb24/gray8)")
-    if fmt == "nv12" and (width % 2 or height % 2):
-        raise DspError(f"{what}: nv12 needs even width/height "
-                       f"(got {width}x{height})")
-    if not (_MIN_DIM <= width <= _MAX_DIM and _MIN_DIM <= height <= _MAX_DIM):
-        raise DspError(f"{what}: dims {width}x{height} outside daemon range "
-                       f"[{_MIN_DIM}, {_MAX_DIM}]")
 
 
 class DspBufferPool:
@@ -871,135 +747,3 @@ class DspClient(GrpcClient):
     def _release_owned(self, own: List[object]) -> None:
         for pool in own:
             pool.release()
-
-
-# ---- format / geometry helpers ---------------------------------------------
-def _infer_fmt(src: np.ndarray, fmt: Optional[str]) -> str:
-    if fmt is not None:
-        if fmt not in _DSP_FORMATS:
-            raise DspError(f"unsupported format {fmt!r} (nv12/rgb24/gray8)")
-        return fmt
-    if src.ndim == 3 and src.shape[2] == 3:
-        return "rgb24"
-    if src.ndim == 2:
-        return "gray8"  # ambiguous with nv12 — pass fmt explicitly for YUV
-    raise DspError(f"cannot infer format from shape {src.shape}")
-
-
-def _as_pixels(src: "JobSource") -> np.ndarray:
-    """The numpy pixels behind a non-handle source (ndarray or Frame)."""
-    return src.image if isinstance(src, Frame) else src
-
-
-def _src_dims(src: np.ndarray, fmt: str) -> Tuple[int, int]:
-    if fmt == "nv12":
-        if src.ndim != 2:
-            raise DspError("nv12 src must be (h*3//2, w)")
-        return src.shape[0] * 2 // 3, src.shape[1]
-    if fmt == "rgb24":
-        if src.ndim != 3 or src.shape[2] != 3:
-            raise DspError("rgb24 src must be (h, w, 3)")
-        return src.shape[0], src.shape[1]
-    if src.ndim != 2:
-        raise DspError("gray8 src must be (h, w)")
-    return src.shape
-
-
-def _validated_rect(sw: int, sh: int, fmt: str, x: int, y: int, w: int, h: int,
-                    dw: int, dh: int) -> Tuple[int, int, int, int, int, int]:
-    """Validate one crop rect against source dims ``sw x sh`` (frame handles
-    arrive as geometry, not pixels — dims are resolved by the caller)."""
-    if w < 1 or h < 1:
-        raise DspError(f"crop size must be positive (got {w}x{h})")
-    if x < 0 or y < 0 or x + w > sw or y + h > sh:
-        raise DspError(f"crop ({x},{y},{w}x{h}) outside source {sw}x{sh}")
-    if fmt == "nv12" and any(v % 2 for v in (x, y, w, h, dw, dh)):
-        raise DspError("nv12 crop/dest coords and sizes must be even")
-    if not (_MIN_DIM <= dw <= _MAX_DIM and _MIN_DIM <= dh <= _MAX_DIM):
-        raise DspError(f"destination dims {dw}x{dh} outside daemon range "
-                       f"[{_MIN_DIM}, {_MAX_DIM}]")
-    return x, y, w, h, dw, dh
-
-
-# ---- CPU fallback ------------------------------------------------------------
-def _resize_plane(plane: np.ndarray, out_h: int, out_w: int,
-                  interpolation: str) -> np.ndarray:
-    if _cv2 is not None:
-        return _cv2.resize(plane, (out_w, out_h),
-                           interpolation=getattr(_cv2, _CV_INTERP[interpolation]))
-    rows = np.arange(out_h) * plane.shape[0] // out_h
-    cols = np.arange(out_w) * plane.shape[1] // out_w
-    return plane[np.ix_(rows, cols)]
-
-
-def _cpu_resize(src: np.ndarray, fmt: str, dw: int, dh: int, scaling: str,
-                interpolation: str) -> np.ndarray:
-    sh, sw = _src_dims(src, fmt)
-    if scaling in ("letterbox", "letterbox_middle", "letterbox_up_left"):
-        scale = min(dw / sw, dh / sh)
-        cw, ch = max(1, int(round(sw * scale))), max(1, int(round(sh * scale)))
-        if fmt == "nv12":
-            cw &= ~1
-            ch &= ~1
-        content = _cpu_resize(src, fmt, cw, ch, "stretch", interpolation)
-        ox = (dw - cw) // 2 if scaling != "letterbox_up_left" else 0
-        oy = (dh - ch) // 2 if scaling != "letterbox_up_left" else 0
-        if fmt == "nv12":  # keep UV half-sample alignment
-            ox &= ~1
-            oy &= ~1
-        return _place(fmt, content, dw, dh, ox, oy)
-    if scaling == "scale_crop":
-        scale = max(dw / sw, dh / sh)
-        cw, ch = max(1, int(round(sw * scale))), max(1, int(round(sh * scale)))
-        if fmt == "nv12":
-            cw &= ~1
-            ch &= ~1
-        big = _cpu_resize(src, fmt, cw, ch, "stretch", interpolation)
-        return _cpu_crop(big, fmt, (cw - dw) // 2 & ~1, (ch - dh) // 2 & ~1,
-                         dw, dh)
-    # stretch
-    if fmt == "nv12":
-        y = _resize_plane(src[:sh], dh, dw, interpolation)
-        # UV rows are interleaved (U,V) pairs: dw/2 samples = dw bytes wide
-        uv = _resize_plane(src[sh:], dh // 2, dw, "nearest")
-        return np.vstack([y, uv])
-    return _resize_plane(src, dh, dw, interpolation)
-
-
-def _place(fmt: str, content: np.ndarray, dw: int, dh: int, ox: int, oy: int
-           ) -> np.ndarray:
-    """Paste ``content`` onto a black canvas at (ox, oy); nv12 pads UV 128."""
-    if fmt == "nv12":
-        ch = content.shape[0] * 2 // 3
-        cw = content.shape[1]
-        canvas = np.zeros((dh * 3 // 2, dw), dtype=np.uint8)
-        canvas[dh:, :] = 128                      # neutral chroma
-        canvas[oy:oy + ch, ox:ox + cw] = content[:ch]
-        canvas[dh + oy // 2:dh + (oy + ch) // 2,
-               ox // 2:(ox + cw) // 2] = content[ch:]
-        return canvas
-    canvas = np.zeros((dh, dw) if fmt == "gray8" else (dh, dw, 3),
-                      dtype=np.uint8)
-    canvas[oy:oy + content.shape[0], ox:ox + content.shape[1]] = content
-    return canvas
-
-
-def _cpu_crop(src: np.ndarray, fmt: str, x: int, y: int, w: int,
-              h: int) -> np.ndarray:
-    if fmt == "nv12":
-        sh = src.shape[0] * 2 // 3
-        # interleaved UV: a w-pixel crop spans w bytes of chroma rows
-        return np.vstack([
-            src[y:y + h, x:x + w],
-            src[sh + y // 2:sh + (y + h) // 2, x:x + w],
-        ])
-    return src[y:y + h, x:x + w].copy()
-
-
-def _cpu_crop_resize(src: np.ndarray, fmt: str,
-                     rect: Tuple[int, ...]) -> np.ndarray:
-    x, y, w, h, dw, dh = rect
-    out = _cpu_crop(src, fmt, x, y, w, h)
-    if (dw, dh) != (w, h):
-        out = _cpu_resize(out, fmt, dw, dh, "stretch", "bilinear")
-    return out

@@ -336,7 +336,9 @@ def unimplemented_client():
 
 class TestFallback:
     def test_unimplemented_rpc_falls_back_to_cpu(self, monkeypatch):
-        monkeypatch.setattr(dsp, "_cv2", None)  # deterministic nearest
+        from neoruntime_ipc_sdk import dsp_format
+        # _resize_plane lives in dsp_format post-split
+        monkeypatch.setattr(dsp_format, "_cv2", None)  # deterministic nearest
         client = unimplemented_client()
         src = np.arange(32 * 32, dtype=np.uint8).reshape(32, 32)
         out = client.resize_hw(src, 16, 16)
