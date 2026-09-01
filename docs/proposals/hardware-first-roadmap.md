@@ -186,7 +186,7 @@ new file (md5) is actually mapped, not a stale inode held open.
 | # | Item | Detail |
 |---|---|---|
 | SDK-1 | **Frame fd retention (opt-in)** ✅ done (2026-09-01) | `get_frame/subscribe(..., keep_fd=True)` returns a `FrameHandle` (dma-buf fds, per-plane strides/sizes, frame_id) with idempotent `release()`; `Frame.to_array()` lazily materializes, fenced with `DMA_BUF_IOCTL_SYNC`. Device-verified on 93.72 (4K NV12): 30/30 sustained retains at p50 23 ms; 2-frame × 2 s holds with live content; release after watchdog force-reclaim still unpins the window. **Constraints found:** retention budget ~4 s (FrameWatchdog warns ~4.2 s, force-reclaims buffers at ~5 s); `DMA_BUF_IOCTL_SYNC` returns EINVAL on these exporter fds (content coherent — SDK fences best-effort). **Three fd_publisher defects block fast releasers — ✅ fixed on platform 30a30bee same day** (see note below) |
-| SDK-2 | **`DspClient` with CPU fallback** | `resize_hw` / `crop_hw` / `multi_crop_hw` following the established cv2-optional pattern: hardware-first, numpy fallback when the RPC is absent — mirrors how `Frame.resize` degrades today |
+| SDK-2 | **`DspClient` with CPU fallback** ✅ done (2026-09-01) | `resize_hw` / `crop_hw` / `multi_crop_hw` following the established cv2-optional pattern: hardware-first, numpy fallback when the RPC is absent — mirrors how `Frame.resize` degrades today. `neoruntime_ipc_sdk/dsp.py`: daemon-side buffers via the UDS `DSP_ALLOC`/`DSP_BUF_RELEASE` wire protocol (560-byte RESP parsed with strides/sizes/ids, up to 64 dma-buf fds per response), jobs via `SubmitDspJob` with **always-explicit interpolation** (proto default 0 = NEAREST → HAL −2801 on MULTI_CROP). Fallback triggers only on UNIMPLEMENTED or daemon error −5 (`last_used_hw` records which path served); genuine errors raise `DspError`. Hot loops can pre-allocate `DspBufferPool`s (`src_pool`/`dst_pool`/`dst_pools` params). Client-side validation mirrors daemon caps (dims [16,8192], ≤64 fds per alloc, ≤64 rects, NV12 evenness). 32 new tests. **Device-verified on 93.72 (live 4K NV12 frame, 2026-09-01): full probe ALL PASS — resize vs cv2 mean\|diff\| 1.38, crop exact copy bit-identical, crop+scale 0.37, multi-crop 4 tiles worst 0.37; paced hot loop 8/8 ok with 0 quota rejections.** Latency attribution: daemon-side job time **2.0 ms** (resize) / ~0 ms (multi-crop) vs **111 / 76 ms** SDK-side wall — >95 % is client-side data movement (UDS alloc roundtrips + 12.4 MB mmap src write + readback), and plain cv2 `INTER_AREA` on the Y plane costs ~17 ms, so **with a copy-in source the DSP path loses to CPU; it only wins once the source is zero-copy (SDK-3 / proposal below) or the CPU cores are busy**. Quota semantics (measured): per-client budget (100 jobs/s, 120 MPix/s, 1 s burst on first contact) charges each job `src + Σdst` MPix — a 4K job costs ~8.5 MPix, so back-to-back submissions hit `DspError` code −3 ("quota: MPix/s budget exhausted") within seconds; that error deliberately does **not** silently fall back (a CPU switch is a latency cliff the app should see — documented in the module docstring). **Constraint found (P0 contract): job src must be a daemon-allocated buffer, so the input array is copied in — camera dma-bufs cannot be a job source yet** (platform extension proposal below) |
 | SDK-3 | **`Frame.resize` fast-path switch (P1)** | opportunistic: route through `DspClient` when available, keep the current implementation as the fallback |
 
 ### fd_publisher defects found during SDK-1 verification (2026-09-01, daemon v2.0.0 on 93.72) — ✅ all fixed same day
@@ -243,6 +243,47 @@ observation for a future platform pass: `encoded_publisher` still does
 blocking `send_all` on its dispatch path (journal shows 8 ms slow-send
 warnings under load) — same defect class as #3 in a different
 publisher.
+
+### SDK-2 platform gap found during implementation: no zero-copy job source
+
+`SubmitDspJob` requires `src_buffer_id` to resolve to a buffer the
+daemon allocated through `DspService::alloc_buffers` (dsp_service.cpp
+buffer table). Camera frames arrive as dma-bufs owned by the HAL/encoder
+pool — an app's `FrameHandle` fds are not in that table, so today the
+SDK **copies the input array into a daemon DSP buffer** (mmap write).
+Measured on 93.72 (SDK-2 probe): a 4K-NV12 `resize_hw` call costs
+~111 ms wall of which the DSP job itself is 2.0 ms — the copy-in path
+(alloc roundtrips + 12.4 MB mmap write + readback) is >95 % of the
+latency budget and makes the whole path slower than cv2 (~17 ms for
+the same Y-plane resize). Zero-copy src is therefore not an
+optimization nicety but the difference between the DSP path being
+useful and being counterproductive for array sources.
+
+Proposed platform extension (small, backward compatible):
+
+```proto
+message DspJobRequest {
+  ...
+  // Import an existing dma-buf as the job source instead of a
+  // daemon-allocated src_buffer_id. Daemon takes a reference for the
+  // job lifetime only.
+  ImportedBuffer src_import = 8;
+}
+message ImportedBuffer {
+  repeated uint32 plane_fds = 1;   // per-plane dma-bufs (app-owned)
+  uint32 width = 2;
+  uint32 height = 3;
+  string format = 4;               // nv12 | rgb24 | gray8
+  repeated uint32 strides = 5;
+  repeated uint32 sizes = 6;
+}
+```
+
+Daemon side: `dma_buf_import`/`mmap` the fds for the job duration, run,
+drop the mapping. No allocation-table entry, no quota. Combined with
+SDK-1 `keep_fd=True` this makes the whole path
+`get_frame → multi_crop_hw → release` zero-copy end to end, and removes
+the copy that currently dominates the e2e latency.
 
 ## Sequencing
 
