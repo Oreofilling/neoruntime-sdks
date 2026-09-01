@@ -112,7 +112,44 @@ unknown buffer ids → rc −2, bad pixel format → rejected).
 | PLAT-3 ✅ | **`MULTI_CROP_AND_RESIZE` in P0, not later — batch cap 64** | verified from both sides: N=16 jobs pass with per-ROI content and gradient checks; `rects`/`dst_ids` above 64 rejected at validation with an explicit message; mismatched `dst_ids.size()` also rejected |
 | PLAT-4 ✅ | **Scheduler: priority + quota + caps + timeout** | per-client quota **100 jobs/s and 120 MPix/s** (anchors from the dma-buf HAL-3 numbers) enforced under lock — the probe's unthrottled loop saw 58 ok / 5 quota_rej; 2000 ms job timeout via the HAL `wait(timeout_ms)`+cancel path |
 | PLAT-5 ✅ | **`AllocateDspBuffer` + fd passing** | UDS `/run/aipc/camera.sock` flat messages `DSP_ALLOC` / `DSP_ALLOC_RESP` / `DSP_BUF_RELEASE` with SCM_RIGHTS (max 64 fds per message, enforced: 66 → rejected); per-plane stride/size returned; released and unknown ids correctly rejected (rc −2); `DMA_BUF_IOCTL_SYNC` write-fence after CPU fill verified as required for correct DSP reads |
-| PLAT-6 | **Encoder-contention regression gate** | the existing drop path (`dpm_worker.cpp:815-817`, "DSP contention with the encoder") must be measured under app load before opening the RPC: E2b proved coexistence *safe* (1093 ops, 0 errors) but did not measure encoder frame drops — that is the acceptance metric for P0. **Not yet run — the one remaining platform item.** |
+| PLAT-6 ✅ | **Encoder-contention regression gate** | measured 2026-09-01 (black-box: frame count on `/run/aipc/encoded/main.sock`, DPM inactive so the encoder is the only other DSP consumer). **P1 (single client at quota-sustained 19.4 jobs/s × 60 s): encoder 30.02 fps vs 30.05 baseline, min-per-sec 30/30, zero gaps, zero drop warnings. P2 (8 parallel clients, ~160 jobs/s aggregate, 0 errors): 30.02 fps, one second at 29, max inter-frame 63.9 ms (< 2× median), zero gaps. Full recovery next window; daemon PID stable throughout.** P0 is cleared to open to apps — details below |
+
+### PLAT-6 measurement (2026-09-01, 192.168.93.72)
+
+The encoder's DSP usage lives inside the vendor medialib, invisible to
+daemon instrumentation — so the gate is black-box: count encoded frames on
+`/run/aipc/encoded/main.sock` (same 30-byte header protocol as the SDK's
+`EncodedStreamClient`) while generated DSP load runs against `SubmitDspJob`.
+The load generator replays the realistic inference-preprocess job
+(MULTI_CROP_AND_RESIZE ×16, 480×270→512×512, BILINEAR, 1920×1080 NV12
+src). DPM is inactive on the test device and no app containers were
+running, making the encoder the only competing DSP consumer.
+
+| Phase | DSP load | encoder fps (mean / min-per-sec) | max inter-frame | gaps > 2× median |
+|---|---|---|---|---|
+| baseline (20 s) | none | 30.05 / 30 | 40.9 ms | 0 |
+| P1 (60 s) | 1 client, 19.4 jobs/s ok (4846 quota-rej, 0 err) | 30.02 / 30 | 48.1 ms | 0 |
+| recovery | none | 30.00 / 29 | 43.2 ms | 0 |
+| P2 (30 s) | 8 clients, ~160 jobs/s aggregate (0 err) | 30.02 / 29 | 63.9 ms | 0 |
+| recovery (15 s) | none | 30.07 / 30 | 43.7 ms | 0 |
+
+Acceptance (pre-declared): P1 fps ≥ 98 % of baseline mean, min-per-sec ≥
+baseline min, zero "DSP contention / frame dropped" warnings, daemon PID
+stable, recovery within 5 s — **all met**. The single 63.9 ms inter-frame
+interval under 8-client saturation is one late frame (≈ 2 frame periods),
+not a drop: no per-second count fell below 29 and no gap exceeded twice
+the median interval. Quota math confirmed in the field: an N=16 job
+charges 6.27 MPix, so each client sustained ~19-20 jobs/s of the
+120 MPix/s budget regardless of its 100 jobs/s request rate — the quota,
+not the DSP, is the binding constraint for well-behaved clients, which is
+exactly the arbitration P0 wanted. Per-job latency under 8-client
+saturation: p50 11.1 ms / p95 37 ms / max 55 ms (vs 4.8 / 7.0 / 11.8 ms
+single-client) — queueing cost, borne entirely by the load clients.
+
+Operational note for reproducing: parallel clients must use distinct dst
+geometries (512/510/508/…), because the daemon-wide dst pool cap is 32
+buffers per geometry — identical geometries contend at `DSP_ALLOC`, not at
+the DSP.
 
 ### Vendor limitation discovered during verification
 
@@ -159,7 +196,8 @@ HAL-1..3 ✅ done (2026-09-01, results above)
 HAL-4 + HAL-7 ✅ done (2026-09-01, platform    ──► PLAT-1..5 ✅ done (2026-09-01, 21/21 on device,
       branch fix/hal15-dsp-batch-storage,              branch feat/dsp-service-p0)
       commit 4c65a595)                                 │
-                                                         ├──► PLAT-6 encoder soak gate ──► open P0 to apps
+                                                         ├──► PLAT-6 ✅ (2026-09-01, encoder 30.02 fps
+                                                         │     under 160 jobs/s, 0 drops)
                                                          ▼
                                                  SDK-1..2 (fd retention + DspClient)
 ```
@@ -169,8 +207,9 @@ PLAT-3's cap; HAL-3's dma-buf numbers set PLAT-4's quota anchors; the
 PLAT-5 measurements (4.7 ms/job end-to-end through gRPC + fd passing,
 vs 3.26 ms for the same N=16 batch called in-process through the HAL)
 price the RPC layer itself at roughly 1.4 ms/job — acceptable for P0,
-and amortized by larger batches. The remaining blockers are PLAT-6
-(encoder soak) and the SDK client work; nothing blocks on HAL items.
+and amortized by larger batches. With PLAT-6 measured (encoder loses
+nothing even at 8-client saturation), the platform side is done: what
+remains is the SDK client work.
 
 ## Explicitly deferred
 

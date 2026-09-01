@@ -287,3 +287,18 @@ Client rules: always set `interpolation` explicitly on multi-crop;
 default to BILINEAR. The clean HAL now logs the vendor `dsp_status` by
 name before collapsing to `HAL_ERR_RESULT`, making this class of
 failure diagnosable from journalctl alone.
+
+### Encoder-contention gate (PLAT-6, 2026-09-01)
+
+Black-box: frame count on `/run/aipc/encoded/main.sock` while generated
+`SubmitDspJob` load runs (MULTI_CROP ×16, the inference-preprocess
+shape; DPM inactive, no containers — encoder is the only competing DSP
+consumer). Baseline 30.05 fps → 30.02 fps under a single quota-sustained
+client (19.4 jobs/s) → 30.02 fps under 8 parallel clients (~160 jobs/s
+aggregate, 0 errors), worst inter-frame interval 63.9 ms, zero gaps,
+zero drop warnings, instant recovery, daemon PID stable. The quota —
+not the DSP — binds well-behaved clients (6.27 MPix/job → ~19-20 jobs/s
+of the 120 MPix/s budget); saturation cost lands on the load clients'
+latency (p50 4.8 → 11.1 ms), not on the encoder. Full table in
+[hardware-first-roadmap.md](hardware-first-roadmap.md#plat-6-measurement-2026-09-01-1921689372).
+**P0 is cleared to open to apps.**
