@@ -167,7 +167,7 @@ TEST(WireProtocol, AudioEncHeaderRoundTrip) {
 // audio tails, and (2) instead of emitting garbage sample_rate/channels/bits,
 // report unknown (0) and surface the video-tail 64-bit dts as dts_ns.
 TEST(WireProtocol, AudioDecodeFormatGoldenDeviceVideoLayout) {
-    // Raw 30-byte head of frame 0 captured on a live NE503 (192.168.93.72,
+    // Raw 30-byte head of frame 0 captured on a live NE503 (a test device,
     // 2026-08-19): total=2078, codec=pcm, pts=0x00004b9214fa5ce6=83090789260518,
     // width=0, height=0, dts==pts. Audio-view values would be rate=0, ch=0,
     // bits=low32(pts)=0x14fa5ce6, fsize=high32(pts)=0x4b92 != payload 2048.

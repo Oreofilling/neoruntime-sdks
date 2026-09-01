@@ -82,7 +82,7 @@ http://<device-ip>:8080/docs/
 
 ```bash
 # 部署到远程设备 (SSH密钥认证)
-./scripts/deploy_sdk_docs.sh -t root@192.168.1.100
+./scripts/deploy_sdk_docs.sh -t root@192.0.2.100
 
 # 使用密码认证
 SSHPASS='password' ./scripts/deploy_sdk_docs.sh -t root@device

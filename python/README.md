@@ -341,7 +341,7 @@ Device control client for controlling camera peripherals.
 - `get_af_measurement()` - Read AF statistics, returns `AfMeasurement(focus_energy, mean_luma, ...)`
 
 > **Known device limitation:** on current firmware (verified on
-> 192.168.93.72, 2026-08) the lens HAL bridge rejects `set_af_windows`
+> a test device, 2026-08) the lens HAL bridge rejects `set_af_windows`
 > and `get_af_measurement` with *"not yet supported"*. The SDK-side
 > plumbing is complete; both calls will start working once the device
 > firmware adds bridge support. Oneshot, zoom-follow, status, and cancel

@@ -189,7 +189,7 @@ class TestTsWriter:
         # PES total = 14B header + 353B data = 367 = 184 + 183. The 183B
         # tail must be packed, not rejected: it leaves exactly one byte
         # for a length-only adaptation field. Live 4K frames on
-        # 192.168.93.72 hit this ("TS payload overflow with adaptation
+        # a test device hit this ("TS payload overflow with adaptation
         # field") whenever pes_len % 184 == 183.
         first = enc(0, 0, key=True, size=100)
         tail_frame = enc(1, FRAME_MS, size=353)
