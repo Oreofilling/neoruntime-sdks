@@ -7,6 +7,7 @@ mirroring the daemon's caps.
 """
 
 import os
+import socket
 import struct
 from unittest import mock
 
@@ -21,8 +22,11 @@ from neoruntime_ipc_sdk.dsp import (
     DspClient,
     DspError,
     alloc_request_bytes,
+    import_request_bytes,
     parse_alloc_resp,
+    parse_import_resp,
 )
+from neoruntime_ipc_sdk.media import Frame, FrameHandle
 from neoruntime_ipc_sdk.proto import camera_pb2
 
 ALLOC_FMT = "<IIIIII"  # type, size, w, h, fmt, count
@@ -416,3 +420,215 @@ class TestLifecycle:
         with DspClient() as client:
             pass
         assert client._stub is None
+
+
+# ------------------------------------------------- zero-copy handle source --
+def make_handle(width, height, fmt="NV12", frame_id=77):
+    """memfd-backed FrameHandle mimicking a keep-fd camera frame."""
+    planes = 2 if fmt == "NV12" else 1
+    if fmt == "NV12":
+        row_w, rows = (width, width), (height, height // 2)
+    elif fmt in ("RGB", "BGR"):
+        row_w, rows = (width * 3,), (height,)
+    else:
+        row_w, rows = (width,), (height,)
+    fds = [memfd(row_w[p] * rows[p]) for p in range(planes)]
+    strides = tuple(row_w) + (0,) * (3 - planes)
+    sizes = tuple(row_w[p] * rows[p] for p in range(planes)) + (0,) * (3 - planes)
+    return FrameHandle(fds, strides, sizes, frame_id,
+                       width=width, height=height, format=fmt)
+
+
+def handle_client():
+    """Client wired for handle-source tests: import mocked to id 4242."""
+    client = DspClient()
+    calls = patched_alloc(client)
+    stub = RecordingStub()
+    client._stub = stub
+    client._import_source = mock.Mock(return_value=4242)
+    client._send_release = mock.Mock()
+    return client, calls, stub
+
+
+class TestImportWireCodec:
+    def test_import_request_layout(self):
+        raw = import_request_bytes(3840, 2160, 0, 2,
+                                   [3840, 1920, 0], [3317760, 1658880, 0])
+        assert len(raw) == 48
+        assert struct.unpack("<12I", raw) == (
+            10, 48, 3840, 2160, 0, 2, 3840, 1920, 0, 3317760, 1658880, 0)
+
+    def test_parse_import_resp_roundtrip(self):
+        ok = struct.pack("<IIi4xq", 11, 24, 0, 4242)
+        assert parse_import_resp(ok) == (0, 4242)
+        bad = struct.pack("<IIi4xq", 11, 24, -1, -1)
+        assert parse_import_resp(bad) == (-1, -1)
+
+    def test_parse_import_resp_rejects_wrong_type_and_short(self):
+        with pytest.raises(DspError):
+            parse_import_resp(struct.pack("<IIi4xq", 5, 24, 0, 1))
+        with pytest.raises(DspError):
+            parse_import_resp(b"\x0b\x00\x00\x00")
+
+
+class TestHandleSource:
+    def test_resize_hw_uses_imported_id_without_src_alloc(self):
+        client, calls, stub = handle_client()
+        out = client.resize_hw(make_handle(64, 32), 32, 16)
+        req = stub.requests[0]
+        assert req.src_buffer_id == 4242
+        assert list(req.dst_buffer_ids) == [1000]
+        # only the destination was allocated — the source never copied in
+        assert [(c[0], c[1]) for c in calls] == [(32, 16)]
+        client._import_source.assert_called_once()
+        # import freed, and the temp dst pool too — in that order
+        assert [c.args[0] for c in client._send_release.call_args_list] \
+            == [4242, 1000]
+        assert out.shape == (16 * 3 // 2, 32)  # nv12 read-back layout
+        assert client.last_used_hw is True
+
+    def test_frame_with_handle_and_frame_with_pixels_only(self):
+        client, calls, stub = handle_client()
+        frame = Frame(sequence=1, timestamp_ns=2, width=64, height=32,
+                      format="NV12", image=None, handle=make_handle(64, 32))
+        client.resize_hw(frame, 32, 16)
+        assert stub.requests[0].src_buffer_id == 4242
+
+        client2, calls2, stub2 = handle_client()
+        frame2 = Frame(sequence=1, timestamp_ns=2, width=64, height=32,
+                       format="NV12", image=nv12_array(64, 32))
+        client2.resize_hw(frame2, 32, 16, fmt="nv12")
+        assert stub2.requests[0].src_buffer_id == 1000  # copy-in path
+        assert (64, 32) in [(c[0], c[1]) for c in calls2]
+
+    def test_pixel_frame_format_metadata_wins_over_shape_inference(self):
+        # a 2D NV12 array is shape-ambiguous (gray8?); a Frame says "NV12"
+        # and that metadata must pick nv12 without an explicit fmt=
+        client, calls, stub = handle_client()
+        frame = Frame(sequence=1, timestamp_ns=2, width=64, height=32,
+                      format="NV12", image=nv12_array(64, 32))
+        client.resize_hw(frame, 32, 16)
+        assert (64, 32) in [(c[0], c[1]) for c in calls]  # nv12 geometry,
+        # not the gray8 reading (64x96) a bare array would infer
+
+    def test_multi_crop_hw_on_handle_bounds_checked_against_frame(self):
+        client, calls, stub = handle_client()
+        client.multi_crop_hw(make_handle(64, 32),
+                             [(0, 0, 32, 16, 16, 16), (32, 0, 32, 16, 16, 16)])
+        req = stub.requests[0]
+        assert req.src_buffer_id == 4242
+        assert len(req.dst_buffer_ids) == 2
+        with pytest.raises(DspError):
+            client.multi_crop_hw(make_handle(64, 32),
+                                 [(48, 0, 32, 16, 16, 16)])  # outside 64x32
+
+    def test_handle_error_paths(self):
+        client, *_ = handle_client()
+        # no handle, no pixels
+        with pytest.raises(DspError, match="keep_fd"):
+            client.resize_hw(Frame(1, 2, 64, 32, "NV12", None), 32, 16)
+        # closed handle
+        closed = make_handle(64, 32)
+        closed.close()
+        with pytest.raises(DspError, match="clos"):
+            client.resize_hw(closed, 32, 16)
+        # src_pool is meaningless for an imported source
+        client2, *_ = handle_client()
+        with pytest.raises(DspError, match="src_pool"):
+            client2.resize_hw(make_handle(64, 32), 32, 16,
+                              src_pool=make_pool(client2, 64, 32, "nv12", 1))
+        # frame format the DSP cannot take as-is
+        with pytest.raises(DspError, match="NV21"):
+            client.resize_hw(make_handle(64, 32, fmt="NV21"), 32, 16)
+        # explicit fmt disagreeing with the frame
+        with pytest.raises(DspError, match="format"):
+            client.resize_hw(make_handle(64, 32), 32, 16, fmt="gray8")
+
+    def test_cpu_fallback_refused_for_handle_source(self):
+        client, *_ = handle_client()
+        client._submit_job = mock.Mock(
+            side_effect=dsp._DspUnavailable("SubmitDspJob not in daemon"))
+        with pytest.raises(DspError, match="zero-copy"):
+            client.resize_hw(make_handle(64, 32), 32, 16)
+
+
+# ------------------------------------------------------- import exchange --
+class FakeSock:
+    """Records sendmsg; replies are fed via the patched _recvmsg_with_fds."""
+
+    def __init__(self):
+        self.sent = []
+        self.timeout = None
+
+    def sendmsg(self, buffers, ancdata, flags=0, address=None):
+        self.sent.append((b"".join(buffers), ancdata))
+
+    def settimeout(self, t):
+        self.timeout = t
+
+
+def chunked_recv(chunks):
+    """_recvmsg_with_fds stand-in yielding fixed chunks regardless of the
+    requested bufsize (exercises the accumulating loops)."""
+    it = iter(chunks)
+
+    def _recv(sock, bufsize, max_fds=0):
+        data = next(it)
+        assert len(data) <= bufsize
+        return data, []
+
+    return _recv
+
+
+class TestImportExchange:
+    def _client(self, monkeypatch, chunks):
+        client = DspClient()
+        client._sock = FakeSock()
+        monkeypatch.setattr(dsp, "_recvmsg_with_fds", chunked_recv(chunks))
+        return client
+
+    def test_import_sends_fds_and_skips_ok_ack(self, monkeypatch):
+        handle = make_handle(64, 32)
+        ok_ack = struct.pack("<II", 5, 12) + b"\x00" * 4  # control ack, 4B body
+        resp = struct.pack("<IIi4xq", 11, 24, 0, 555)
+        client = self._client(monkeypatch, [ok_ack[:5], ok_ack[5:8],
+                                            ok_ack[8:], resp[:8], resp[8:]])
+        import_id = client._import_source(handle, 64, 32, "nv12")
+        assert import_id == 555
+
+        payload, anc = client._sock.sent[0]
+        assert payload == import_request_bytes(
+            64, 32, 0, 2, [64, 64, 0], [64 * 32, 64 * 16, 0])
+        assert len(anc) == 1
+        level, ctype, cdata = anc[0]
+        assert level == socket.SOL_SOCKET and ctype == socket.SCM_RIGHTS
+        assert struct.unpack("2i", cdata) == tuple(handle.fds)
+        # our fd copies are NOT closed by the send — the handle owns them
+        for fd in handle.fds:
+            assert os.fstat(fd).st_size > 0
+        handle.close()
+
+    def test_import_rejects_error_code(self, monkeypatch):
+        resp = struct.pack("<IIi4xq", 11, 24, -1, -1)
+        client = self._client(monkeypatch, [resp[:8], resp[8:]])
+        with pytest.raises(DspError) as ei:
+            client._import_source(make_handle(64, 32), 64, 32, "nv12")
+        assert ei.value.code == -1
+
+    def test_import_rejects_unexpected_stream_message(self, monkeypatch):
+        # a FRAME on the DSP socket means protocol desync — never skip it
+        frame_hdr = struct.pack("<II", 3, 16)
+        client = self._client(monkeypatch,
+                              [frame_hdr, b"\x00" * 8])
+        with pytest.raises(DspError, match="type 3"):
+            client._import_source(make_handle(64, 32), 64, 32, "nv12")
+
+    def test_import_timeout_mentions_daemon_version(self, monkeypatch):
+        def stall(sock, bufsize, max_fds=0):
+            raise socket.timeout("timed out")
+
+        client = DspClient()
+        client._sock = FakeSock()
+        monkeypatch.setattr(dsp, "_recvmsg_with_fds", stall)
+        with pytest.raises(DspError, match="DSP_IMPORT"):
+            client._import_source(make_handle(64, 32), 64, 32, "nv12")

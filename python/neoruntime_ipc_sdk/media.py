@@ -80,10 +80,11 @@ def _encode_jpeg(rgb: np.ndarray, quality: int = 85) -> bytes:
         ok, buf = cv2.imencode(
             ".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
         if not ok:
-            raise IOError("cv2.imencode failed to encode JPEG")
+            raise OSError("cv2.imencode failed to encode JPEG")
         return buf.tobytes()
     except ImportError:
         import io
+
         from PIL import Image
         out = io.BytesIO()
         Image.fromarray(rgb, mode="RGB").save(
@@ -99,18 +100,28 @@ class FrameHandle:
     daemon's buffer-recycling ticket — is deferred until :meth:`close`.
     CPU access to the pixels must go through :meth:`Frame.to_array`,
     which applies the required DMA_BUF_IOCTL_SYNC read fences. The fds
-    can also be handed to a future DspClient job as-is for a zero-copy
-    hardware path.
+    can also be handed to a :class:`~neoruntime_ipc_sdk.dsp.DspClient`
+    job as-is for a zero-copy hardware path (``resize_hw(frame, ...)``);
+    the geometry carried here is what the daemon needs to import them.
     """
 
     def __init__(self, fds: List[int], strides, plane_sizes, frame_id: int,
-                 on_release: Optional[Callable[["FrameHandle"], None]] = None):
+                 on_release: Optional[Callable[["FrameHandle"], None]] = None,
+                 width: int = 0, height: int = 0, format: str = ""):
         self.fds = list(fds)
         self.strides = tuple(strides)
         self.plane_sizes = tuple(plane_sizes)
         self.frame_id = frame_id
+        self.width = width
+        self.height = height
+        self.format = format
         self._on_release = on_release
         self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        """True once :meth:`close` ran (fds gone, frame released)."""
+        return self._closed
 
     @property
     def fd(self) -> int:
@@ -141,6 +152,7 @@ class FrameHandle:
 
     def __repr__(self) -> str:
         return (f"FrameHandle(frame_id={self.frame_id}, "
+                f"{self.width}x{self.height} {self.format}, "
                 f"fds={len(self.fds)}, released={self._closed})")
 
 
@@ -695,7 +707,7 @@ class FdMediaClient:
         self._lock = threading.Lock()
         # Retained keep-fd handles. WeakSet: tracking without extending
         # lifetime — a dropped Frame is GC-released back to the daemon.
-        self._retained: "weakref.WeakSet[FrameHandle]" = weakref.WeakSet()
+        self._retained: weakref.WeakSet[FrameHandle] = weakref.WeakSet()
 
     # PLACEHOLDER_FDMEDIACLIENT_METHODS
 
@@ -802,6 +814,7 @@ class FdMediaClient:
             handle = FrameHandle(
                 fds=fds, strides=strides, plane_sizes=sizes,
                 frame_id=frame_id, on_release=_on_release,
+                width=width, height=height, format=fmt_name,
             )
             self._retained.add(handle)
             logger.debug(
