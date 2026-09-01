@@ -146,7 +146,8 @@ def test_keep_fd_multi_plane_concatenates(chan, client):
 def test_to_array_materializes_with_sync_fences(chan, client, monkeypatch):
     ours, peer = chan
     calls = []
-    monkeypatch.setattr(media, "_dma_buf_sync",
+    from neoruntime_ipc_sdk import frame as frame_mod
+    monkeypatch.setattr(frame_mod, "_dma_buf_sync",
                         lambda fd, flags: calls.append((fd, flags)))
     fd = make_plane_fd(bytes(NV12_LEN))
     try:

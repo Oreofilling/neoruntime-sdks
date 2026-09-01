@@ -54,7 +54,7 @@ except ImportError:  # pragma: no cover
 
 from ._transport import GrpcClient
 from ._transport import recvmsg_with_fds as _recvmsg_with_fds
-from .media import (
+from .frame import (
     _DMA_BUF_SYNC_END,
     _DMA_BUF_SYNC_READ,
     _DMA_BUF_SYNC_START,
