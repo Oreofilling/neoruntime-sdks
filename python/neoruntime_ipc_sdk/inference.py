@@ -7,165 +7,39 @@ import logging
 import queue
 import threading
 from concurrent.futures import Future
-from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import grpc
 import numpy as np
 
 from .config import Config
+from .inference_codec import (  # noqa: F401 — re-exported for API compat
+    _numpy_to_tensor,
+    _parse_infer_response,
+    _parse_post_result,
+    _tensor_to_numpy,
+)
+from .inference_genai import GenAiMixin  # noqa: F401 — mixed into client
+from .inference_types import (  # noqa: F401 — re-exported for API compat
+    BatchInferItem,
+    BoundingBox,
+    Classification,
+    DepthMap,
+    DetectedObject,
+    Embedding,
+    InferenceResult,
+    LandmarkPoint,
+    LandmarkSet,
+    ModelInfo,
+    OcrLine,
+    SegmentationMask,
+)
 from .proto import inference_pb2, inference_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class BoundingBox:
-    x: float
-    y: float
-    width: float
-    height: float
-    
-    def to_xyxy(self) -> Tuple[float, float, float, float]:
-        return (self.x, self.y, self.x + self.width, self.y + self.height)
-    
-    def to_xywh(self) -> Tuple[float, float, float, float]:
-        return (self.x, self.y, self.width, self.height)
-
-
-@dataclass
-class DetectedObject:
-    label: str
-    score: float
-    bbox: BoundingBox
-    class_id: int = 0
-    track_id: Optional[int] = None
-
-
-@dataclass
-class LandmarkPoint:
-    x: float
-    y: float
-    confidence: float = 1.0
-
-
-@dataclass
-class LandmarkSet:
-    type: str
-    points: List[LandmarkPoint] = field(default_factory=list)
-
-
-@dataclass
-class Classification:
-    type: str
-    class_id: int
-    label: str
-    confidence: float
-
-
-@dataclass
-class SegmentationMask:
-    class_id: int
-    label: str
-    confidence: float
-    bbox: BoundingBox
-    mask_rle: bytes
-    mask_width: int
-    mask_height: int
-
-    def to_numpy_mask(self) -> np.ndarray:
-        """Decode RLE to HxW bool numpy array."""
-        mask = np.zeros(self.mask_width * self.mask_height, dtype=bool)
-        i = 0
-        data = self.mask_rle
-        while i < len(data):
-            # Decode varint
-            def read_varint(pos):
-                val = 0
-                shift = 0
-                while pos < len(data):
-                    b = data[pos]
-                    val |= (b & 0x7F) << shift
-                    pos += 1
-                    if not (b & 0x80):
-                        break
-                    shift += 7
-                return val, pos
-            start, i = read_varint(i)
-            length, i = read_varint(i)
-            mask[start:start + length] = True
-        return mask.reshape(self.mask_height, self.mask_width)
-
-
-@dataclass
-class OcrLine:
-    text: str
-    confidence: float
-    bbox: BoundingBox
-
-
-@dataclass
-class Embedding:
-    dim: int
-    data: List[float]
-
-
-@dataclass
-class DepthMap:
-    width: int
-    height: int
-    data: np.ndarray  # float32 (H, W)
-
-
-@dataclass
-class InferenceResult:
-    frame_sequence: int
-    timestamp_ns: int
-    objects: List[DetectedObject] = field(default_factory=list)
-    classifications: List[Classification] = field(default_factory=list)
-    landmarks: List[LandmarkSet] = field(default_factory=list)
-    masks: List[SegmentationMask] = field(default_factory=list)
-    ocr_lines: List[OcrLine] = field(default_factory=list)
-    embeddings: List[Embedding] = field(default_factory=list)
-    depth_maps: List[DepthMap] = field(default_factory=list)
-    raw_outputs: Optional[List[np.ndarray]] = None
-    infer_time_us: int = 0
-    queue_time_us: int = 0
-    hw_infer_time_us: int = 0  # Pure NPU hardware latency (microseconds), 0 if unavailable
-    status_message: str = ""  # Diagnostic: "simulation" if no frame source
-    
-    def has_person(self) -> bool:
-        return any(obj.label == "person" for obj in self.objects)
-    
-    def count_by_label(self, label: str) -> int:
-        return sum(1 for obj in self.objects if obj.label == label)
-    
-    def get_objects_by_label(self, label: str) -> List[DetectedObject]:
-        return [obj for obj in self.objects if obj.label == label]
-
-
-@dataclass
-class ModelInfo:
-    model_id: str
-    model_path: str
-    version: str = ""
-    inputs: List[Dict] = field(default_factory=list)
-    outputs: List[Dict] = field(default_factory=list)
-    estimated_tops: float = 0.0
-    estimated_memory: int = 0
-    load_timestamp: int = 0
-
-
-@dataclass
-class BatchInferItem:
-    """A single inference request within a batch."""
-    image: np.ndarray
-    model_id: str
-    timeout_ms: int = 5000
-    priority: int = 4
-
-
-class InferenceClient:
+class InferenceClient(GenAiMixin):
     """
     AI Inference Client
 
@@ -410,6 +284,20 @@ class InferenceClient:
             hw_infer_time_us=getattr(response, 'hw_infer_time_us', 0),
             status_message=response.status.message if not response.status.success else "",
         )
+
+    # -- codec (implementation in inference_codec; kept as methods for
+    # backward compat with existing callers/tests) --------------------------
+    def _numpy_to_tensor(self, arr: np.ndarray, name: str = "") -> inference_pb2.Tensor:
+        return _numpy_to_tensor(arr, name)
+
+    def _tensor_to_numpy(self, tensor: inference_pb2.Tensor) -> np.ndarray:
+        return _tensor_to_numpy(tensor)
+
+    def _parse_post_result(self, post_result: inference_pb2.PostResult) -> tuple:
+        return _parse_post_result(post_result)
+
+    def _parse_infer_response(self, response: inference_pb2.InferResponse) -> InferenceResult:
+        return _parse_infer_response(response)
 
     def infer(self,
               image: np.ndarray,
@@ -919,166 +807,3 @@ class InferenceClient:
             raise RuntimeError(f"UpdatePostprocessConfig failed: {response.status.message}")
 
         return True
-
-    def encode_text(self, text: str, timeout_ms: int = 5000) -> List[float]:
-        """Encode a text string to a CLIP embedding via NPU.
-
-        Returns a list of floats (512-dim for ViT-B/32).
-        """
-        if self.stub is None:
-            self.connect()
-
-        request = inference_pb2.EncodeTextRequest(text=text)
-        response = self._invoke(
-            self.stub.EncodeText,
-            request,
-            timeout=timeout_ms / 1000,
-            result_timeout=timeout_ms / 1000 + 5,
-        )
-
-        if response.status.code != 0:
-            raise RuntimeError(f"EncodeText failed: {response.status.message}")
-
-        return list(response.embedding.data)
-
-    # ── GenAI (LLM/VLM) ──────────────────────────────────────────────────────
-
-    def genai_create_session(self, hef_path: str, kind: str = "llm",
-                             lora_name: str = "",
-                             optimize_memory: bool = False) -> str:
-        """Create a GenAI (LLM/VLM) session.
-
-        Args:
-            hef_path: Path to the HEF model file on the device.
-            kind: "llm" or "vlm".
-            lora_name: Optional LoRA adapter name.
-            optimize_memory: Enable memory-optimized tokenization.
-
-        Returns:
-            session_id string.
-        """
-        if self.stub is None:
-            self.connect()
-
-        host_path = Config.translate_path_to_host(hef_path)
-        kind_map = {"llm": 0, "vlm": 1}
-        request = inference_pb2.GenaiCreateSessionRequest(
-            hef_path=host_path,
-            kind=kind_map.get(kind, 0),
-            lora_name=lora_name,
-            optimize_memory=optimize_memory
-        )
-        response = self._invoke(
-            self.stub.GenaiCreateSession,
-            request,
-            timeout=300,
-            result_timeout=305,
-        )
-
-        if response.status.code != 0:
-            raise RuntimeError(f"GenAI create session failed: {response.status.message}")
-
-        return response.session_id
-
-    def genai_destroy_session(self, session_id: str) -> None:
-        """Destroy a GenAI session and free resources."""
-        if self.stub is None:
-            self.connect()
-
-        # hef_path is reused as session_id carrier for destroy
-        request = inference_pb2.GenaiCreateSessionRequest(hef_path=session_id)
-        response = self._invoke(
-            self.stub.GenaiDestroySession,
-            request,
-            timeout=10,
-            result_timeout=15,
-        )
-
-        if response.code != 0:
-            raise RuntimeError(f"GenAI destroy session failed: {response.message}")
-
-    def genai_generate(self, session_id: str, messages: List[str],
-                       images: Optional[List[bytes]] = None,
-                       stop_tokens: Optional[List[str]] = None,
-                       temperature: float = 0.0,
-                       top_p: float = 1.0,
-                       top_k: int = 0,
-                       max_tokens: int = 512,
-                       do_sample: bool = False) -> Iterator[str]:
-        """Stream generated tokens from a GenAI session.
-
-        Args:
-            session_id: Session from genai_create_session().
-            messages: List of JSON-encoded chat messages.
-            images: Optional RGB image frames for VLM.
-            stop_tokens: Optional stop sequences.
-            temperature, top_p, top_k, max_tokens, do_sample: Generation params.
-
-        Yields:
-            Token strings as they are generated.
-        """
-        if self.stub is None:
-            self.connect()
-
-        request = inference_pb2.GenaiGenerateRequest(
-            session_id=session_id,
-            messages_json=messages,
-            image_frames=images or [],
-            stop_tokens=stop_tokens or [],
-        )
-        if do_sample or temperature > 0 or max_tokens != 512:
-            request.params.temperature = temperature
-            request.params.top_p = top_p
-            request.params.top_k = top_k
-            request.params.max_generated_tokens = max_tokens
-            request.params.do_sample = do_sample
-
-        # Bridge the async server-stream to a sync generator via a queue.
-        q: queue.Queue[Any] = queue.Queue()
-        SENTINEL = object()
-
-        async def _pump():
-            call = self.stub.GenaiGenerate(request)
-            try:
-                async for resp in call:
-                    q.put(resp)
-            except asyncio.CancelledError:
-                cancel = getattr(call, "cancel", None)
-                if cancel:
-                    cancel()
-                raise
-            except Exception as e:
-                q.put(e)
-            finally:
-                q.put(SENTINEL)
-
-        pump_future = asyncio.run_coroutine_threadsafe(_pump(), self._loop)
-
-        try:
-            while True:
-                item = q.get()
-                if item is SENTINEL:
-                    return
-                if isinstance(item, Exception):
-                    raise item
-                resp = item
-                if resp.HasField('token'):
-                    yield resp.token
-                elif resp.HasField('finish'):
-                    break
-        finally:
-            if not pump_future.done():
-                pump_future.cancel()
-
-    def genai_abort(self, session_id: str) -> None:
-        """Abort an ongoing generation."""
-        if self.stub is None:
-            self.connect()
-
-        request = inference_pb2.GenaiAbortRequest(session_id=session_id)
-        self._invoke(
-            self.stub.GenaiAbort,
-            request,
-            timeout=5,
-            result_timeout=10,
-        )
