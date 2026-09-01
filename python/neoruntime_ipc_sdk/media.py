@@ -10,6 +10,9 @@ working unchanged.
 
 from __future__ import annotations
 
+# Historical module attribute (present in <=0.6.x) — kept for facade parity.
+import logging  # noqa: E402
+
 from ._transport import recvmsg_with_fds as _recvmsg_with_fds  # noqa: F401
 from ._transport import sendmsg_plain as _sendmsg_plain  # noqa: F401
 from .encoded import (  # noqa: F401  # noqa: F401
@@ -60,3 +63,5 @@ from .frame import (  # noqa: F401
     _materialize_handle,
     _resize_array,
 )
+
+logger = logging.getLogger("neoruntime_ipc_sdk.media")  # noqa: F401
