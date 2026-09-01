@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Iterator, Optional
 
-import grpc
+import grpc  # noqa: F401 — tests patch device.grpc.insecure_channel
 
+from ._transport import GrpcClient
 from .proto import device_pb2, device_pb2_grpc
 
 
@@ -90,7 +91,7 @@ class AfMeasurement:
     frame_id: int
 
 
-class DeviceClient:
+class DeviceClient(GrpcClient):
     """
     Device Control Client
     
@@ -107,41 +108,12 @@ class DeviceClient:
         dev.zoom_in()
         dev.focus_auto()
     """
-    
-    def __init__(self, endpoint: Optional[str] = None):
-        if endpoint is None:
-            endpoint = self._get_default_endpoint()
-        
-        self.endpoint = endpoint
-        self.channel: Optional[grpc.Channel] = None
-        self.stub: Optional[device_pb2_grpc.DeviceControlStub] = None
-    
-    def _get_default_endpoint(self) -> str:
-        import os
-        return os.getenv("DEVICE_CONTROL_ENDPOINT", "unix:///run/aipc/device-control.sock")
-    
-    def connect(self) -> None:
-        if self.channel is None:
-            self.channel = grpc.insecure_channel(self.endpoint)
-            self.stub = device_pb2_grpc.DeviceControlStub(self.channel)
 
-    @property
-    def connected(self) -> bool:
-        return self.channel is not None
-    
-    def close(self) -> None:
-        if self.channel:
-            self.channel.close()
-            self.channel = None
-            self.stub = None
-    
-    def __enter__(self):
-        self.connect()
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-    
+    _stub_factory = device_pb2_grpc.DeviceControlStub
+    _endpoint_env = "DEVICE_CONTROL_ENDPOINT"
+    _endpoint_default = "unix:///run/aipc/device-control.sock"
+    # Channel lifecycle, stub caching, connect/close/__enter__ live in GrpcClient.
+
     def set_white_light(self, level: int) -> None:
         if self.stub is None:
             self.connect()

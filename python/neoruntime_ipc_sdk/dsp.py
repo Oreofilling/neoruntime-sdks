@@ -52,7 +52,8 @@ try:  # cv2 accelerates the CPU fallback only; never required
 except ImportError:  # pragma: no cover
     _cv2 = None
 
-from .config import Config
+from ._transport import GrpcClient
+from ._transport import recvmsg_with_fds as _recvmsg_with_fds
 from .media import (
     _DMA_BUF_SYNC_END,
     _DMA_BUF_SYNC_READ,
@@ -61,7 +62,6 @@ from .media import (
     Frame,
     FrameHandle,
     _dma_buf_sync,
-    _recvmsg_with_fds,
 )
 from .proto import camera_pb2, camera_pb2_grpc
 
@@ -480,7 +480,7 @@ def _resolve_source(src, fmt: Optional[str]
     return width, height, handle, src_fmt
 
 
-class DspClient:
+class DspClient(GrpcClient):
     """Hardware resize/crop on the camera-daemon DSP service.
 
     Usage::
@@ -495,15 +495,15 @@ class DspClient:
     reads.
     """
 
+    _stub_factory = camera_pb2_grpc.CameraControlStub
+
     def __init__(self, sock_path: Optional[str] = None,
                  endpoint: Optional[str] = None):
+        super().__init__(endpoint)
         if sock_path is None:
             sock_path = os.getenv("CAMERA_SOCK_PATH", "/run/aipc/camera.sock")
         self.sock_path = sock_path
-        self.endpoint = endpoint or Config.get_camera_control_endpoint()
         self._sock: Optional[socket.socket] = None
-        self._channel: Optional[grpc.Channel] = None
-        self._stub: Optional[camera_pb2_grpc.CameraControlStub] = None
         self.last_used_hw: Optional[bool] = None
 
     # -- life cycle ----------------------------------------------------------
@@ -518,12 +518,6 @@ class DspClient:
                                f"{self.sock_path}: {e}") from e
             self._sock = sock
         return self._sock
-
-    def _connect(self) -> camera_pb2_grpc.CameraControlStub:
-        if self._stub is None:
-            self._channel = grpc.insecure_channel(self.endpoint)
-            self._stub = camera_pb2_grpc.CameraControlStub(self._channel)
-        return self._stub
 
     def close(self) -> None:
         """Close both transports. The daemon releases our DSP buffers."""

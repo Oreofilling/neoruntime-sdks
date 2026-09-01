@@ -9,12 +9,11 @@ Uses gRPC over Unix domain socket, consistent with other SDK clients.
 """
 
 import logging
-import os
 from dataclasses import dataclass
-from typing import Optional
 
-import grpc
+import grpc  # noqa: F401 — keeps a module-level grpc anchor like the other clients
 
+from ._transport import GrpcClient
 from .proto import camera_pb2, camera_pb2_grpc
 
 logger = logging.getLogger("neoruntime_ipc_sdk.overlay")
@@ -47,7 +46,7 @@ class OverlayConfig:
         return cfg
 
 
-class OverlayClient:
+class OverlayClient(GrpcClient):
     """
     AI Overlay Control Client
 
@@ -77,38 +76,14 @@ class OverlayClient:
                                   (default: unix:///run/aipc/camera-control.sock)
     """
 
-    def __init__(self, endpoint: Optional[str] = None):
-        self.endpoint = (
-            endpoint
-            or os.getenv("CAMERA_CONTROL_ENDPOINT", "unix:///run/aipc/camera-control.sock")
-        )
-        self.channel: Optional[grpc.Channel] = None
-        self.stub: Optional[camera_pb2_grpc.CameraControlStub] = None
-
-    def connect(self) -> None:
-        if self.channel is None:
-            self.channel = grpc.insecure_channel(
-                self.endpoint,
-                options=[("grpc.poll_strategy", 1)],  # epoll1; avoid sched_yield busy-poll
-            )
-            self.stub = camera_pb2_grpc.CameraControlStub(self.channel)
+    _stub_factory = camera_pb2_grpc.CameraControlStub
+    # Default endpoint comes from Config.get_camera_control_endpoint() (same
+    # env var and default this class used inline before).
 
     @property
-    def connected(self) -> bool:
-        return self.channel is not None
-
-    def close(self) -> None:
-        if self.channel:
-            self.channel.close()
-            self.channel = None
-            self.stub = None
-
-    def __enter__(self):
-        self.connect()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+    def channel_options(self):
+        # epoll1; avoid the sched_yield busy-poll of the default poll strategy
+        return [("grpc.poll_strategy", 1)]
 
     def _update(self, config: camera_pb2.AiOverlayConfig) -> None:
         if self.stub is None:

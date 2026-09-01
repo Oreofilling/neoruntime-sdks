@@ -10,10 +10,11 @@ Provides API for managing application containers:
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterator, List, Optional
+from typing import Iterator, List
 
-import grpc
+import grpc  # noqa: F401 — tests patch app.grpc.insecure_channel
 
+from ._transport import GrpcClient
 from .proto import app_pb2, app_pb2_grpc
 
 
@@ -62,7 +63,7 @@ class LogLine:
         return f"[{dt}] [{self.level.upper():5}] {self.message}"
 
 
-class AppClient:
+class AppClient(GrpcClient):
     """
     Application Container Management Client
 
@@ -84,39 +85,10 @@ class AppClient:
             print(line)
     """
 
-    def __init__(self, endpoint: Optional[str] = None):
-        if endpoint is None:
-            endpoint = self._get_default_endpoint()
-
-        self.endpoint = endpoint
-        self.channel: Optional[grpc.Channel] = None
-        self.stub: Optional[app_pb2_grpc.AppManagerStub] = None
-
-    def _get_default_endpoint(self) -> str:
-        import os
-        return os.getenv("APP_MANAGER_ENDPOINT", "unix:///run/aipc/app-manager.sock")
-
-    def connect(self) -> None:
-        if self.channel is None:
-            self.channel = grpc.insecure_channel(self.endpoint)
-            self.stub = app_pb2_grpc.AppManagerStub(self.channel)
-
-    @property
-    def connected(self) -> bool:
-        return self.channel is not None
-
-    def close(self) -> None:
-        if self.channel:
-            self.channel.close()
-            self.channel = None
-            self.stub = None
-
-    def __enter__(self):
-        self.connect()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+    _stub_factory = app_pb2_grpc.AppManagerStub
+    _endpoint_env = "APP_MANAGER_ENDPOINT"
+    _endpoint_default = "unix:///run/aipc/app-manager.sock"
+    # Channel lifecycle, stub caching, connect/close/__enter__ live in GrpcClient.
 
     def _parse_app_info(self, app: app_pb2.AppInfo) -> AppInfo:
         return AppInfo(

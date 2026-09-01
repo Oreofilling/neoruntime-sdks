@@ -8,8 +8,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
-import grpc
+import grpc  # noqa: F401 — tests patch events.grpc.insecure_channel
 
+from ._transport import GrpcClient
 from .proto import event_pb2, event_pb2_grpc
 
 
@@ -87,7 +88,7 @@ class TopicInfo:
     last_message_ts: int
 
 
-class EventClient:
+class EventClient(GrpcClient):
     """
     Event Bus Client
 
@@ -100,52 +101,29 @@ class EventClient:
         for event in events.subscribe("model/*/detections"):
             print(f"Received: {event.topic}")
     """
-    
+
+    _stub_factory = event_pb2_grpc.EventBusStub
+    _endpoint_env = "EVENT_BUS_ENDPOINT"
+    _endpoint_default = "unix:///run/aipc/event-bus.sock"
+    # Channel lifecycle and stub caching live in GrpcClient; close() below
+    # additionally joins the subscription threads.
+
     def __init__(self, endpoint: Optional[str] = None):
-        if endpoint is None:
-            endpoint = self._get_default_endpoint()
-        
-        self.endpoint = endpoint
-        self.channel: Optional[grpc.Channel] = None
-        self.stub: Optional[event_pb2_grpc.EventBusStub] = None
+        super().__init__(endpoint)
         self.app_id = self._get_app_id()
         self._subscriptions: List[threading.Thread] = []
         self._running = True
-    
-    def _get_default_endpoint(self) -> str:
-        import os
-        return os.getenv("EVENT_BUS_ENDPOINT", "unix:///run/aipc/event-bus.sock")
-    
+
     def _get_app_id(self) -> str:
         import os
         return os.getenv("APP_ID", "unknown")
-    
-    def connect(self) -> None:
-        if self.channel is None:
-            self.channel = grpc.insecure_channel(self.endpoint)
-            self.stub = event_pb2_grpc.EventBusStub(self.channel)
 
-    @property
-    def connected(self) -> bool:
-        return self.channel is not None
-    
     def close(self) -> None:
         self._running = False
         for t in self._subscriptions:
             if t.is_alive():
                 t.join(timeout=1.0)
-        
-        if self.channel:
-            self.channel.close()
-            self.channel = None
-            self.stub = None
-    
-    def __enter__(self):
-        self.connect()
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+        super().close()
     
     def publish(self, 
                 topic: str, 

@@ -15,6 +15,8 @@ from typing import Any, Callable, Dict, Iterator, List, Optional
 
 import numpy as np
 
+from ._transport import UdsStreamClient
+
 logger = logging.getLogger("neoruntime_ipc_sdk.media")
 
 
@@ -569,7 +571,7 @@ _ENC_HEADER_SIZE = 30
 _ENC_HEADER_FMT = "<I BB Q II Q"
 
 
-class EncodedStreamClient:
+class EncodedStreamClient(UdsStreamClient):
     """Read encoded video frames from an EncodedPublisher UDS socket.
 
     Connects to sockets like ``/run/aipc/encoded/main.sock`` and yields
@@ -583,32 +585,8 @@ class EncodedStreamClient:
                   f"keyframe={frame.is_keyframe} {len(frame.data)}B")
     """
 
-    def __init__(self, socket_path: str):
-        self.socket_path = socket_path
-        self._sock: Optional[socket.socket] = None
-        self._lock = threading.Lock()
-
-    def _connect(self) -> socket.socket:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(self.socket_path)
-        sock.settimeout(5.0)
-        logger.info("EncodedStreamClient: connected to %s", self.socket_path)
-        return sock
-
-    def _get_sock(self) -> socket.socket:
-        with self._lock:
-            if self._sock is None:
-                self._sock = self._connect()
-            return self._sock
-
-    def _recv_exact(self, sock: socket.socket, n: int) -> bytes:
-        buf = bytearray()
-        while len(buf) < n:
-            chunk = sock.recv(n - len(buf))
-            if not chunk:
-                raise ConnectionError("EncodedStreamClient: socket closed")
-            buf.extend(chunk)
-        return bytes(buf)
+    # Socket lifecycle, reconnect, get_frame/subscribe/on_frame and close live
+    # in UdsStreamClient; only the wire framing stays here.
 
     def _recv_frame(self, sock: socket.socket) -> Optional[EncodedFrame]:
         try:
@@ -644,94 +622,15 @@ class EncodedStreamClient:
             data=payload,
         )
 
-    def _reconnect(self) -> socket.socket:
-        with self._lock:
-            if self._sock is not None:
-                try:
-                    self._sock.close()
-                except OSError:
-                    pass
-                self._sock = None
-            self._sock = self._connect()
-            return self._sock
-
-    def get_frame(self, timeout_ms: int = 5000) -> Optional[EncodedFrame]:
-        """Get a single encoded frame. Returns None on timeout."""
-        sock = self._get_sock()
-        sock.settimeout(timeout_ms / 1000.0)
-        try:
-            return self._recv_frame(sock)
-        except socket.timeout:
-            return None
-
-    def subscribe(self, reconnect: bool = True) -> Iterator[EncodedFrame]:
-        """Yield encoded frames continuously. Auto-reconnects if enabled."""
-        sock = self._get_sock()
-        while True:
-            frame = self._recv_frame(sock)
-            if frame is not None:
-                yield frame
-                continue
-            if not reconnect:
-                break
-            logger.info("EncodedStreamClient: reconnecting...")
-            time.sleep(0.5)
-            try:
-                sock = self._reconnect()
-            except OSError:
-                logger.warning("EncodedStreamClient: reconnect failed, retrying in 2s")
-                time.sleep(2.0)
-
-    def on_frame(self, callback: Callable[[EncodedFrame], None]) -> threading.Thread:
-        """Start a background thread that calls callback for each frame."""
-        def _run():
-            for frame in self.subscribe():
-                try:
-                    callback(frame)
-                except Exception:
-                    logger.exception("EncodedStreamClient: callback error")
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        return t
-
-    def close(self) -> None:
-        with self._lock:
-            if self._sock is not None:
-                try:
-                    self._sock.close()
-                except OSError:
-                    pass
-                self._sock = None
-        logger.info("EncodedStreamClient: closed")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-
-
 import fcntl  # noqa: E402
 import mmap  # noqa: E402
 import socket as _socket  # noqa: E402
 import weakref  # noqa: E402
 
-
-def _recvmsg_with_fds(sock: _socket.socket, bufsize: int, max_fds: int = _FD_PUB_MAX_FDS):
-    """Receive data + SCM_RIGHTS file descriptors via recvmsg."""
-    fds_space = _socket.CMSG_SPACE(max_fds * struct.calcsize('i'))
-    data, ancdata, _flags, _addr = sock.recvmsg(bufsize, fds_space)
-    fds: list[int] = []
-    for cmsg_level, cmsg_type, cmsg_data in ancdata:
-        if cmsg_level == _socket.SOL_SOCKET and cmsg_type == _socket.SCM_RIGHTS:
-            n = len(cmsg_data) // struct.calcsize('i')
-            fds.extend(struct.unpack(f'{n}i', cmsg_data[:n * struct.calcsize('i')]))
-    return data, fds
-
-
-def _sendmsg_plain(sock: _socket.socket, data: bytes) -> None:
-    sock.sendall(data)
-
+# Shared SCM_RIGHTS helpers; aliased so tests can still patch the names on
+# this module (monkeypatch.setattr(media, "_recvmsg_with_fds", ...)).
+from ._transport import recvmsg_with_fds as _recvmsg_with_fds  # noqa: E402,F401
+from ._transport import sendmsg_plain as _sendmsg_plain  # noqa: E402,F401
 
 # DMA_BUF_IOCTL_SYNC (linux/dma-buf.h): _IOW('b', 0, u64) on 64-bit.
 _DMA_BUF_IOCTL_SYNC = 0x40086200

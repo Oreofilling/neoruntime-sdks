@@ -15,10 +15,10 @@ import logging
 import os
 import socket
 import struct
-import threading
-import time
 from dataclasses import dataclass
-from typing import Callable, Iterator, Optional
+from typing import Optional
+
+from ._transport import UdsStreamClient
 
 logger = logging.getLogger("neoruntime_ipc_sdk.audio_stream")
 
@@ -109,7 +109,7 @@ class AudioFrame:
         return 0.0
 
 
-class AudioStreamClient:
+class AudioStreamClient(UdsStreamClient):
     """
     Audio frame subscriber via Unix Domain Socket.
 
@@ -137,31 +137,10 @@ class AudioStreamClient:
                 "AUDIO_CAPTURE_SOCK_PATH",
                 "/run/aipc/encoded/audio_capture.sock",
             )
-        self.socket_path = socket_path
-        self._sock: Optional[socket.socket] = None
-        self._lock = threading.Lock()
+        super().__init__(socket_path)
 
-    def _connect(self) -> socket.socket:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(self.socket_path)
-        sock.settimeout(5.0)
-        logger.info("AudioStreamClient: connected to %s", self.socket_path)
-        return sock
-
-    def _get_sock(self) -> socket.socket:
-        with self._lock:
-            if self._sock is None:
-                self._sock = self._connect()
-            return self._sock
-
-    def _recv_exact(self, sock: socket.socket, n: int) -> bytes:
-        buf = bytearray()
-        while len(buf) < n:
-            chunk = sock.recv(n - len(buf))
-            if not chunk:
-                raise ConnectionError("AudioStreamClient: socket closed")
-            buf.extend(chunk)
-        return bytes(buf)
+    # Socket lifecycle, reconnect, get_frame/subscribe/on_frame and close live
+    # in UdsStreamClient; only the audio wire framing stays here.
 
     def _recv_frame(self, sock: socket.socket) -> Optional[AudioFrame]:
         try:
@@ -202,71 +181,3 @@ class AudioStreamClient:
             dts_ns=dts_ns,
         )
 
-    def _reconnect(self) -> socket.socket:
-        with self._lock:
-            if self._sock is not None:
-                try:
-                    self._sock.close()
-                except OSError:
-                    pass
-                self._sock = None
-            self._sock = self._connect()
-            return self._sock
-
-    def get_frame(self, timeout_ms: int = 5000) -> Optional[AudioFrame]:
-        """Get a single audio frame. Returns None on timeout."""
-        sock = self._get_sock()
-        sock.settimeout(timeout_ms / 1000.0)
-        try:
-            return self._recv_frame(sock)
-        except socket.timeout:
-            return None
-
-    def subscribe(self, reconnect: bool = True) -> Iterator[AudioFrame]:
-        """Yield audio frames continuously. Auto-reconnects if enabled."""
-        sock = self._get_sock()
-        while True:
-            frame = self._recv_frame(sock)
-            if frame is not None:
-                yield frame
-                continue
-
-            if not reconnect:
-                break
-
-            logger.info("AudioStreamClient: reconnecting...")
-            time.sleep(0.5)
-            try:
-                sock = self._reconnect()
-            except OSError:
-                logger.warning("AudioStreamClient: reconnect failed, retrying in 2s")
-                time.sleep(2.0)
-
-    def on_frame(self, callback: Callable[[AudioFrame], None]) -> threading.Thread:
-        """Start a background thread that calls callback for each frame."""
-        def _run():
-            for frame in self.subscribe():
-                try:
-                    callback(frame)
-                except Exception:
-                    logger.exception("AudioStreamClient: callback error")
-
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        return t
-
-    def close(self) -> None:
-        with self._lock:
-            if self._sock is not None:
-                try:
-                    self._sock.close()
-                except OSError:
-                    pass
-                self._sock = None
-        logger.info("AudioStreamClient: closed")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()

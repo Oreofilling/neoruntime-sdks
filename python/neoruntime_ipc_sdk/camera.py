@@ -9,9 +9,10 @@ import logging
 from dataclasses import dataclass
 from typing import List, Optional
 
-import grpc
+import grpc  # noqa: F401 — tests patch camera.grpc.insecure_channel
 
-from .config import Config
+from ._transport import GrpcClient
+from ._transport import check_status as _check_status
 from .proto import camera_pb2, camera_pb2_grpc
 
 logger = logging.getLogger("neoruntime_ipc_sdk.camera")
@@ -170,15 +171,7 @@ class PrivacyMaskSettings:
     dpm_color: int
 
 
-def _check_status(resp, label: str) -> None:
-    """Check a Status-bearing response."""
-    s = resp.status if hasattr(resp, "status") and hasattr(resp.status, "success") else resp
-    if hasattr(s, "success") and not s.success:
-        msg = s.message if hasattr(s, "message") else "unknown error"
-        raise RuntimeError(f"{label} failed: {msg}")
-
-
-class CameraClient:
+class CameraClient(GrpcClient):
     """
     Camera pipeline control client.
 
@@ -208,32 +201,10 @@ class CameraClient:
         caps = cam.get_capabilities()
     """
 
-    def __init__(self, endpoint: Optional[str] = None):
-        if endpoint is None:
-            endpoint = Config.get_camera_control_endpoint()
-        self.endpoint = endpoint
-        self._channel: Optional[grpc.Channel] = None
-        self._stub: Optional[camera_pb2_grpc.CameraControlStub] = None
-
-    def _connect(self) -> camera_pb2_grpc.CameraControlStub:
-        if self._stub is not None:
-            return self._stub
-        self._channel = grpc.insecure_channel(self.endpoint)
-        self._stub = camera_pb2_grpc.CameraControlStub(self._channel)
-        return self._stub
-
-    def close(self) -> None:
-        if self._channel is not None:
-            self._channel.close()
-            self._channel = None
-            self._stub = None
-
-    def __enter__(self):
-        self._connect()
-        return self
-
-    def __exit__(self, *args):
-        self.close()
+    # -- transport --
+    # Channel lifecycle, stub caching, connect/close/__enter__ live in
+    # GrpcClient; this class only carries the protocol methods.
+    _stub_factory = camera_pb2_grpc.CameraControlStub
 
     # -- ISP --
 

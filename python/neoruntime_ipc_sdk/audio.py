@@ -8,9 +8,7 @@ the camera-daemon gRPC service.
 from dataclasses import dataclass
 from typing import Iterator, List, Optional
 
-import grpc
-
-from .config import Config
+from ._transport import GrpcClient
 from .proto import camera_pb2, camera_pb2_grpc
 
 
@@ -32,7 +30,7 @@ class AudioStatus:
     mute: bool
 
 
-class AudioClient:
+class AudioClient(GrpcClient):
     """
     Audio control client for the camera-daemon audio HAL.
 
@@ -56,35 +54,9 @@ class AudioClient:
         audio.stop_capture()
     """
 
-    def __init__(self, endpoint: Optional[str] = None):
-        if endpoint is None:
-            endpoint = Config.get_camera_control_endpoint()
-        self.endpoint = endpoint
-        self._channel: Optional[grpc.Channel] = None
-        self._stub: Optional[camera_pb2_grpc.CameraControlStub] = None
-
-    def _connect(self):
-        if self._stub is not None:
-            return
-        self._channel = grpc.insecure_channel(self.endpoint)
-        self._stub = camera_pb2_grpc.CameraControlStub(self._channel)
-
-    def close(self):
-        if self._channel is not None:
-            self._channel.close()
-            self._channel = None
-            self._stub = None
-
-    def __enter__(self):
-        self._connect()
-        return self
-
-    def __exit__(self, *args):
-        self.close()
-
-    def _ensure_connected(self) -> camera_pb2_grpc.CameraControlStub:
-        self._connect()
-        return self._stub
+    # Channel lifecycle, stub caching, connect/close/__enter__ live in
+    # GrpcClient; this class only carries the protocol methods.
+    _stub_factory = camera_pb2_grpc.CameraControlStub
 
     # -- Device enumeration --
 
