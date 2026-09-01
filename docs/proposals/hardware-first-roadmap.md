@@ -185,40 +185,64 @@ new file (md5) is actually mapped, not a stale inode held open.
 
 | # | Item | Detail |
 |---|---|---|
-| SDK-1 | **Frame fd retention (opt-in)** ✅ done (2026-09-01) | `get_frame/subscribe(..., keep_fd=True)` returns a `FrameHandle` (dma-buf fds, per-plane strides/sizes, frame_id) with idempotent `release()`; `Frame.to_array()` lazily materializes, fenced with `DMA_BUF_IOCTL_SYNC`. Device-verified on 93.72 (4K NV12): 30/30 sustained retains at p50 23 ms; 2-frame × 2 s holds with live content; release after watchdog force-reclaim still unpins the window. **Constraints found:** retention budget ~4 s (FrameWatchdog warns ~4.2 s, force-reclaims buffers at ~5 s); `DMA_BUF_IOCTL_SYNC` returns EINVAL on these exporter fds (content coherent — SDK fences best-effort). **Three fd_publisher defects block fast releasers** — see note below |
+| SDK-1 | **Frame fd retention (opt-in)** ✅ done (2026-09-01) | `get_frame/subscribe(..., keep_fd=True)` returns a `FrameHandle` (dma-buf fds, per-plane strides/sizes, frame_id) with idempotent `release()`; `Frame.to_array()` lazily materializes, fenced with `DMA_BUF_IOCTL_SYNC`. Device-verified on 93.72 (4K NV12): 30/30 sustained retains at p50 23 ms; 2-frame × 2 s holds with live content; release after watchdog force-reclaim still unpins the window. **Constraints found:** retention budget ~4 s (FrameWatchdog warns ~4.2 s, force-reclaims buffers at ~5 s); `DMA_BUF_IOCTL_SYNC` returns EINVAL on these exporter fds (content coherent — SDK fences best-effort). **Three fd_publisher defects block fast releasers — ✅ fixed on platform 30a30bee same day** (see note below) |
 | SDK-2 | **`DspClient` with CPU fallback** | `resize_hw` / `crop_hw` / `multi_crop_hw` following the established cv2-optional pattern: hardware-first, numpy fallback when the RPC is absent — mirrors how `Frame.resize` degrades today |
 | SDK-3 | **`Frame.resize` fast-path switch (P1)** | opportunistic: route through `DspClient` when available, keep the current implementation as the fallback |
 
-### fd_publisher defects found during SDK-1 verification (2026-09-01, daemon v2.0.0 on 93.72)
+### fd_publisher defects found during SDK-1 verification (2026-09-01, daemon v2.0.0 on 93.72) — ✅ all fixed same day
 
 All in `camera-daemon` (platform repo); repro evidence in
 `journalctl -u camera-daemon` around 06:59:30 and 07:13:40 on 2026-09-01.
+Fixed on platform branch `feat/dsp-service-p0`, commit `30a30bee`
+("fix(camera-daemon): close fd_publisher dispatch races"), verified on
+93.72 with a raw-socket probe: 4/4 pass — immediate-release 300/300,
+churn ×40 with daemon active and NRestarts=0, window pin/resume
+semantics intact, slow-client isolation. Journal window clean (no
+SIGSEGV, no "unknown frame_id", no outstanding-leak warnings).
 
 1. **Use-after-free → SIGSEGV** (crashed the daemon, restart counter 1):
-   `FdPublisher::on_frame` collects `ClientState*` targets under
-   `clients_mu_` (fd_publisher.cpp:113-120), then dereferences them after
-   unlocking (:132-141); a concurrent `disconnect_client` frees the object
+   `FdPublisher::on_frame` collected `ClientState*` targets under
+   `clients_mu_` (fd_publisher.cpp:113-120), then dereferenced them after
+   unlocking (:132-141); a concurrent `disconnect_client` freed the object
    in between. Triggered by subscribe→read→release→disconnect churn.
    Stack: `FdPublisher::on_frame` ← `FrameRouter::dispatch_loop`.
+   **Fix:** the whole dispatch pass now runs under `clients_mu_` (bounded,
+   because sends are non-blocking) — a disconnecting client can no longer
+   be freed or have its fd closed-and-recycled mid-iteration. This also
+   closes a 4th defect found during the fix: `stream_name`/`subscribed`
+   were written by handle_subscribe on the recv thread with no lock (torn
+   `std::string` read on the dispatch thread = UB).
 2. **RELEASE-before-track race → permanent delivery stall**: `on_frame`
-   sends the frame (:147) *before* inserting it into `outstanding` (:150);
-   a client RELEASE arriving in that gap is discarded as "unknown"
-   (:372) and the slot pins at `max_outstanding_per_client=3` →
+   sent the frame (:147) *before* inserting it into `outstanding` (:150);
+   a client RELEASE arriving in that gap was discarded as "unknown"
+   (:372) and the slot pinned at `max_outstanding_per_client=3` →
    `frames_dropped` for that client until disconnect. Nondeterministic
    (load-dependent): copy mode's 4K memcpy (~10-30 ms) hides it;
    keep-fd's microsecond release hits it.
-3. **Non-blocking send never enabled**: `accept_loop` reads
-   `fcntl(F_GETFL)` (:216) but never calls `F_SETFL` with `O_NONBLOCK`,
-   and `fd_pub_sendmsg` passes only `MSG_NOSIGNAL` (fd_protocol.h:154) —
-   the dispatch thread can block on a slow client, contradicting the
-   "must not block HAL callback" comment at :215.
+   **Fix:** `router_->retain(mf)` + `outstanding[frame_id] = mf` happen
+   before sendmsg (an untracked entry is never visible; frame_ids are
+   never reused); send failure rolls the entry back and releases the ref.
+3. **Non-blocking send never enabled**: `accept_loop` read
+   `fcntl(F_GETFL)` (:216) but never called `F_SETFL` with `O_NONBLOCK`,
+   and `fd_pub_sendmsg` passed only `MSG_NOSIGNAL` (fd_protocol.h:154) —
+   the dispatch thread could block on a slow client.
+   **Fix:** frame sends use `MSG_DONTWAIT` per sendmsg (recv loops stay
+   blocking — setting O_NONBLOCK on the fd would break their MSG_WAITALL
+   framing). EAGAIN maps to "client too slow" (drop frame, keep client);
+   a partial send sets errno=EMSGSIZE and drops the client, since with
+   SCM_RIGHTS the fds cross with the first byte queued — a partial send
+   has already leaked them and desynced the stream. Honest caveat: this
+   one was *latent*, not reachable — `max_outstanding_per_client=3` caps
+   in-flight data at ~240 B, so the socket buffer cannot fill through the
+   frame path (release requires a read). The fix is defense-in-depth that
+   makes the "dispatch must not block" invariant explicit.
 
-Fix direction for 1+2: keep targets alive across the dispatch loop
-(shared_ptr), and insert into `outstanding` before sendmsg (erase +
-release on send failure). Until the platform ships fixes, the SDK
-documents the ~4 s retention budget and keeps releases on the client
-side unmodified — the SDK cannot detect a discarded RELEASE (no
-negative ack).
+Post-fix, fast releasers no longer need the ≥10 ms RELEASE delay; the
+~4 s retention budget (FrameWatchdog) still applies. Remaining
+observation for a future platform pass: `encoded_publisher` still does
+blocking `send_all` on its dispatch path (journal shows 8 ms slow-send
+warnings under load) — same defect class as #3 in a different
+publisher.
 
 ## Sequencing
 
@@ -231,8 +255,8 @@ HAL-4 + HAL-7 ✅ done (2026-09-01, platform    ──► PLAT-1..5 ✅ done (20
                                                          │     under 160 jobs/s, 0 drops)
                                                          ▼
                                                  SDK-1 ✅ (2026-09-01, keep-fd verified
-                                                         │   on device; 3 fd_publisher
-                                                         │   defects documented above)
+                                                         │   on device; fd_publisher defects
+                                                         │   fixed on platform 30a30bee)
                                                          ▼
                                                  SDK-2..3 (DspClient + fast-path)
 ```
