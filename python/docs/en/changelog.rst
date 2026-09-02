@@ -14,6 +14,7 @@ Documentation
 
 - Fixed the video-stream examples across docs and README: dropped references to ``MediaClient`` (which never shipped), standardized on ``FdMediaClient``; stream IDs corrected from ``cam0_main`` / ``cam0_sub`` to the device-exposed ``main`` / ``sub``; removed usages of the nonexistent ``get_stream_info()`` / ``get_raw_stream()``; corrected the ``get_encoded_stream()`` return semantics and the flattened ``frame.data`` misuse; added API docs for ``EncodedStreamClient`` / ``EncodedFrame``
 - Fixed missing and misleading imports in the application examples: added ``import time`` to the multi-model example, ``import json`` to the GenAI example; dropped ``from grpc import RpcError`` from the error-handling example (the SDK raises ``RuntimeError``); removed unused ``numpy`` / ``sys`` imports
+- Synced the Chinese inference page with the English one: translated the seven Usage sections that had been English-only since v0.3.0 (segmentation, OCR, CLIP image embeddings, CLIP text encoding, depth estimation, runtime postprocess-config update, GenAI) and added the ``SegmentationMask`` / ``OcrLine`` / ``Embedding`` / ``DepthMap`` data-type entries
 
 v0.7.0 (2026-09-02)
 -------------------
