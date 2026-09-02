@@ -56,6 +56,34 @@ LandmarkSet
    :members:
    :undoc-members:
 
+SegmentationMask
+~~~~~~~~~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.SegmentationMask
+   :members:
+   :undoc-members:
+
+OcrLine
+~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.OcrLine
+   :members:
+   :undoc-members:
+
+Embedding
+~~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.Embedding
+   :members:
+   :undoc-members:
+
+DepthMap
+~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.DepthMap
+   :members:
+   :undoc-members:
+
 Classification
 ~~~~~~~~~~~~~~
 
@@ -274,3 +302,130 @@ ModelInfo
        print(f"推理失败: {e.details()}")
    except RuntimeError as e:
        print(f"运行时错误: {e}")
+
+分割结果
+~~~~~~~~
+
+.. code-block:: python
+
+   result = inf.infer(image, model_id="segmentation_v1")
+
+   for mask in result.masks:
+       print(f"掩码: {mask.label} (置信度: {mask.confidence:.2f})")
+       print(f"  边界框: ({mask.bbox.x}, {mask.bbox.y}, {mask.bbox.width}, {mask.bbox.height})")
+
+       # 解码 RLE 掩码为 numpy bool 数组 (H x W)
+       np_mask = mask.to_numpy_mask()
+       print(f"  掩码尺寸: {np_mask.shape}, 像素数: {np_mask.sum()}")
+
+OCR 结果
+~~~~~~~~~~
+
+.. code-block:: python
+
+   result = inf.infer(image, model_id="ocr_v1")
+
+   for line in result.ocr_lines:
+       print(f"文本: '{line.text}' (置信度: {line.confidence:.2f})")
+       print(f"  位置: ({line.bbox.x}, {line.bbox.y})")
+
+嵌入 (CLIP 图像)
+~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   result = inf.infer(image, model_id="clip_vit_b32")
+
+   for emb in result.embeddings:
+       print(f"嵌入维度: {emb.dim}")
+       # 可用于相似度检索等场景
+       import numpy as np
+       vec = np.array(emb.data)
+       print(f"  L2 范数: {np.linalg.norm(vec):.4f}")
+
+CLIP 文本编码
+~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # 通过 NPU 将文本编码为 CLIP 嵌入
+   embedding = inf.encode_text("a person walking in the park")
+   print(f"嵌入长度: {len(embedding)}")
+
+   # 编码多段文本并计算相似度
+   import numpy as np
+   emb1 = np.array(inf.encode_text("a cat"))
+   emb2 = np.array(inf.encode_text("a dog"))
+   similarity = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
+   print(f"相似度: {similarity:.4f}")
+
+深度估计
+~~~~~~~~~~
+
+.. code-block:: python
+
+   result = inf.infer(image, model_id="depth_v1")
+
+   for dm in result.depth_maps:
+       print(f"深度图: {dm.width}x{dm.height}")
+       print(f"  最小深度: {dm.data.min():.2f}, 最大深度: {dm.data.max():.2f}")
+
+运行时更新后处理配置
+~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   import json
+
+   # 运行时更新 CLIP 文本提示词
+   config = json.dumps({
+       "prompts": ["a person", "a car", "a bicycle"],
+       "score_threshold": 0.3
+   })
+   inf.update_postprocess_config("clip_vit_b32", config)
+
+GenAI (LLM/VLM)
+~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   import json
+
+   # 创建 GenAI 会话
+   session_id = inf.genai_create_session(
+       hef_path="/opt/models/llm.hef",
+       kind="llm"
+   )
+
+   # 流式生成 token
+   messages = [json.dumps({"role": "user", "content": "Hello, who are you?"})]
+   full_response = ""
+   for token in inf.genai_generate(
+       session_id=session_id,
+       messages=messages,
+       max_tokens=256,
+       temperature=0.7,
+       do_sample=True
+   ):
+       print(token, end="", flush=True)
+       full_response += token
+
+   # VLM: 携带图像输入生成
+   with open("image.jpg", "rb") as f:
+       img_data = f.read()
+
+   vlm_session = inf.genai_create_session("/opt/models/vlm.hef", kind="vlm")
+   messages = [json.dumps({"role": "user", "content": "Describe this image."})]
+   for token in inf.genai_generate(
+       session_id=vlm_session,
+       messages=messages,
+       images=[img_data]
+   ):
+       print(token, end="", flush=True)
+
+   # 中止进行中的生成
+   inf.genai_abort(session_id)
+
+   # 清理会话
+   inf.genai_destroy_session(session_id)
+   inf.genai_destroy_session(vlm_session)
