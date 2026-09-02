@@ -130,57 +130,37 @@ print(f"White light level: {status.white_light_level}")
 ### 4. Video Stream Access
 
 ```python
-from neoruntime_ipc_sdk import MediaClient
+from neoruntime_ipc_sdk import FdMediaClient
 
-media = MediaClient()
+media = FdMediaClient()
 
 # List available streams
 streams = media.list_streams()
-print(f"Available streams: {streams}")
+print(f"Available streams: {streams}")  # ['main', 'sub']
 
 # Get single frame
-frame = media.get_frame("cam0_main")
+frame = media.get_frame("main")
 if frame:
     print(f"Frame size: {frame.width}x{frame.height}, format: {frame.format}")
     rgb_image = frame.to_rgb()  # Convert to RGB format
 
 # Subscribe to video stream
-for frame in media.subscribe_raw("cam0_main"):
-    # frame.image is numpy array
+for frame in media.subscribe("main"):
+    # frame.image is the decoded numpy array
     process_frame(frame.image)
+
+# Encoded stream (H.264/H.265): get_encoded_stream() returns a client
+for packet in media.get_encoded_stream("main").subscribe():
+    print(f"{packet.codec_name()} packet: {len(packet.data)} bytes")
 
 # Use callback
 def process(frame):
     print(f"Frame: {frame.sequence}")
 
-media.on_frame("cam0_main", process)
+media.on_frame("main", process)
 ```
 
-### 5. Plugin System
-
-```python
-from neoruntime_ipc_sdk import PluginDiscovery, PluginServer
-
-# Discover plugins
-discovery = PluginDiscovery()
-
-# Find specific capability
-endpoint = discovery.get("rtsp-server")
-if endpoint and endpoint.is_available:
-    channel = endpoint.connect()
-    # Use gRPC channel to call plugin service
-
-# Wait for plugin to be available
-endpoint = discovery.require("video-recorder", timeout=30.0)
-
-# Create plugin server
-server = PluginServer("my-plugin")
-grpc_server = server.create_server()
-# Register gRPC service
-grpc_server.start()
-```
-
-### 6. Complete Example: AI + Device Linkage
+### 5. Complete Example: AI + Device Linkage
 
 ```python
 from neoruntime_ipc_sdk import InferenceClient, DeviceClient, EventClient
@@ -211,7 +191,7 @@ for frame_seq, result in inf.subscribe(stream="cam0_main", model="person_v1"):
         dev.set_white_light(0)
 ```
 
-### 7. App Toolkit: Drawing, Recording, and Web Streaming
+### 6. App Toolkit: Drawing, Recording, and Web Streaming
 
 Detection visualization on a live frame (pure numpy/PIL, cv2 optional):
 
@@ -388,29 +368,33 @@ Application container management client.
 **Other:**
 - `register_web_url(path)` - Register web access path
 
-### MediaClient
+### FdMediaClient (`media`)
 
-Video stream client for accessing video frames from shared memory.
+Video stream client receiving frames over UDS (dma-buf fds, decoded on receive by default).
 
 **Methods:**
 
 | Method | Parameters | Returns | Description |
 |--------|------------|---------|-------------|
-| `subscribe_raw(stream_id, skip_frames)` | str, bool | Iterator[Frame] | Subscribe to video stream |
-| `get_frame(stream_id, timeout_ms)` | str, int | Frame | Get single frame |
-| `get_stream_info(stream_id)` | str | StreamInfo | Get stream info |
-| `list_streams()` | - | List[str] | List available streams |
+| `subscribe(stream_id, skip_frames, keep_fd)` | str, bool, bool | Iterator[Frame] | Subscribe to video stream |
+| `subscribe_raw(stream_id, skip_frames, keep_fd)` | str, bool, bool | Iterator[Frame] | Same as `subscribe` |
+| `get_frame(stream_id, timeout_ms, keep_fd)` | str, int, bool | Frame \| None | Get single frame |
+| `get_encoded_stream(stream_id)` | str | EncodedStreamClient | H.264/H.265 Annex-B stream client |
+| `list_streams()` | - | List[str] | List available streams (`main` / `sub`) |
+| `get_rtsp_url(stream_id, host, port)` | str, str, int | str | RTSP playback URL (needs RTSP enabled) |
 | `on_frame(stream_id, callback)` | str, Callable | Thread | Callback subscription |
 | `close()` | - | - | Close connection |
 
 **Data Classes:**
 
-- `Frame`: sequence, timestamp_ns, width, height, format, image, metadata
+- `Frame`: sequence, timestamp_ns, width, height, format, image, metadata, handle
+- `frame.image` / `frame.to_array()` - Decoded numpy array (H, W, C) or (H*3//2, W) for NV12
 - `Frame.crop(x, y, w, h)` - New cropped Frame (NV12 needs even x/y/w/h)
 - `Frame.resize(width, height, mode="letterbox", pad_value=114)` - New resized Frame (`stretch` / `letterbox` / `crop`)
 - `Frame.to_jpeg_bytes(quality=85)` - JPEG bytes (cv2 fast path, PIL fallback)
-- `StreamInfo`: stream_id, width, height, format, fps, buffer_count
-- `PixelFormat`: NV12, NV21, RGB, BGR, RGBA, BGRA, GRAY8, YUYV
+- `frame.release()` - Return a `keep_fd=True` buffer to the daemon (idempotent)
+- `EncodedStreamClient` / `EncodedFrame`: encoded stream subscription; `EncodedFrame.data` (Annex-B bytes), `.is_keyframe()`, `.codec_name()`
+- `StreamInfo`, `PixelFormat`: NV12, NV21, RGB, BGR, RGBA, BGRA, GRAY8, YUYV
 
 ### Recording (`recording`)
 
@@ -435,26 +419,6 @@ Detection visualization on RGB numpy arrays (returns new arrays, input untouched
 - `draw_boxes(image, boxes, labels=None, scores=None, color=(0,255,0), thickness=2)`
 - `draw_text(image, text, xy, color=(255,255,255), font_scale=0.5, thickness=1)`
 - `draw_detections(image, result_or_objects, color=None)` - Accepts `InferenceResult` / `DetectedObject` / raw `(x1,y1,x2,y2)` tuples
-
-### PluginDiscovery / PluginServer
-
-Plugin system for service discovery and server implementation.
-
-**PluginDiscovery:**
-- `get(capability_id)` - Find plugin
-- `require(capability_id, timeout)` - Wait for plugin availability
-- `list_plugins()` - List all plugins
-- `list_capabilities()` - List all capabilities
-- `watch(callback)` - Watch for changes
-
-**PluginEndpoint:**
-- `connect()` - Create gRPC connection
-- `is_available` - Availability status
-
-**PluginServer:**
-- `create_server(max_workers)` - Create gRPC server
-- `start()` - Start service
-- `stop(grace)` - Stop service
 
 ### Config
 

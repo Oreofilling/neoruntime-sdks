@@ -248,7 +248,7 @@ Automatically record video when specific events are detected.
    Automatically record video clips when alert events are detected
    """
 
-   from neoruntime_ipc_sdk import MediaClient, EventClient
+   from neoruntime_ipc_sdk import FdMediaClient, EventClient
    import cv2
    import time
    import logging
@@ -259,7 +259,7 @@ Automatically record video when specific events are detected.
 
    class EventRecorder:
        def __init__(self, output_dir="/app/recordings"):
-           self.media = MediaClient()
+           self.media = FdMediaClient()
            self.events = EventClient()
            self.output_dir = Path(output_dir)
            self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -274,13 +274,19 @@ Automatically record video when specific events are detected.
            timestamp = int(time.time())
            filename = self.output_dir / f"{event_type}_{timestamp}.mp4"
 
-           info = self.media.get_stream_info("cam0_main")
+           # FdMediaClient has no separate stream-info API;
+           # read the resolution from the current frame
+           probe = self.media.get_frame("main")
+           if probe is None:
+               logger.warning("no frame received, cannot start recording")
+               return
+
            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
            self.writer = cv2.VideoWriter(
                str(filename),
                fourcc,
-               info.fps,
-               (info.width, info.height)
+               30.0,  # fill in the fps of your actual stream
+               (probe.width, probe.height)
            )
 
            self.recording = True
@@ -314,9 +320,11 @@ Automatically record video when specific events are detected.
            recording_frames = 0
            max_recording_frames = 300  # Record 10 seconds (30fps)
 
-           for frame in self.media.get_raw_stream("cam0_main"):
+           for frame in self.media.subscribe("main"):
                if self.recording:
-                   self.writer.write(frame.data)
+                   # frame.data is a flattened 1-D array; cv2 needs 3-D BGR
+                   bgr = frame.to_rgb()[:, :, ::-1]
+                   self.writer.write(bgr)
                    recording_frames += 1
 
                    if recording_frames >= max_recording_frames:

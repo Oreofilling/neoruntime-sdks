@@ -231,19 +231,19 @@ GPIO 控制
 
 .. code-block:: python
 
-   from neoruntime_ipc_sdk import MediaClient, PixelFormat
+   from neoruntime_ipc_sdk import FdMediaClient
 
-   media = MediaClient()
+   media = FdMediaClient()
 
-   # 获取原始视频流
-   for frame in media.get_raw_stream("cam0_main"):
+   # 获取原始视频流（可用流 ID 通常为 main / sub）
+   for frame in media.subscribe("main"):
        print(f"帧 {frame.sequence}: {frame.width}x{frame.height}")
-       # frame.data 是 numpy array
-       process_frame(frame.data)
+       # frame.image 是解码后的 numpy array
+       process_frame(frame.image)
 
-   # 获取编码视频流
-   for packet in media.get_encoded_stream("cam0_main"):
-       print(f"H.264 包: {len(packet.data)} 字节")
+   # 获取编码视频流：get_encoded_stream() 返回 EncodedStreamClient
+   for packet in media.get_encoded_stream("main").subscribe():
+       print(f"{packet.codec_name()} 包: {len(packet.data)} 字节")
 
 错误处理
 --------
