@@ -109,7 +109,6 @@ AI 推理
    api/events
    api/device
    api/app
-   api/plugin
    api/config
 
 .. toctree::

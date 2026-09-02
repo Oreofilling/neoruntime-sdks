@@ -1,6 +1,65 @@
 更新日志
 ========
 
+v0.8.0 (未发布)
+-------------------
+
+弃用
+~~~~
+
+- **插件系统 API** (``PluginDiscovery`` / ``PluginServer`` / ``PluginEndpoint``) 已弃用,计划在 v0.8.0 移除。当前平台未部署 ``/run/aipc/plugins`` 插件发现机制,SDK 暂保留导入兼容并发出 ``DeprecationWarning``,文档页已下线。如有使用需求请提前反馈。
+
+v0.7.0 (2026-09-02)
+-------------------
+
+新增功能
+~~~~~~~~
+
+- **应用开发工具箱**(原 0.6.0 开发版内容,未单独发布,随 0.7.0 一并发布):
+  - ``Frame.crop()`` / ``Frame.resize()`` / ``Frame.to_jpeg_bytes()`` — 帧裁剪、三模式缩放(stretch/letterbox/crop)、JPEG 编码;cv2 缺失时自动降级到 numpy/PIL
+  - ``draw`` 模块 — 检测结果可视化(``draw_boxes`` / ``draw_text`` / ``draw_detections``)
+  - ``recording`` 模块 — 纯 Python TS 复用打包、HLS 切片、事件预录缓冲(``TsWriter`` / ``HlsWriter`` / ``PrerollBuffer``),无需 ffmpeg
+  - ``web`` 模块 — MJPEG 推流(``MjpegServer`` / ``MjpegStream`` / ``mjpeg_wsgi_app``)
+  - **DeviceClient** 原生对焦组 6 个方法(``start_oneshot_af`` / ``start_zoom_follow`` / ``get_autofocus_status`` / ``cancel_autofocus`` / ``set_af_windows`` / ``get_af_measurement``)
+  - **CameraClient** 成像/红外/隐私遮挡/OSD/配置组 12 个方法(含红外预设管理、``get_osd`` 与 ``set_osd`` 读写对称)
+- 修复 ``InferenceClient.subscribe()`` 静默丢弃失败帧的问题
+
+重构
+~~~~
+
+- 内部架构分层:抽取 ``_transport`` 共享传输原语;``media`` 拆分为 frame/encoded/fd_client;``dsp`` 拆分为 dsp_wire/dsp_format;``inference`` 拆分为 types/codec/genai。门面保持全部历史导入路径,**零公共 API 移除**
+- DSP CPU 回退从静默日志改为 ``UserWarning``
+- 2D 数组按灰度推理输入触发 ``DeprecationWarning``(请显式传 ``fmt=``)
+- ``EncodedStreamClient()`` 默认套接字路径改为 ``/run/aipc/encoded/{stream}.sock``(``ENCODED_SOCK_DIR`` 环境变量可覆盖,显式路径仍优先)
+
+修复
+~~~~
+
+- 修复 Python 3.8/3.9 下的导入崩溃(全量补齐 ``from __future__ import annotations``)
+
+其他
+~~~~
+
+- 打包增加 ``py.typed`` 类型标记;测试扩充至 270 项全绿
+
+v0.5.0 (2026-08-20)
+-------------------
+
+重构
+~~~~
+
+- 品牌重构:``hailo_ipc_sdk`` → ``neoruntime_ipc_sdk`` (破坏性变更,无兼容层;hailort/ne503/aipc 等功能性名称保留)
+
+修复
+~~~~
+
+- 修复 ``audio_capture`` 流视频布局头的双布局解码
+
+其他
+~~~~
+
+- CI 建立 TestPyPI/PyPI Trusted Publishing 双发布流程
+
 v0.4.0 (2026-07-14)
 -------------------
 

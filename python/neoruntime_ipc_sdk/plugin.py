@@ -1,6 +1,10 @@
 """
 Plugin SDK - Client and server helpers for the AIPC plugin system.
 
+DEPRECATED: the platform does not ship the ``/run/aipc/plugins`` discovery
+mechanism. This module is kept importable for compatibility, emits a
+``DeprecationWarning`` on use, and will be removed in v0.8.0.
+
 For plugin providers:
     server = PluginServer("my-plugin")
     server.start(my_grpc_servicer)
@@ -17,6 +21,7 @@ import json
 import os
 import threading
 import time
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -25,6 +30,15 @@ import grpc
 
 DISCOVERY_DIR = "/run/aipc/plugins"
 DISCOVERY_FILE = "discovery.json"
+
+_DEPRECATION_MESSAGE = (
+    "neoruntime_ipc_sdk.plugin is deprecated and will be removed in v0.8.0: "
+    "the platform does not ship the /run/aipc/plugins discovery mechanism"
+)
+
+
+def _warn_deprecated() -> None:
+    warnings.warn(_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=3)
 
 
 @dataclass
@@ -58,6 +72,7 @@ class PluginDiscovery:
     """Client-side plugin discovery using discovery.json + optional file watcher."""
 
     def __init__(self, discovery_dir: str = DISCOVERY_DIR):
+        _warn_deprecated()
         self._dir = Path(discovery_dir)
         self._file = self._dir / DISCOVERY_FILE
         self._data: dict = {}
@@ -167,6 +182,7 @@ class PluginServer:
     """Helper for plugin containers to set up a gRPC server on the standard socket path."""
 
     def __init__(self, plugin_id: str, socket_dir: str = DISCOVERY_DIR):
+        _warn_deprecated()
         self.plugin_id = plugin_id
         self.socket_path = os.path.join(socket_dir, f"{plugin_id}.sock")
         self._server: grpc.Server | None = None
