@@ -15,7 +15,8 @@ v0.7.0 (2026-09-02)
 新增功能
 ~~~~~~~~
 
-- **应用开发工具箱**(原 0.6.0 开发版内容,未单独发布,随 0.7.0 一并发布):
+- **应用开发工具箱** (原 0.6.0 开发版内容,未单独发布,随 0.7.0 一并发布):
+
   - ``Frame.crop()`` / ``Frame.resize()`` / ``Frame.to_jpeg_bytes()`` — 帧裁剪、三模式缩放(stretch/letterbox/crop)、JPEG 编码;cv2 缺失时自动降级到 numpy/PIL
   - ``draw`` 模块 — 检测结果可视化(``draw_boxes`` / ``draw_text`` / ``draw_detections``)
   - ``recording`` 模块 — 纯 Python TS 复用打包、HLS 切片、事件预录缓冲(``TsWriter`` / ``HlsWriter`` / ``PrerollBuffer``),无需 ffmpeg
@@ -27,10 +28,10 @@ v0.7.0 (2026-09-02)
 重构
 ~~~~
 
-- 内部架构分层:抽取 ``_transport`` 共享传输原语;``media`` 拆分为 frame/encoded/fd_client;``dsp`` 拆分为 dsp_wire/dsp_format;``inference`` 拆分为 types/codec/genai。门面保持全部历史导入路径,**零公共 API 移除**
+- 内部架构分层:抽取 ``_transport`` 共享传输原语; ``media`` 拆分为 frame/encoded/fd_client; ``dsp`` 拆分为 dsp_wire/dsp_format; ``inference`` 拆分为 types/codec/genai。门面保持全部历史导入路径, **零公共 API 移除**
 - DSP CPU 回退从静默日志改为 ``UserWarning``
-- 2D 数组按灰度推理输入触发 ``DeprecationWarning``(请显式传 ``fmt=``)
-- ``EncodedStreamClient()`` 默认套接字路径改为 ``/run/aipc/encoded/{stream}.sock``(``ENCODED_SOCK_DIR`` 环境变量可覆盖,显式路径仍优先)
+- 2D 数组按灰度推理输入触发 ``DeprecationWarning`` (请显式传 ``fmt=``)
+- ``EncodedStreamClient()`` 默认套接字路径改为 ``/run/aipc/encoded/{stream}.sock`` (``ENCODED_SOCK_DIR`` 环境变量可覆盖,显式路径仍优先)
 
 修复
 ~~~~
