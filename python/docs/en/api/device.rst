@@ -1,7 +1,7 @@
 Device Control API
 ==================
 
-.. automodule:: hailo_ipc_sdk.device
+.. automodule:: neoruntime_ipc_sdk.device
    :members:
    :undoc-members:
    :show-inheritance:
@@ -10,7 +10,7 @@ Device Control API
 DeviceClient
 ------------
 
-.. autoclass:: hailo_ipc_sdk.DeviceClient
+.. autoclass:: neoruntime_ipc_sdk.DeviceClient
    :members:
    :undoc-members:
    :show-inheritance:
@@ -22,21 +22,21 @@ Data Types
 DeviceStatus
 ~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.DeviceStatus
+.. autoclass:: neoruntime_ipc_sdk.DeviceStatus
    :members:
    :undoc-members:
 
 DeviceEvent
 ~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.DeviceEvent
+.. autoclass:: neoruntime_ipc_sdk.DeviceEvent
    :members:
    :undoc-members:
 
 IrCutMode
 ~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.IrCutMode
+.. autoclass:: neoruntime_ipc_sdk.IrCutMode
    :members:
    :undoc-members:
 
@@ -48,7 +48,7 @@ Light Control
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import DeviceClient, IrCutMode
+   from neoruntime_ipc_sdk import DeviceClient, IrCutMode
 
    dev = DeviceClient()
 

@@ -4,7 +4,7 @@
 // service. Shares the CameraControl::Stub with CameraClient. Status-bearing RPCs
 // return a top-level bool success / string message. StreamAudioPcm is the only
 // client-streaming RPC (a ClientWriter). pb::Empty is camera.proto's own Empty.
-#include "hailo_ipc_sdk/audio.hpp"
+#include "neoruntime_ipc_sdk/audio.hpp"
 
 #include <grpcpp/grpcpp.h>
 
@@ -18,13 +18,13 @@
 #include <utility>
 #include <vector>
 
-#include "hailo_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
 
 #include "detail/grpc_channel.hpp"
 #include "camera-daemon/camera.grpc.pb.h"
 #include "camera-daemon/camera.pb.h"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 namespace pb = aipc::camera;
 
@@ -217,4 +217,4 @@ void AudioClient::stream_pcm_file(const std::string& path, int chunk_size,
         sample_rate, channels, fmt);
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

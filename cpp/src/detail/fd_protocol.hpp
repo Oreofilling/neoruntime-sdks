@@ -5,7 +5,7 @@
 // the client and the platform daemon run on the same aarch64 host (both LE), so a
 // plain memcpy is correct — there is no cross-endian exchange over a UDS.
 //
-// Faithful to python/hailo_ipc_sdk/media.py struct format strings:
+// Faithful to python/neoruntime_ipc_sdk/media.py struct format strings:
 //   _HDR_FMT   "<II"                 -> FdPubMsgHeader       (8 B)
 //   _SUB_FMT   "<II I 64s"           -> FdPubSubscribeMsg    (76 B)
 //   _FRAME_FMT "<II QQQ IIII 3I 3I I 4x" -> FdPubFrameMsg    (80 B, incl. 4 pad)
@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-namespace hailo_ipc_sdk::detail {
+namespace neoruntime_ipc_sdk::detail {
 
 // ---- FdPublisher protocol message types (must match fd_protocol.h) ----------
 inline constexpr std::uint32_t FD_PUB_MSG_SUBSCRIBE   = 1;
@@ -109,4 +109,46 @@ static_assert(sizeof(AudioEncHeader) == 30, "wire layout: AudioEncHeader");
 
 #pragma pack(pop)
 
-}  // namespace hailo_ipc_sdk::detail
+// ---- Audio format-field decode (dual-layout auto-detection) ------------------
+//
+// The platform daemon observed on-device (2026-08) writes the VIDEO EncHeader
+// layout on audio_capture.sock (width[14:18]=0, height[18:22]=0, dts[22:30]==pts)
+// and never fills the audio fields. decode_audio_format() therefore validates
+// the tail for audio plausibility and, when that fails, re-reads it as the
+// video tail and reports format parameters as unknown (0). A future daemon that
+// fills the audio layout is picked up automatically. Mirrors
+// python/neoruntime_ipc_sdk/audio_stream.py decode_audio_format().
+
+struct AudioFormatFields {
+    std::uint32_t sample_rate = 0;      // 0 = unknown (video-layout fallback)
+    std::uint32_t channels = 0;         // 0 = unknown
+    std::uint32_t bits_per_sample = 0;  // 0 = unknown
+    std::uint64_t dts_ns = 0;           // set only when the video-layout
+                                        // fallback was taken (0 otherwise)
+};
+
+// Decode the format fields of a 30-byte audio-capture header given the payload
+// size (total_size - 30). Returns the audio values when the tail is plausible
+// (frame_size == payload, sample rate in [8000,192000], 1..8 channels, 8..32
+// bit % 8 == 0); otherwise returns zeros plus the video-layout dts timestamp
+// reconstructed from bits_per_sample[22:26] | frame_size[26:30] << 32.
+inline AudioFormatFields decode_audio_format(const AudioEncHeader& hdr,
+                                             std::int64_t payload_size) {
+    constexpr std::uint32_t kRateMin = 8000;
+    constexpr std::uint32_t kRateMax = 192000;
+    const bool plausible =
+        payload_size >= 0 &&
+        hdr.frame_size == static_cast<std::uint32_t>(payload_size) &&
+        hdr.sample_rate >= kRateMin && hdr.sample_rate <= kRateMax &&
+        hdr.channels >= 1 && hdr.channels <= 8 &&
+        hdr.bits_per_sample >= 8 && hdr.bits_per_sample <= 32 &&
+        (hdr.bits_per_sample % 8) == 0;
+    if (plausible) {
+        return {hdr.sample_rate, hdr.channels, hdr.bits_per_sample, 0};
+    }
+    return {0, 0, 0,
+            static_cast<std::uint64_t>(hdr.bits_per_sample) |
+                (static_cast<std::uint64_t>(hdr.frame_size) << 32)};
+}
+
+}  // namespace neoruntime_ipc_sdk::detail

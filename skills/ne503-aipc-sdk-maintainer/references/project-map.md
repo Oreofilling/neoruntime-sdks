@@ -3,11 +3,11 @@
 ## Layout
 
 - `proto/`: protobuf definitions copied from the NeoRuntime platform repository.
-- `python/hailo_ipc_sdk/`: Python SDK package.
-- `python/hailo_ipc_sdk/proto/`: generated Python protobuf and gRPC stubs committed with the package.
+- `python/neoruntime_ipc_sdk/`: Python SDK package.
+- `python/neoruntime_ipc_sdk/proto/`: generated Python protobuf and gRPC stubs committed with the package.
 - `python/tests/`: daemon-independent pytest suite.
 - `python/docs/` and `python/docs/en/`: Sphinx docs for Chinese and English outputs.
-- `cpp/include/hailo_ipc_sdk/`: public C++ headers.
+- `cpp/include/neoruntime_ipc_sdk/`: public C++ headers.
 - `cpp/src/`: C++ implementation and internal transport helpers.
 - `cpp/examples/`: on-device and development examples.
 - `cpp/tests/`: GoogleTest suite for daemon-independent behavior.

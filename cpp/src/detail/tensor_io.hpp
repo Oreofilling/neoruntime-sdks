@@ -26,9 +26,9 @@
 #include <vector>
 
 #include "ai-runtime/inference.pb.h"
-#include "hailo_ipc_sdk/types.hpp"
+#include "neoruntime_ipc_sdk/types.hpp"
 
-namespace hailo_ipc_sdk::detail {
+namespace neoruntime_ipc_sdk::detail {
 
 // ---- public DataType <-> proto DataType (values are identical 0..7) ----------
 inline aipc::inference::DataType data_type_to_pb(DataType dt) noexcept {
@@ -142,4 +142,4 @@ inline cv::Mat tensor_to_mat(const aipc::inference::Tensor& tensor) {
     return mat;
 }
 
-}  // namespace hailo_ipc_sdk::detail
+}  // namespace neoruntime_ipc_sdk::detail

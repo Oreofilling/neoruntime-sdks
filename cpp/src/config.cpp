@@ -1,11 +1,11 @@
 // config.cpp — implementation of Config. See config.hpp.
-#include "hailo_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
 
 #include <cstdlib>
 #include <string>
 #include <string_view>
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 std::string Config::env(const char* var, std::string_view fallback) {
     const char* val = std::getenv(var);
@@ -82,4 +82,4 @@ std::string Config::get_log_level() {
     return env("LOG_LEVEL", "INFO");
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

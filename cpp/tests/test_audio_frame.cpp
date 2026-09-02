@@ -5,9 +5,9 @@
 
 #include <gtest/gtest.h>
 
-#include "hailo_ipc_sdk/audio_stream.hpp"
+#include "neoruntime_ipc_sdk/audio_stream.hpp"
 
-using hailo_ipc_sdk::AudioFrame;
+using neoruntime_ipc_sdk::AudioFrame;
 
 // ---- codec_name ------------------------------------------------------------
 TEST(AudioFrame, CodecNameKnown) {

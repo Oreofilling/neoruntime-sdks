@@ -11,7 +11,7 @@
 import time
 import signal
 from pathlib import Path
-from hailo_ipc_sdk import FdMediaClient, Frame, Config
+from neoruntime_ipc_sdk import FdMediaClient, Frame, Config
 
 
 class VideoProcessorApp:

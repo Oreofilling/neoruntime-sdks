@@ -41,7 +41,7 @@ Application Code (app.py)
 
    import signal
    import sys
-   from hailo_ipc_sdk import InferenceClient, EventClient, DeviceClient, Config
+   from neoruntime_ipc_sdk import InferenceClient, EventClient, DeviceClient, Config
 
 
    class MyApp:
@@ -141,7 +141,7 @@ Verify the image was built successfully:
 
 .. note::
 
-   If the application requires additional dependencies, add a ``requirements.txt`` file to the directory and include ``RUN pip install -r requirements.txt`` in the Dockerfile. For offline or repeatable builds, build the SDK wheel first, copy ``hailo_ipc_sdk-*.whl`` into the image, and install that local wheel instead of installing from GitHub.
+   If the application requires additional dependencies, add a ``requirements.txt`` file to the directory and include ``RUN pip install -r requirements.txt`` in the Dockerfile. For offline or repeatable builds, build the SDK wheel first, copy ``neoruntime_ipc_sdk-*.whl`` into the image, and install that local wheel instead of installing from GitHub.
 
 .. _app_image_step3:
 

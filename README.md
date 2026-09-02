@@ -27,8 +27,19 @@ published at:
 
 ## Python SDK
 
-The SDK is not published to PyPI yet. Use one of the current install paths
-below.
+Install from PyPI:
+
+```bash
+python -m pip install neoruntime-ipc-sdk
+```
+
+Pre-release builds are staged on TestPyPI for validation (dependencies still
+come from PyPI):
+
+```bash
+python -m pip install --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ neoruntime-ipc-sdk
+```
 
 Install from source:
 
@@ -55,29 +66,33 @@ Generated wheels are written to `python/dist/` and should not be committed.
 
 The repository also builds release artifacts automatically with GitHub Actions:
 
-- Pull requests, pushes to `main`, and manual runs build and upload a wheel
-  artifact named `python-sdk-wheel`.
-- Tags matching `v*` build the Python wheel plus a C++ SDK tarball, and attach
-  both to a GitHub Release.
-- Manual runs can also publish a GitHub Release when release publishing is
-  enabled.
+- Pull requests, pushes to `main`, and manual runs build and upload Python
+  distributions (wheel + sdist) as an artifact named `python-sdk-dist`.
+- Tags matching `v*` build the Python distributions plus a C++ SDK tarball,
+  attach them to a GitHub Release, upload the Python distributions to
+  TestPyPI, and then to PyPI once the protected `pypi` environment is
+  approved.
+- Manual runs can also publish a GitHub Release, TestPyPI, or PyPI when the
+  corresponding dispatch inputs are enabled.
 
-Release a version by pushing a tag that matches `python/setup.py`. The release
+Release a version by pushing a tag that matches `python/setup.py` (and
+`python/neoruntime_ipc_sdk/__init__.py`, which must stay in sync). The release
 tag follows the Python SDK version; the C++ SDK keeps its own package version in
 the tarball filename.
 
 ```bash
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 The GitHub Release assets are:
 
-- `hailo_ipc_sdk-0.4.0-py3-none-any.whl`
-- `ne503-aipc-cpp-sdk-0.1.0-linux-arm64.tar.gz`
+- `neoruntime_ipc_sdk-0.5.0-py3-none-any.whl`
+- `neoruntime_ipc_sdk-0.5.0.tar.gz`
+- `ne503-aipc-cpp-sdk-0.2.0-linux-arm64.tar.gz`
 
-PyPI packages are not published yet. Until that channel is available, use
-source installs, local wheels, or GitHub Release artifacts.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full release and publishing
+runbook.
 
 Build local documentation:
 

@@ -42,7 +42,7 @@
 
    import signal
    import sys
-   from hailo_ipc_sdk import InferenceClient, EventClient, DeviceClient, Config
+   from neoruntime_ipc_sdk import InferenceClient, EventClient, DeviceClient, Config
 
 
    class MyApp:
@@ -144,7 +144,7 @@ Dockerfile
 
    如果应用需要额外依赖，可在目录中添加 ``requirements.txt`` 并在 Dockerfile 中加入
    ``RUN pip install -r requirements.txt``。如果需要离线或可重复构建，建议先构建 SDK
-   wheel，将 ``hailo_ipc_sdk-*.whl`` 复制进镜像，再安装这个本地 wheel。
+   wheel，将 ``neoruntime_ipc_sdk-*.whl`` 复制进镜像，再安装这个本地 wheel。
 
 .. _app_image_step3:
 

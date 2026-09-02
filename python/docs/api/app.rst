@@ -1,7 +1,7 @@
 应用管理器客户端
 ================
 
-.. automodule:: hailo_ipc_sdk.app
+.. automodule:: neoruntime_ipc_sdk.app
     :members:
     :undoc-members:
     :show-inheritance:
@@ -14,7 +14,7 @@
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import AppClient
+   from neoruntime_ipc_sdk import AppClient
 
    app = AppClient()
 

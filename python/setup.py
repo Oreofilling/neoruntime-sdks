@@ -9,15 +9,22 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="hailo-ipc-sdk",
-    version="0.4.0",
+    name="neoruntime-ipc-sdk",
+    version="0.7.0",
     author="NeoRuntime Team",
     author_email="opensource@camthink.ai",
     description="NeoRuntime AI Platform Python SDK",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/camthink-ai/neoruntime-sdks/tree/main/python",
+    project_urls={
+        "Source": "https://github.com/camthink-ai/neoruntime-sdks",
+        "Bug Tracker": "https://github.com/camthink-ai/neoruntime-sdks/issues",
+        "Documentation": "https://camthink-ai.github.io/neoruntime-sdks/python/en/",
+    },
     packages=find_packages(exclude=("tests", "tests.*")),
+    package_data={"neoruntime_ipc_sdk": ["py.typed"]},
+    zip_safe=False,
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",

@@ -7,11 +7,11 @@
 // daemon or gRPC channel is involved.
 #include <gtest/gtest.h>
 
-#include "hailo_ipc_sdk/inference.hpp"
+#include "neoruntime_ipc_sdk/inference.hpp"
 
-using hailo_ipc_sdk::BoundingBox;
-using hailo_ipc_sdk::DetectedObject;
-using hailo_ipc_sdk::InferenceResult;
+using neoruntime_ipc_sdk::BoundingBox;
+using neoruntime_ipc_sdk::DetectedObject;
+using neoruntime_ipc_sdk::InferenceResult;
 
 // ---- BoundingBox -----------------------------------------------------------
 TEST(BoundingBox, ToXyxyFromTopLeftWh) {

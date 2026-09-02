@@ -10,7 +10,7 @@
 //     control_iris(int32_t speed).
 //   * DeviceStatus — proto field 41 is ir_led_level (uint32); device.py reads
 //     the non-existent ir_led_on. We expose ir_led_level.
-#include "hailo_ipc_sdk/device.hpp"
+#include "neoruntime_ipc_sdk/device.hpp"
 
 #include <grpcpp/grpcpp.h>
 
@@ -23,7 +23,7 @@
 #include "device-control/device.grpc.pb.h"
 #include "device-control/device.pb.h"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 namespace pb = aipc::device;
 
@@ -525,4 +525,4 @@ DeviceEventStream DeviceClient::subscribe_events() {
     return stream;
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

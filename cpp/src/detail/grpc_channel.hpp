@@ -18,9 +18,9 @@
 #include <grpcpp/grpcpp.h>
 
 #include "endpoint.hpp"
-#include "hailo_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
 
-namespace hailo_ipc_sdk::detail {
+namespace neoruntime_ipc_sdk::detail {
 
 inline std::shared_ptr<grpc::Channel> make_channel(std::string_view endpoint) {
     return grpc::CreateChannel(grpc_endpoint(endpoint),
@@ -63,4 +63,4 @@ inline std::uint64_t now_ns() {
             .count());
 }
 
-}  // namespace hailo_ipc_sdk::detail
+}  // namespace neoruntime_ipc_sdk::detail

@@ -3,7 +3,7 @@
 // Port of app.py over the `appmanager` gRPC service. Two Status shapes to mind:
 // InstallApp returns InstallResponse{ Status status; string app_id; ... } while
 // Start/Stop/Uninstall return Status directly. GetAppLogs is server-streaming.
-#include "hailo_ipc_sdk/app.hpp"
+#include "neoruntime_ipc_sdk/app.hpp"
 
 #include <grpcpp/grpcpp.h>
 #include <google/protobuf/empty.pb.h>
@@ -19,13 +19,13 @@
 #include <utility>
 #include <vector>
 
-#include "hailo_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
 
 #include "detail/grpc_channel.hpp"
 #include "app-manager/app.grpc.pb.h"
 #include "app-manager/app.pb.h"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 namespace pb = appmanager;
 
@@ -249,4 +249,4 @@ LogStream AppClient::get_logs(const std::string& app_id, int max_lines, bool fol
     return stream;
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

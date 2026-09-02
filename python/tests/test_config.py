@@ -3,9 +3,10 @@ Tests for Config
 """
 
 import os
+
 import pytest
 
-from hailo_ipc_sdk import Config
+from neoruntime_ipc_sdk import Config
 
 
 class TestConfig:

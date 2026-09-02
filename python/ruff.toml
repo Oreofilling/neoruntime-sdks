@@ -1,6 +1,6 @@
 target-version = "py38"
 line-length = 100
-extend-exclude = ["hailo_ipc_sdk/proto"]
+extend-exclude = ["neoruntime_ipc_sdk/proto"]
 
 [lint]
 select = ["E", "F", "I", "UP", "B"]

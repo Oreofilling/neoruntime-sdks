@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy SDK
-COPY hailo_ipc_sdk /app/hailo_ipc_sdk
+COPY neoruntime_ipc_sdk /app/neoruntime_ipc_sdk
 COPY setup.py /app/
 COPY README.md /app/
 COPY requirements.txt /app/
@@ -51,4 +51,4 @@ ENV LOG_LEVEL=INFO
 ENV PYTHONUNBUFFERED=1
 
 # Default entry point
-CMD ["python3", "-m", "hailo_ipc_sdk"]
+CMD ["python3", "-m", "neoruntime_ipc_sdk"]

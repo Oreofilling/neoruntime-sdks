@@ -6,7 +6,7 @@
 #   ./build_sdk_wheel.sh
 #
 # 输出:
-#   dist/hailo_ipc_sdk-<version>-py3-none-any.whl
+#   dist/neoruntime_ipc_sdk-<version>-py3-none-any.whl
 #
 
 set -e
@@ -49,7 +49,7 @@ echo ""
 echo "wheel 文件位置: $OUTPUT_DIR/"
 echo ""
 echo "使用方法:"
-echo "  1. 复制到应用目录: cp $OUTPUT_DIR/hailo_ipc_sdk-*.whl ./my-app/"
+echo "  1. 复制到应用目录: cp $OUTPUT_DIR/neoruntime_ipc_sdk-*.whl ./my-app/"
 echo "  2. 在 Dockerfile 中安装:"
-echo "     COPY hailo_ipc_sdk-*.whl /tmp/"
-echo "     RUN pip install --no-cache-dir /tmp/hailo_ipc_sdk-*.whl"
+echo "     COPY neoruntime_ipc_sdk-*.whl /tmp/"
+echo "     RUN pip install --no-cache-dir /tmp/neoruntime_ipc_sdk-*.whl"

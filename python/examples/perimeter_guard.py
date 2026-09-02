@@ -11,7 +11,7 @@
 import time
 import signal
 from typing import List, Tuple
-from hailo_ipc_sdk import (
+from neoruntime_ipc_sdk import (
     InferenceClient, EventClient, DeviceClient,
     Config, InferenceResult, DetectedObject
 )

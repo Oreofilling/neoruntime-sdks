@@ -2,10 +2,11 @@
 Tests for CameraClient, ISPConfig, TransformConfig
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
-from hailo_ipc_sdk import CameraClient, ISPConfig, TransformConfig
+import pytest
+
+from neoruntime_ipc_sdk import CameraClient, ISPConfig, TransformConfig
 
 
 class TestISPConfig:
@@ -69,7 +70,7 @@ class TestCameraClient:
 
 
 class TestCameraClientISP:
-    @patch('hailo_ipc_sdk.camera.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.camera.grpc.insecure_channel')
     def test_set_isp_with_kwargs(self, mock_channel):
         mock_stub = Mock()
         mock_resp = Mock()
@@ -87,7 +88,7 @@ class TestCameraClientISP:
         assert req.brightness == 60
         assert req.contrast == 50
 
-    @patch('hailo_ipc_sdk.camera.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.camera.grpc.insecure_channel')
     def test_set_isp_skips_no_change_fields(self, mock_channel):
         mock_stub = Mock()
         mock_resp = Mock()
@@ -105,7 +106,7 @@ class TestCameraClientISP:
         assert req.brightness == 80
         # Fields with -1 default are not set on proto (protobuf default=0)
 
-    @patch('hailo_ipc_sdk.camera.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.camera.grpc.insecure_channel')
     def test_set_isp_zero_value_is_valid(self, mock_channel):
         """Zero values are legitimate (brightness=0, noise_reduction=0).
         Proto optional means the field IS set, even when value=0."""
@@ -125,7 +126,7 @@ class TestCameraClientISP:
         assert req.brightness == 0
         assert req.noise_reduction == 0
 
-    @patch('hailo_ipc_sdk.camera.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.camera.grpc.insecure_channel')
     def test_set_isp_manual_mode_false_is_valid(self, mock_channel):
         """manual_mode=False must be sent, not skipped.
         Proto optional distinguishes 'not set' (None) from 'set to False'."""
@@ -143,7 +144,7 @@ class TestCameraClientISP:
         req = call_args[0][0]
         assert req.manual_mode is False
 
-    @patch('hailo_ipc_sdk.camera.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.camera.grpc.insecure_channel')
     def test_set_isp_partial_update_merges(self, mock_channel):
         """Partial update: only changed fields sent; others stay at -1 (no change).
         Combined with proto optional, daemon only applies explicitly set fields."""
@@ -164,7 +165,7 @@ class TestCameraClientISP:
         assert req.brightness == 70
         assert req.contrast == 30
 
-    @patch('hailo_ipc_sdk.camera.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.camera.grpc.insecure_channel')
     def test_get_isp(self, mock_channel):
         mock_stub = Mock()
 
@@ -201,7 +202,7 @@ class TestCameraClientISP:
         assert isp.contrast == 60
         assert isp.powerline_freq == 1
 
-    @patch('hailo_ipc_sdk.camera.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.camera.grpc.insecure_channel')
     def test_get_isp_optional_fields_unset(self, mock_channel):
         """When proto optional fields are NOT set, HasField returns False
         and get_isp() should map them to None (not False)."""
@@ -239,7 +240,7 @@ class TestCameraClientISP:
 
 
 class TestCameraClientTransform:
-    @patch('hailo_ipc_sdk.camera.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.camera.grpc.insecure_channel')
     def test_get_transform(self, mock_channel):
         mock_stub = Mock()
         mock_resp = Mock()
@@ -259,7 +260,7 @@ class TestCameraClientTransform:
         assert transform.dewarp is True
         assert transform.grayscale is False
 
-    @patch('hailo_ipc_sdk.camera.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.camera.grpc.insecure_channel')
     def test_set_transform(self, mock_channel):
         mock_stub = Mock()
         mock_resp = Mock()
@@ -282,7 +283,7 @@ class TestCameraClientTransform:
 
 
 class TestCameraClientEncoder:
-    @patch('hailo_ipc_sdk.camera.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.camera.grpc.insecure_channel')
     def test_set_encoder(self, mock_channel):
         mock_stub = Mock()
         mock_resp = Mock()

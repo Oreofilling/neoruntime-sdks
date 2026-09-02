@@ -12,43 +12,43 @@ sys.path.insert(0, os.path.abspath('..'))
 # Fix proto import issue: Pre-load proto modules to avoid absolute import errors
 # The generated *_pb2_grpc.py files use "import xxx_pb2" instead of "from . import xxx_pb2"
 # We need to make these modules available before Sphinx tries to autodoc
-proto_dir = os.path.abspath('../hailo_ipc_sdk/proto')
+proto_dir = os.path.abspath('../neoruntime_ipc_sdk/proto')
 if proto_dir not in sys.path:
     sys.path.insert(0, proto_dir)
 
 # Mock the proto modules if they fail to import (for docs only)
 try:
-    import hailo_ipc_sdk.proto.inference_pb2 as _inf_pb2
+    import neoruntime_ipc_sdk.proto.inference_pb2 as _inf_pb2
     sys.modules['inference_pb2'] = _inf_pb2
 except Exception:
     pass
 
 try:
-    import hailo_ipc_sdk.proto.media_pb2 as _med_pb2
+    import neoruntime_ipc_sdk.proto.media_pb2 as _med_pb2
     sys.modules['media_pb2'] = _med_pb2
 except Exception:
     pass
 
 try:
-    import hailo_ipc_sdk.proto.device_pb2 as _dev_pb2
+    import neoruntime_ipc_sdk.proto.device_pb2 as _dev_pb2
     sys.modules['device_pb2'] = _dev_pb2
 except Exception:
     pass
 
 try:
-    import hailo_ipc_sdk.proto.event_pb2 as _evt_pb2
+    import neoruntime_ipc_sdk.proto.event_pb2 as _evt_pb2
     sys.modules['event_pb2'] = _evt_pb2
 except Exception:
     pass
 
 try:
-    import hailo_ipc_sdk.proto.app_pb2 as _app_pb2
+    import neoruntime_ipc_sdk.proto.app_pb2 as _app_pb2
     sys.modules['app_pb2'] = _app_pb2
 except Exception:
     pass
 
 try:
-    import hailo_ipc_sdk.proto.camera_pb2 as _cam_pb2
+    import neoruntime_ipc_sdk.proto.camera_pb2 as _cam_pb2
     sys.modules['camera_pb2'] = _cam_pb2
 except Exception:
     pass

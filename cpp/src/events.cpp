@@ -1,5 +1,5 @@
 // events.cpp — EventClient implementation. See events.hpp.
-#include "hailo_ipc_sdk/events.hpp"
+#include "neoruntime_ipc_sdk/events.hpp"
 
 #include <grpcpp/grpcpp.h>
 
@@ -13,7 +13,7 @@
 #include "event-bus/event.grpc.pb.h"
 #include "event-bus/event.pb.h"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 namespace pb = aipc::event;
 
@@ -290,4 +290,4 @@ EventStats EventClient::get_topic_stats(const std::string& topic) {
                       resp.avg_latency_us()};
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

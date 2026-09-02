@@ -4,7 +4,21 @@ Python SDK for NeoRuntime EdgeCam AI Platform
 
 ## Installation
 
-The SDK is not published to PyPI yet. Install it from this repository:
+Install from PyPI:
+
+```bash
+python -m pip install neoruntime-ipc-sdk
+```
+
+Pre-release builds are staged on TestPyPI for validation (dependencies still
+come from PyPI):
+
+```bash
+python -m pip install --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ neoruntime-ipc-sdk
+```
+
+Install from source:
 
 ```bash
 git clone https://github.com/camthink-ai/neoruntime-sdks.git
@@ -18,7 +32,7 @@ Or build and install a local wheel:
 cd neoruntime-sdks/python
 python -m pip install --upgrade build
 python -m build --wheel
-python -m pip install dist/hailo_ipc_sdk-*.whl
+python -m pip install dist/neoruntime_ipc_sdk-*.whl
 ```
 
 ## Quick Start
@@ -26,7 +40,7 @@ python -m pip install dist/hailo_ipc_sdk-*.whl
 ### 1. AI Inference
 
 ```python
-from hailo_ipc_sdk import InferenceClient
+from neoruntime_ipc_sdk import InferenceClient
 
 # Create inference client
 inf = InferenceClient()
@@ -48,7 +62,7 @@ for frame_seq, result in inf.subscribe(stream="cam0_main", model="person_v1", fp
 ### 2. Event Bus
 
 ```python
-from hailo_ipc_sdk import EventClient
+from neoruntime_ipc_sdk import EventClient
 
 events = EventClient()
 
@@ -74,7 +88,7 @@ events.on_event("app/alert", on_alert)
 ### 3. Device Control
 
 ```python
-from hailo_ipc_sdk import DeviceClient, IrCutMode
+from neoruntime_ipc_sdk import DeviceClient, IrCutMode
 
 dev = DeviceClient()
 
@@ -116,7 +130,7 @@ print(f"White light level: {status.white_light_level}")
 ### 4. Video Stream Access
 
 ```python
-from hailo_ipc_sdk import MediaClient
+from neoruntime_ipc_sdk import MediaClient
 
 media = MediaClient()
 
@@ -145,7 +159,7 @@ media.on_frame("cam0_main", process)
 ### 5. Plugin System
 
 ```python
-from hailo_ipc_sdk import PluginDiscovery, PluginServer
+from neoruntime_ipc_sdk import PluginDiscovery, PluginServer
 
 # Discover plugins
 discovery = PluginDiscovery()
@@ -169,7 +183,7 @@ grpc_server.start()
 ### 6. Complete Example: AI + Device Linkage
 
 ```python
-from hailo_ipc_sdk import InferenceClient, DeviceClient, EventClient
+from neoruntime_ipc_sdk import InferenceClient, DeviceClient, EventClient
 
 # Initialize clients
 inf = InferenceClient()
@@ -197,6 +211,43 @@ for frame_seq, result in inf.subscribe(stream="cam0_main", model="person_v1"):
         dev.set_white_light(0)
 ```
 
+### 7. App Toolkit: Drawing, Recording, and Web Streaming
+
+Detection visualization on a live frame (pure numpy/PIL, cv2 optional):
+
+```python
+from neoruntime_ipc_sdk import FdMediaClient, draw_detections
+
+frame = FdMediaClient().get_frame("main")
+img = frame.crop(0, 0, 1920, 1080).resize(960, 540).to_rgb()
+
+for seq, result in inf.subscribe(stream="cam0_main", model="person_v1"):
+    annotated = draw_detections(img, result)      # boxes + labels + scores
+    break
+```
+
+HLS recording from the encoded stream — no ffmpeg on the device needed:
+
+```python
+from neoruntime_ipc_sdk import EncodedStreamClient, HlsWriter
+
+with HlsWriter("/srv/hls", segment_seconds=4.0, window=5) as hls:
+    for frame in EncodedStreamClient("/run/aipc/encoded/main.sock").subscribe():
+        hls.write(frame)                          # cuts on keyframes
+# serve /srv/hls/ over HTTP and point hls.js at index.m3u8
+```
+
+MJPEG preview page — one WSGI app (mount in Flask) or a standalone server:
+
+```python
+from neoruntime_ipc_sdk import FdMediaClient, MjpegServer, MjpegStream
+
+source = MjpegStream()
+MjpegServer(port=8080, source=source).start()     # http://device:8080/
+for frame in FdMediaClient().subscribe("sub"):
+    source.push_frame(frame.resize(640, 360))     # slow clients just drop frames
+```
+
 ## API Reference
 
 ### InferenceClient
@@ -211,7 +262,7 @@ AI inference client for model inference and streaming inference subscription.
 | `close()` | - | - | Close connection |
 | `infer(image, model_id, timeout_ms, priority, session_id)` | ndarray, str, int, int, str | InferenceResult | Single inference |
 | `infer_with_tensors(model_id, inputs, input_names, timeout_ms)` | str, List[ndarray], List[str], int | List[ndarray] | Multi-tensor inference |
-| `subscribe(stream, model, fps, session_id, raw_output_only)` | str, str, int, str, bool | Iterator[Tuple[int, InferenceResult]] | Streaming inference |
+| `subscribe(stream, model, fps, session_id, raw_output_only, max_consecutive_failures)` | str, str, int, str, bool, Optional[int] | Iterator[Tuple[int, InferenceResult]] | Streaming inference; failed frames are skipped with a warning and a `RuntimeError` is raised after 10 consecutive failures (0/None disables) |
 | `register_model(model_path, model_id, inputs, outputs)` | str, str, List[Dict], List[Dict] | str | Register model |
 | `unregister_model(model_id)` | str | - | Unregister model |
 | `list_models()` | - | List[ModelInfo] | List models |
@@ -281,6 +332,21 @@ Device control client for controlling camera peripherals.
 - `set_iris_target(target: int)` - Set iris target value
 - `get_lens_status()` - Get lens status dict (positions, states, limits)
 
+**Autofocus (native jobs):**
+- `start_oneshot_af()` - Start a one-shot AF job, returns `AfJob`
+- `start_zoom_follow(ratio: float)` - Start continuous AF following a zoom ratio, returns `AfJob`
+- `get_autofocus_status()` - Poll the AF engine, returns `AfStatus(state, progress, busy, ...)`
+- `cancel_autofocus(job_id: int = 0)` - Cancel a running AF job
+- `set_af_windows(enabled, windows, stream_id: str = "main")` - Restrict AF metering to windows
+- `get_af_measurement()` - Read AF statistics, returns `AfMeasurement(focus_energy, mean_luma, ...)`
+
+> **Known device limitation:** on current firmware (verified on
+> a test device, 2026-08) the lens HAL bridge rejects `set_af_windows`
+> and `get_af_measurement` with *"not yet supported"*. The SDK-side
+> plumbing is complete; both calls will start working once the device
+> firmware adds bridge support. Oneshot, zoom-follow, status, and cancel
+> all work today.
+
 **GPIO:**
 - `gpio_set(pin: int, value: bool)` - GPIO output
 - `gpio_get(pin: int)` - GPIO input
@@ -340,8 +406,35 @@ Video stream client for accessing video frames from shared memory.
 **Data Classes:**
 
 - `Frame`: sequence, timestamp_ns, width, height, format, image, metadata
+- `Frame.crop(x, y, w, h)` - New cropped Frame (NV12 needs even x/y/w/h)
+- `Frame.resize(width, height, mode="letterbox", pad_value=114)` - New resized Frame (`stretch` / `letterbox` / `crop`)
+- `Frame.to_jpeg_bytes(quality=85)` - JPEG bytes (cv2 fast path, PIL fallback)
 - `StreamInfo`: stream_id, width, height, format, fps, buffer_count
 - `PixelFormat`: NV12, NV21, RGB, BGR, RGBA, BGRA, GRAY8, YUYV
+
+### Recording (`recording`)
+
+Pure-python MPEG-TS muxing of `EncodedFrame` Annex-B payloads — no ffmpeg required.
+
+- `TsWriter(path, codec="h264")` - Single-file .ts event clip
+- `HlsWriter(out_dir, segment_seconds=6.0, window=5)` - Keyframe-aligned HLS segments + live `index.m3u8`
+- `PrerollBuffer(seconds=10.0)` - Ring buffer; `push(frame)`, `dump("event.ts")` writes "seconds before the event"
+
+### Web Streaming (`web`)
+
+MJPEG helpers for app preview pages.
+
+- `MjpegStream()` - Thread-safe latest-frame holder; `push_frame(frame, quality=85)` / `push_jpeg(data)`
+- `mjpeg_wsgi_app(source, fps=15)` - WSGI callable — mount straight into Flask
+- `MjpegServer(port=8080, host="0.0.0.0", source=...)` - Standalone threaded HTTP server
+
+### Drawing (`draw`)
+
+Detection visualization on RGB numpy arrays (returns new arrays, input untouched).
+
+- `draw_boxes(image, boxes, labels=None, scores=None, color=(0,255,0), thickness=2)`
+- `draw_text(image, text, xy, color=(255,255,255), font_scale=0.5, thickness=1)`
+- `draw_detections(image, result_or_objects, color=None)` - Accepts `InferenceResult` / `DetectedObject` / raw `(x1,y1,x2,y2)` tuples
 
 ### PluginDiscovery / PluginServer
 
@@ -394,7 +487,7 @@ SDK automatically reads configuration from environment variables:
 
 ### Protobuf Stubs
 
-The generated protobuf stubs in `hailo_ipc_sdk/proto/` (`*_pb2.py` / `*_pb2_grpc.py`)
+The generated protobuf stubs in `neoruntime_ipc_sdk/proto/` (`*_pb2.py` / `*_pb2_grpc.py`)
 are **committed to the repo** so the SDK imports cleanly on a fresh clone, editable
 install, and inside packaged wheels. They are re-included via `sdk/python/.gitignore`
 and do not affect the global "no generated artifacts" policy for Go services.
@@ -404,7 +497,7 @@ If you change any `.proto` source, regenerate and re-commit them:
 ```bash
 make sdk-proto           # regenerate stubs (inference/event/device/app/camera)
 make sdk-proto-check     # verify committed stubs match .proto sources
-git add sdk/python/hailo_ipc_sdk/proto/*_pb2*.py
+git add sdk/python/neoruntime_ipc_sdk/proto/*_pb2*.py
 ```
 
 ### Run Tests
@@ -434,7 +527,7 @@ ls dist/*.whl
 The generated wheel is written to `dist/`, for example:
 
 ```bash
-pip install dist/hailo_ipc_sdk-*.whl
+pip install dist/neoruntime_ipc_sdk-*.whl
 ```
 
 For older tooling, this also works:
@@ -455,8 +548,8 @@ To create or update a GitHub Release, either push a version tag or run the
 workflow manually with release publishing enabled:
 
 ```bash
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 The release tag version must match the package version in `setup.py`. On release

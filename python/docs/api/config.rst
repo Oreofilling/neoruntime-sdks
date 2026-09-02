@@ -1,7 +1,7 @@
 配置 API
 ========
 
-.. automodule:: hailo_ipc_sdk.config
+.. automodule:: neoruntime_ipc_sdk.config
    :members:
    :undoc-members:
    :show-inheritance:
@@ -10,7 +10,7 @@
 Config
 ------
 
-.. autoclass:: hailo_ipc_sdk.Config
+.. autoclass:: neoruntime_ipc_sdk.Config
    :members:
    :undoc-members:
    :show-inheritance:
@@ -23,7 +23,7 @@ Config
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import Config
+   from neoruntime_ipc_sdk import Config
 
    # 获取应用 ID
    app_id = Config.get_app_id()
@@ -57,7 +57,7 @@ SDK 自动从环境变量读取配置：
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import Config
+   from neoruntime_ipc_sdk import Config
 
    # 自动从环境变量加载
    print(Config.get_app_id())  # 输出: my_app

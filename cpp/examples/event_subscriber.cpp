@@ -15,9 +15,9 @@
 
 #include <nlohmann/json.hpp>
 
-#include "hailo_ipc_sdk/config.hpp"
-#include "hailo_ipc_sdk/device.hpp"
-#include "hailo_ipc_sdk/events.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/device.hpp"
+#include "neoruntime_ipc_sdk/events.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -42,16 +42,16 @@ int main() {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
-    const std::string app_id = hailo_ipc_sdk::Config::get_app_id();
-    const bool debug = hailo_ipc_sdk::Config::is_debug();
+    const std::string app_id = neoruntime_ipc_sdk::Config::get_app_id();
+    const bool debug = neoruntime_ipc_sdk::Config::is_debug();
 
-    hailo_ipc_sdk::EventClient events;
-    hailo_ipc_sdk::DeviceClient device;
+    neoruntime_ipc_sdk::EventClient events;
+    neoruntime_ipc_sdk::DeviceClient device;
 
     std::printf("[%s] Event Subscriber App initialized\n", app_id.c_str());
     std::printf("[%s] Starting event subscriptions...\n", app_id.c_str());
 
-    auto on_detection = [&](const hailo_ipc_sdk::Event& ev) {
+    auto on_detection = [&](const neoruntime_ipc_sdk::Event& ev) {
         std::printf("[%s] Detection event: %s\n", app_id.c_str(), ev.topic.c_str());
         if (debug) std::printf("  Payload: %s\n", ev.payload.dump().c_str());
         if (contains_ci(ev.payload.dump(), "person")) {
@@ -64,7 +64,7 @@ int main() {
         }
     };
 
-    auto on_alert = [&](const hailo_ipc_sdk::Event& ev) {
+    auto on_alert = [&](const neoruntime_ipc_sdk::Event& ev) {
         std::printf("[%s] Alert received: %s\n", app_id.c_str(), ev.topic.c_str());
         std::printf("  Source: %s\n", ev.source.c_str());
         std::printf("  Data: %s\n", ev.payload.dump().c_str());
@@ -76,13 +76,13 @@ int main() {
                        });
     };
 
-    auto on_system = [&](const hailo_ipc_sdk::Event& ev) {
+    auto on_system = [&](const neoruntime_ipc_sdk::Event& ev) {
         if (debug) std::printf("[%s] System event: %s\n", app_id.c_str(), ev.topic.c_str());
     };
 
     struct TopicCb {
         const char* topic;
-        std::function<void(const hailo_ipc_sdk::Event&)> cb;
+        std::function<void(const neoruntime_ipc_sdk::Event&)> cb;
     };
     const TopicCb topics[] = {
         {"model/+/detections", on_detection},

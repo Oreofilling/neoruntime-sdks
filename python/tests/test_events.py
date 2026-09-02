@@ -2,10 +2,11 @@
 Tests for EventClient
 """
 
-import pytest
 from unittest.mock import Mock, patch
 
-from hailo_ipc_sdk import EventClient, Event, TopicInfo
+import pytest
+
+from neoruntime_ipc_sdk import Event, EventClient, TopicInfo
 
 
 class TestEvent:
@@ -63,7 +64,7 @@ class TestEventClient:
         with EventClient() as client:
             assert client.channel is not None
     
-    @patch('hailo_ipc_sdk.events.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.events.grpc.insecure_channel')
     def test_connect(self, mock_channel):
         client = EventClient()
         client.connect()
@@ -73,7 +74,7 @@ class TestEventClient:
 
 
 class TestEventClientPublish:
-    @patch('hailo_ipc_sdk.events.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.events.grpc.insecure_channel')
     def test_publish_success(self, mock_channel):
         mock_stub = Mock()
         mock_stub.Publish.return_value = Mock(
@@ -89,7 +90,7 @@ class TestEventClientPublish:
         assert event_id == "evt-123"
         mock_stub.Publish.assert_called_once()
     
-    @patch('hailo_ipc_sdk.events.grpc.insecure_channel')
+    @patch('neoruntime_ipc_sdk.events.grpc.insecure_channel')
     def test_publish_with_metadata(self, mock_channel):
         mock_stub = Mock()
         mock_stub.Publish.return_value = Mock(

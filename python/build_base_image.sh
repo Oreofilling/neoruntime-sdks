@@ -76,7 +76,7 @@ docker images "${IMAGE_NAME}:${IMAGE_TAG}" --format "table {{.Repository}}\t{{.T
 echo ""
 echo "Usage:"
 echo "  # Test the image"
-echo "  docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} python3 -c 'import hailo_ipc_sdk; print(hailo_ipc_sdk.__version__)'"
+echo "  docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} python3 -c 'import neoruntime_ipc_sdk; print(neoruntime_ipc_sdk.__version__)'"
 echo ""
 echo "  # Use as base image in your Dockerfile"
 echo "  FROM ${IMAGE_NAME}:${IMAGE_TAG}"

@@ -44,7 +44,7 @@ AI Inference
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import InferenceClient
+   from neoruntime_ipc_sdk import InferenceClient
    import numpy as np
 
    # Create inference client
@@ -63,7 +63,7 @@ Event Bus
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import EventClient
+   from neoruntime_ipc_sdk import EventClient
 
    events = EventClient()
 
@@ -79,7 +79,7 @@ Device Control
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import DeviceClient, IrCutMode
+   from neoruntime_ipc_sdk import DeviceClient, IrCutMode
 
    dev = DeviceClient()
 

@@ -14,9 +14,9 @@
 
 #include <nlohmann/json.hpp>
 
-#include "hailo_ipc_sdk/config.hpp"
-#include "hailo_ipc_sdk/events.hpp"
-#include "hailo_ipc_sdk/inference.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/events.hpp"
+#include "neoruntime_ipc_sdk/inference.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -33,17 +33,17 @@ int main() {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
-    const std::string app_id = hailo_ipc_sdk::Config::get_app_id();
-    const bool debug = hailo_ipc_sdk::Config::is_debug();
+    const std::string app_id = neoruntime_ipc_sdk::Config::get_app_id();
+    const bool debug = neoruntime_ipc_sdk::Config::is_debug();
 
     std::printf("[%s] Person Detection App initialized\n", app_id.c_str());
     std::printf("[%s] AI Runtime: %s\n", app_id.c_str(),
-                hailo_ipc_sdk::Config::get_inference_endpoint().c_str());
+                neoruntime_ipc_sdk::Config::get_inference_endpoint().c_str());
     std::printf("[%s] Event Bus:  %s\n", app_id.c_str(),
-                hailo_ipc_sdk::Config::get_event_bus_endpoint().c_str());
+                neoruntime_ipc_sdk::Config::get_event_bus_endpoint().c_str());
 
-    hailo_ipc_sdk::InferenceClient inference;
-    hailo_ipc_sdk::EventClient events;
+    neoruntime_ipc_sdk::InferenceClient inference;
+    neoruntime_ipc_sdk::EventClient events;
     std::printf("[%s] Starting person detection...\n", app_id.c_str());
 
     try {

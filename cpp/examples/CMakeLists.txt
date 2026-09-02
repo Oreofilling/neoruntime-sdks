@@ -6,6 +6,7 @@
 set(NE503_EXAMPLES
     connectivity_smoke   # read-only gRPC round-trip smoke (safe on live hardware)
     media_smoke          # raw-UDS media path (encoded H.264/H.265 + zero-copy DMA-BUF)
+    api_tour             # every client module, one core call each, PASS/SKIP/FAIL
     person_detection
     event_subscriber
     perimeter_guard

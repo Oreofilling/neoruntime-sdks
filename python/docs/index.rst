@@ -44,7 +44,7 @@ AI 推理
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import InferenceClient
+   from neoruntime_ipc_sdk import InferenceClient
    import numpy as np
 
    # 创建推理客户端
@@ -63,7 +63,7 @@ AI 推理
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import EventClient
+   from neoruntime_ipc_sdk import EventClient
 
    events = EventClient()
 
@@ -79,7 +79,7 @@ AI 推理
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import DeviceClient, IrCutMode
+   from neoruntime_ipc_sdk import DeviceClient, IrCutMode
 
    dev = DeviceClient()
 

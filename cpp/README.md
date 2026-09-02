@@ -1,7 +1,7 @@
 # NeoRuntime C++ SDK
 
 C++ client SDK for the NeoRuntime edge-AI camera platform — a full mirror of
-the Python SDK (`python/hailo_ipc_sdk`), using OpenCV `cv::Mat` where the
+the Python SDK (`python/neoruntime_ipc_sdk`), using OpenCV `cv::Mat` where the
 Python SDK uses numpy.
 
 Applications built with this SDK run on-device, inside an app container, and
@@ -68,6 +68,7 @@ stubs at build time from the shared root `proto/` directory).
 - `person_detection.cpp` — stream inference + event publishing (the canonical demo)
 - `perimeter_guard.cpp`, `video_processor.cpp`, `event_subscriber.cpp`
 - `connectivity_smoke.cpp`, `media_smoke.cpp` — on-device smoke checks
+- `api_tour.cpp` — one core call per client module (all 11), PASS/SKIP/FAIL summary
 
 ## Tests
 
@@ -79,5 +80,5 @@ media/audio wire structs, AudioFrame decoding. Run with `ctest`.
 
 Doxygen API reference (English) is published at
 `/cpp/en/` on the documentation site, generated from the public headers in
-`cpp/include/hailo_ipc_sdk/`. A Chinese quick-start & module overview lives at
+`cpp/include/neoruntime_ipc_sdk/`. A Chinese quick-start & module overview lives at
 `/cpp/zh/`.

@@ -17,7 +17,7 @@
 #include <string>
 #include <string_view>
 
-namespace hailo_ipc_sdk::detail {
+namespace neoruntime_ipc_sdk::detail {
 
 // Returns the endpoint string verbatim for use as a grpc::CreateChannel target.
 // Kept as a function (not a passthrough) so call sites say what they mean and
@@ -41,4 +41,4 @@ inline std::string unix_socket_path(std::string_view endpoint) {
     return std::string(endpoint);
 }
 
-}  // namespace hailo_ipc_sdk::detail
+}  // namespace neoruntime_ipc_sdk::detail

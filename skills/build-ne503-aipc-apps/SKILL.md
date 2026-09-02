@@ -41,7 +41,7 @@ Use this shape for long-running apps:
 ```python
 import os
 import signal
-from hailo_ipc_sdk import Config, EventClient, InferenceClient
+from neoruntime_ipc_sdk import Config, EventClient, InferenceClient
 
 class App:
     def __init__(self):
@@ -79,8 +79,8 @@ if __name__ == "__main__":
 
 ## C++ Pattern
 
-- Include public headers from `hailo_ipc_sdk/*.hpp`.
-- Use `hailo_ipc_sdk::Config` for endpoints and app id.
+- Include public headers from `neoruntime_ipc_sdk/*.hpp`.
+- Use `neoruntime_ipc_sdk::Config` for endpoints and app id.
 - For streaming inference, consume the subscription with `next()` and check for empty optional values.
 - Use `nlohmann::json` for event payloads.
 - Build examples with the existing `cpp/examples/CMakeLists.txt` pattern and link `ne503::aipc_sdk`.

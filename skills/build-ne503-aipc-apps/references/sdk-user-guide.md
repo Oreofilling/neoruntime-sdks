@@ -21,7 +21,7 @@ Use additional app-level variables such as `AIPC_STREAM=cam0_main` and `AIPC_MOD
 ## Python Imports
 
 ```python
-from hailo_ipc_sdk import (
+from neoruntime_ipc_sdk import (
     AppClient,
     AudioClient,
     AudioStreamClient,

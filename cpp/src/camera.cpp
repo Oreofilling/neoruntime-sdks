@@ -4,7 +4,7 @@
 // is unary. Two status shapes appear: ISPUpdateResponse nests a Status sub-message
 // (.status()), while most others carry a top-level bool success / string message.
 // pb::Empty is camera.proto's own Empty (aipc.camera.Empty), NOT google's.
-#include "hailo_ipc_sdk/camera.hpp"
+#include "neoruntime_ipc_sdk/camera.hpp"
 
 #include <grpcpp/grpcpp.h>
 
@@ -16,13 +16,13 @@
 #include <utility>
 #include <vector>
 
-#include "hailo_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
 
 #include "detail/grpc_channel.hpp"
 #include "camera-daemon/camera.grpc.pb.h"
 #include "camera-daemon/camera.pb.h"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 namespace pb = aipc::camera;
 
@@ -575,4 +575,4 @@ void CameraClient::rs485_tx(const std::string& data) {
     detail::require_success(resp.success(), resp.message(), "Rs485Tx");
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

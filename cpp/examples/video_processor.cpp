@@ -15,8 +15,8 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include "hailo_ipc_sdk/config.hpp"
-#include "hailo_ipc_sdk/media.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/media.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -38,10 +38,10 @@ int main() {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
-    const std::string app_id = hailo_ipc_sdk::Config::get_app_id();
-    const bool debug = hailo_ipc_sdk::Config::is_debug();
+    const std::string app_id = neoruntime_ipc_sdk::Config::get_app_id();
+    const bool debug = neoruntime_ipc_sdk::Config::is_debug();
 
-    hailo_ipc_sdk::FdMediaClient media;
+    neoruntime_ipc_sdk::FdMediaClient media;
 
     const int save_interval = 100;
     const std::string save_dir = "/app/data/frames";
@@ -49,7 +49,7 @@ int main() {
 
     std::printf("[%s] Video Processor App initialized\n", app_id.c_str());
     std::printf("[%s] SHM Base: %s\n", app_id.c_str(),
-                hailo_ipc_sdk::Config::get_shm_base_path().c_str());
+                neoruntime_ipc_sdk::Config::get_shm_base_path().c_str());
 
     auto streams = media.list_streams();
     std::printf("[%s] Available streams: %zu\n", app_id.c_str(), streams.size());

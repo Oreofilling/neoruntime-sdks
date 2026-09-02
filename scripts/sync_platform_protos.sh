@@ -14,7 +14,7 @@ PLATFORM_REPO_TOKEN="${PLATFORM_REPO_TOKEN:-}"
 PLATFORM_WORKTREE="${PLATFORM_WORKTREE:-}"
 PYTHON="${PYTHON:-python3}"
 
-PROTO_OUT="$REPO_ROOT/python/hailo_ipc_sdk/proto"
+PROTO_OUT="$REPO_ROOT/python/neoruntime_ipc_sdk/proto"
 
 copy_proto() {
     local src="$1"

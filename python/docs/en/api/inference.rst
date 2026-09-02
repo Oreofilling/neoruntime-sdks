@@ -1,7 +1,7 @@
 AI Inference API
 ================
 
-.. automodule:: hailo_ipc_sdk.inference
+.. automodule:: neoruntime_ipc_sdk.inference
    :members:
    :undoc-members:
    :show-inheritance:
@@ -10,7 +10,7 @@ AI Inference API
 InferenceClient
 ---------------
 
-.. autoclass:: hailo_ipc_sdk.InferenceClient
+.. autoclass:: neoruntime_ipc_sdk.InferenceClient
    :members:
    :undoc-members:
    :show-inheritance:
@@ -22,7 +22,7 @@ Data Types
 InferenceResult
 ~~~~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.InferenceResult
+.. autoclass:: neoruntime_ipc_sdk.InferenceResult
    :members:
    :undoc-members:
    :no-index:
@@ -30,14 +30,14 @@ InferenceResult
 DetectedObject
 ~~~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.DetectedObject
+.. autoclass:: neoruntime_ipc_sdk.DetectedObject
    :members:
    :undoc-members:
 
 BoundingBox
 ~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.BoundingBox
+.. autoclass:: neoruntime_ipc_sdk.BoundingBox
    :members:
    :undoc-members:
    :no-index:
@@ -45,56 +45,56 @@ BoundingBox
 LandmarkPoint
 ~~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.LandmarkPoint
+.. autoclass:: neoruntime_ipc_sdk.LandmarkPoint
    :members:
    :undoc-members:
 
 LandmarkSet
 ~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.LandmarkSet
+.. autoclass:: neoruntime_ipc_sdk.LandmarkSet
    :members:
    :undoc-members:
 
 SegmentationMask
 ~~~~~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.SegmentationMask
+.. autoclass:: neoruntime_ipc_sdk.SegmentationMask
    :members:
    :undoc-members:
 
 OcrLine
 ~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.OcrLine
+.. autoclass:: neoruntime_ipc_sdk.OcrLine
    :members:
    :undoc-members:
 
 Embedding
 ~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.Embedding
+.. autoclass:: neoruntime_ipc_sdk.Embedding
    :members:
    :undoc-members:
 
 DepthMap
 ~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.DepthMap
+.. autoclass:: neoruntime_ipc_sdk.DepthMap
    :members:
    :undoc-members:
 
 Classification
 ~~~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.Classification
+.. autoclass:: neoruntime_ipc_sdk.Classification
    :members:
    :undoc-members:
 
 ModelInfo
 ~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.ModelInfo
+.. autoclass:: neoruntime_ipc_sdk.ModelInfo
    :members:
    :undoc-members:
 
@@ -106,7 +106,7 @@ Single-shot Inference
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import InferenceClient
+   from neoruntime_ipc_sdk import InferenceClient
    import numpy as np
 
    inf = InferenceClient()

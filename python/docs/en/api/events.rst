@@ -1,7 +1,7 @@
 Event Bus API
 =============
 
-.. automodule:: hailo_ipc_sdk.events
+.. automodule:: neoruntime_ipc_sdk.events
    :members:
    :undoc-members:
    :show-inheritance:
@@ -10,7 +10,7 @@ Event Bus API
 EventClient
 -----------
 
-.. autoclass:: hailo_ipc_sdk.EventClient
+.. autoclass:: neoruntime_ipc_sdk.EventClient
    :members:
    :undoc-members:
    :show-inheritance:
@@ -22,14 +22,14 @@ Data Types
 Event
 ~~~~~
 
-.. autoclass:: hailo_ipc_sdk.Event
+.. autoclass:: neoruntime_ipc_sdk.Event
    :members:
    :undoc-members:
 
 TopicInfo
 ~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.TopicInfo
+.. autoclass:: neoruntime_ipc_sdk.TopicInfo
    :members:
    :undoc-members:
 
@@ -41,7 +41,7 @@ Publishing Events
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import EventClient
+   from neoruntime_ipc_sdk import EventClient
 
    events = EventClient()
 

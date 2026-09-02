@@ -14,10 +14,10 @@
 
 #include <nlohmann/json.hpp>
 
-#include "hailo_ipc_sdk/config.hpp"
-#include "hailo_ipc_sdk/device.hpp"
-#include "hailo_ipc_sdk/events.hpp"
-#include "hailo_ipc_sdk/inference.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/device.hpp"
+#include "neoruntime_ipc_sdk/events.hpp"
+#include "neoruntime_ipc_sdk/inference.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -39,12 +39,12 @@ int main() {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
-    const std::string app_id = hailo_ipc_sdk::Config::get_app_id();
-    const bool debug = hailo_ipc_sdk::Config::is_debug();
+    const std::string app_id = neoruntime_ipc_sdk::Config::get_app_id();
+    const bool debug = neoruntime_ipc_sdk::Config::is_debug();
 
-    hailo_ipc_sdk::InferenceClient inference;
-    hailo_ipc_sdk::EventClient events;
-    hailo_ipc_sdk::DeviceClient device;
+    neoruntime_ipc_sdk::InferenceClient inference;
+    neoruntime_ipc_sdk::EventClient events;
+    neoruntime_ipc_sdk::DeviceClient device;
 
     const double alert_cooldown = 5.0;
     const double light_timeout = 10.0;
@@ -75,7 +75,7 @@ int main() {
             std::printf("[%s] Failed to control light: %s\n", app_id.c_str(), e.what());
         }
     };
-    auto is_crossing = [&](const hailo_ipc_sdk::DetectedObject& p) {
+    auto is_crossing = [&](const neoruntime_ipc_sdk::DetectedObject& p) {
         double cx = p.bbox.x + p.bbox.width / 2.0;
         double cy = p.bbox.y + p.bbox.height / 2.0;
         return cx > detection_line_x && cy > detection_line_y;
@@ -92,7 +92,7 @@ int main() {
 
             auto persons = result.get_objects_by_label("person");
 
-            std::vector<hailo_ipc_sdk::DetectedObject> crossed;
+            std::vector<neoruntime_ipc_sdk::DetectedObject> crossed;
             for (const auto& p : persons) {
                 if (is_crossing(p)) crossed.push_back(p);
             }

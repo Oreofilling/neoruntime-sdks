@@ -4,7 +4,7 @@
 
 ```
 sdk/python/
-├── hailo_ipc_sdk/          # SDK 源码
+├── neoruntime_ipc_sdk/          # SDK 源码
 ├── docs/                   # Sphinx 文档
 │   ├── conf.py            # Sphinx 配置
 │   ├── index.rst          # 文档首页
@@ -145,11 +145,11 @@ docker build -t registry.local/my-app:1.0.0 .
 ### 镜像特性
 
 - **基础**: python:3.10-slim-bookworm
-- **架构**: linux/arm64 (支持 Hailo-15, RK3588, Jetson)
+- **架构**: linux/arm64 (支持 NE503, RK3588, Jetson)
 - **大小**: ~200MB (优化后)
 - **安全**: 非 root 用户运行
 - **预装**:
-  - hailo-ipc-sdk 0.4.0
+  - neoruntime-ipc-sdk 0.4.0
   - numpy
   - Pillow
   - opencv-python-headless
@@ -245,7 +245,7 @@ python3 app.py
 ```bash
 # 1. 更新版本号
 # - sdk/python/setup.py
-# - sdk/python/hailo_ipc_sdk/__init__.py
+# - sdk/python/neoruntime_ipc_sdk/__init__.py
 # - sdk/python/Dockerfile.base
 
 # 2. 更新文档
@@ -259,7 +259,7 @@ cd sdk/python
 
 # 4. 测试镜像
 docker run --rm registry.local/aipc-sdk:0.4.0 \
-    python3 -c "import hailo_ipc_sdk; print(hailo_ipc_sdk.__version__)"
+    python3 -c "import neoruntime_ipc_sdk; print(neoruntime_ipc_sdk.__version__)"
 
 # 5. 推送到仓库
 docker push registry.local/aipc-sdk:0.4.0
@@ -326,7 +326,7 @@ docker builder prune -af
 ```bash
 # 检查 SDK 安装
 docker run --rm registry.local/aipc-sdk:0.4.0 \
-    python3 -c "import hailo_ipc_sdk; print(hailo_ipc_sdk.__version__)"
+    python3 -c "import neoruntime_ipc_sdk; print(neoruntime_ipc_sdk.__version__)"
 
 # 检查权限
 docker run --rm registry.local/aipc-sdk:0.4.0 \

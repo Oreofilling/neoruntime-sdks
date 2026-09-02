@@ -3,7 +3,7 @@
 // arrives as an 80-byte FdPubFrameMsg carrying up to 3 DMA-BUF fds as ancillary
 // data. Each fd is mmapped (by its fstat size) and `sizes[i]` bytes copied out,
 // then the frame is RELEASEd and all fds closed (mirrors media.py _recv_frame).
-#include "hailo_ipc_sdk/media.hpp"
+#include "neoruntime_ipc_sdk/media.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -23,12 +23,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "hailo_ipc_sdk/config.hpp"
+#include "neoruntime_ipc_sdk/config.hpp"
 
 #include "detail/fd_protocol.hpp"
 #include "detail/raw_socket.hpp"
 
-namespace hailo_ipc_sdk {
+namespace neoruntime_ipc_sdk {
 
 using detail::FdPubFrameMsg;
 using detail::FdPubMsgHeader;
@@ -449,4 +449,4 @@ std::string FdMediaClient::get_rtsp_url(const std::string& stream_id,
     return "rtsp://" + host + ":" + std::to_string(port) + "/" + stream_id;
 }
 
-}  // namespace hailo_ipc_sdk
+}  // namespace neoruntime_ipc_sdk

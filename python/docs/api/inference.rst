@@ -1,7 +1,7 @@
 AI 推理 API
 ===========
 
-.. automodule:: hailo_ipc_sdk.inference
+.. automodule:: neoruntime_ipc_sdk.inference
    :members:
    :undoc-members:
    :show-inheritance:
@@ -10,7 +10,7 @@ AI 推理 API
 InferenceClient
 ---------------
 
-.. autoclass:: hailo_ipc_sdk.InferenceClient
+.. autoclass:: neoruntime_ipc_sdk.InferenceClient
    :members:
    :undoc-members:
    :show-inheritance:
@@ -22,7 +22,7 @@ InferenceClient
 InferenceResult
 ~~~~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.InferenceResult
+.. autoclass:: neoruntime_ipc_sdk.InferenceResult
    :members:
    :undoc-members:
    :no-index:
@@ -30,14 +30,14 @@ InferenceResult
 DetectedObject
 ~~~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.DetectedObject
+.. autoclass:: neoruntime_ipc_sdk.DetectedObject
    :members:
    :undoc-members:
 
 BoundingBox
 ~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.BoundingBox
+.. autoclass:: neoruntime_ipc_sdk.BoundingBox
    :members:
    :undoc-members:
    :no-index:
@@ -45,28 +45,28 @@ BoundingBox
 LandmarkPoint
 ~~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.LandmarkPoint
+.. autoclass:: neoruntime_ipc_sdk.LandmarkPoint
    :members:
    :undoc-members:
 
 LandmarkSet
 ~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.LandmarkSet
+.. autoclass:: neoruntime_ipc_sdk.LandmarkSet
    :members:
    :undoc-members:
 
 Classification
 ~~~~~~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.Classification
+.. autoclass:: neoruntime_ipc_sdk.Classification
    :members:
    :undoc-members:
 
 ModelInfo
 ~~~~~~~~~
 
-.. autoclass:: hailo_ipc_sdk.ModelInfo
+.. autoclass:: neoruntime_ipc_sdk.ModelInfo
    :members:
    :undoc-members:
 
@@ -78,7 +78,7 @@ ModelInfo
 
 .. code-block:: python
 
-   from hailo_ipc_sdk import InferenceClient
+   from neoruntime_ipc_sdk import InferenceClient
    import numpy as np
 
    inf = InferenceClient()

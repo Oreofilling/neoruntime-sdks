@@ -5,12 +5,12 @@ Tests for InferenceClient
 import asyncio
 import threading
 import time
+from unittest.mock import MagicMock, Mock, patch
 
-import pytest
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
+import pytest
 
-from hailo_ipc_sdk import InferenceClient, BoundingBox, DetectedObject, InferenceResult
+from neoruntime_ipc_sdk import BoundingBox, DetectedObject, InferenceClient, InferenceResult
 
 
 class TestBoundingBox:
@@ -103,8 +103,8 @@ class TestInferenceClient:
         with InferenceClient() as client:
             assert client.channel is not None
     
-    @patch('hailo_ipc_sdk.inference.inference_pb2_grpc.InferenceServiceStub')
-    @patch('hailo_ipc_sdk.inference.grpc.aio.insecure_channel')
+    @patch('neoruntime_ipc_sdk.inference.inference_pb2_grpc.InferenceServiceStub')
+    @patch('neoruntime_ipc_sdk.inference.grpc.aio.insecure_channel')
     def test_connect(self, mock_channel, mock_stub):
         class FakeAioChannel:
             async def close(self):
@@ -120,7 +120,7 @@ class TestInferenceClient:
         client.close()
     
     def test_numpy_to_tensor(self):
-        from hailo_ipc_sdk.proto import inference_pb2
+        from neoruntime_ipc_sdk.proto import inference_pb2
         client = InferenceClient()
         arr = np.zeros((100, 100, 3), dtype=np.uint8)
         
@@ -132,7 +132,7 @@ class TestInferenceClient:
     def test_dtype_conversion(self):
         client = InferenceClient()
         
-        from hailo_ipc_sdk.proto import inference_pb2
+        from neoruntime_ipc_sdk.proto import inference_pb2
         
         assert client._dtype_str_to_enum("uint8") == inference_pb2.UINT8
         assert client._dtype_str_to_enum("float32") == inference_pb2.FLOAT32
@@ -150,6 +150,78 @@ class TestInferenceClient:
         assert frame_sequence == response.frame_sequence
         assert result.frame_sequence == response.frame_sequence
 
+        gen.close()
+        assert _wait_until(lambda: stub.last_call.cancelled)
+        _stop_fake_loop(client, thread)
+
+    def test_subscribe_skips_failed_frames_and_warns(self, caplog):
+        import logging
+        client, thread = _client_with_fake_loop()
+        responses = [
+            _failed_response(frame_sequence=1, message="Inference failed: -2814"),
+            _failed_response(frame_sequence=2, message="Inference failed: -2814"),
+            _ok_response(frame_sequence=42),
+        ]
+        stub = _FakeMultiStreamingStub(responses)
+        client.stub = stub
+
+        with caplog.at_level(logging.WARNING, logger="neoruntime_ipc_sdk.inference"):
+            gen = client.subscribe("main", "person_v1")
+            frame_sequence, result = next(gen)
+            gen.close()
+
+        assert frame_sequence == 42
+        assert result.frame_sequence == 42
+        assert "-2814" in caplog.text
+        assert _wait_until(lambda: stub.last_call.cancelled)
+        _stop_fake_loop(client, thread)
+
+    def test_subscribe_raises_after_consecutive_failures(self):
+        client, thread = _client_with_fake_loop()
+        responses = [
+            _failed_response(frame_sequence=i, message="Inference failed: -2814")
+            for i in range(3)
+        ]
+        stub = _FakeMultiStreamingStub(responses)
+        client.stub = stub
+
+        gen = client.subscribe("main", "person_v1", max_consecutive_failures=3)
+        with pytest.raises(RuntimeError, match="3 consecutive times"):
+            next(gen)
+
+        assert _wait_until(lambda: stub.last_call.cancelled)
+        _stop_fake_loop(client, thread)
+
+    def test_subscribe_failure_counter_resets_on_success(self):
+        client, thread = _client_with_fake_loop()
+        responses = [
+            _failed_response(frame_sequence=1),
+            _failed_response(frame_sequence=2),
+            _ok_response(frame_sequence=10),
+            _failed_response(frame_sequence=3),
+            _failed_response(frame_sequence=4),
+            _ok_response(frame_sequence=20),
+        ]
+        stub = _FakeMultiStreamingStub(responses)
+        client.stub = stub
+
+        gen = client.subscribe("main", "person_v1", max_consecutive_failures=3)
+        frames = [next(gen)[0], next(gen)[0]]
+        gen.close()
+
+        assert frames == [10, 20]
+        assert _wait_until(lambda: stub.last_call.cancelled)
+        _stop_fake_loop(client, thread)
+
+    def test_subscribe_failure_limit_disabled(self):
+        client, thread = _client_with_fake_loop()
+        responses = [_failed_response(frame_sequence=i) for i in range(5)]
+        responses.append(_ok_response(frame_sequence=99))
+        stub = _FakeMultiStreamingStub(responses)
+        client.stub = stub
+
+        gen = client.subscribe("main", "person_v1", max_consecutive_failures=0)
+        assert next(gen)[0] == 99
         gen.close()
         assert _wait_until(lambda: stub.last_call.cancelled)
         _stop_fake_loop(client, thread)
@@ -247,4 +319,55 @@ class _FakeStreamingStub:
 
     def GenaiGenerate(self, request):
         self.last_call = _FakeStreamingCall(self.first_item)
+        return self.last_call
+
+
+def _ok_response(frame_sequence=42, message=""):
+    status = _FakeStatus()
+    status.success = True
+    status.message = message
+    response = _FakeStreamInferResponse()
+    response.status = status
+    response.frame_sequence = frame_sequence
+    return response
+
+
+def _failed_response(frame_sequence=1, message="Inference failed: -2814"):
+    status = _FakeStatus()
+    status.success = False
+    status.message = message
+    response = _FakeStreamInferResponse()
+    response.status = status
+    response.frame_sequence = frame_sequence
+    return response
+
+
+class _FakeMultiItemCall:
+    def __init__(self, items):
+        self.items = list(items)
+        self.index = 0
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.index < len(self.items):
+            item = self.items[self.index]
+            self.index += 1
+            return item
+        await asyncio.sleep(60)
+        raise StopAsyncIteration
+
+
+class _FakeMultiStreamingStub:
+    def __init__(self, items):
+        self.items = items
+        self.last_call = None
+
+    def StreamInfer(self, request):
+        self.last_call = _FakeMultiItemCall(self.items)
         return self.last_call
