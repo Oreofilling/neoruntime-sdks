@@ -109,7 +109,6 @@ Contents
    api/events
    api/device
    api/app
-   api/plugin
    api/config
 
 .. toctree::

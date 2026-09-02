@@ -11,6 +11,18 @@ import pytest
 
 from neoruntime_ipc_sdk import PluginDiscovery, PluginEndpoint, PluginServer
 
+# The plugin API is deprecated (removal planned for v0.8.0); existing tests
+# keep exercising the behaviour while ignoring the warning.
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
+
+class TestDeprecation:
+    def test_plugin_api_emits_deprecation_warning(self, tmp_path):
+        with pytest.warns(DeprecationWarning):
+            PluginDiscovery(discovery_dir=str(tmp_path))
+        with pytest.warns(DeprecationWarning):
+            PluginServer("warned-plugin", socket_dir=str(tmp_path))
+
 
 class TestPluginEndpoint:
     def test_creation(self):
