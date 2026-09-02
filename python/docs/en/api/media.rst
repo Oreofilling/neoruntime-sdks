@@ -41,6 +41,20 @@ PixelFormat
    :members:
    :undoc-members:
 
+EncodedStreamClient
+~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.EncodedStreamClient
+   :members:
+   :undoc-members:
+
+EncodedFrame
+~~~~~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.EncodedFrame
+   :members:
+   :undoc-members:
+
 Usage Examples
 --------------
 
@@ -49,13 +63,13 @@ Getting Raw Video Stream
 
 .. code-block:: python
 
-   from neoruntime_ipc_sdk import MediaClient
+   from neoruntime_ipc_sdk import FdMediaClient
    import cv2
 
-   media = MediaClient()
+   media = FdMediaClient()
 
-   # Get main stream
-   for frame in media.subscribe("cam0_main"):
+   # Get main stream (available IDs come from list_streams(), usually main / sub)
+   for frame in media.subscribe("main"):
        print(f"Frame {frame.sequence}: {frame.width}x{frame.height}")
        print(f"Format: {frame.format}, Timestamp: {frame.timestamp_ns}")
 
@@ -73,7 +87,7 @@ No Frame Skipping
 .. code-block:: python
 
    # Get every frame (no skipping)
-   for frame in media.subscribe("cam0_main", skip_frames=False):
+   for frame in media.subscribe("main", skip_frames=False):
        process_frame(frame.image)
 
 Getting a Single Frame
@@ -82,7 +96,7 @@ Getting a Single Frame
 .. code-block:: python
 
    # Get a single frame
-   frame = media.get_frame("cam0_main", timeout_ms=1000)
+   frame = media.get_frame("main", timeout_ms=1000)
 
    if frame:
        print(f"Frame: {frame.width}x{frame.height}")
@@ -93,14 +107,14 @@ Getting Stream Info
 
 .. code-block:: python
 
-   # Get stream configuration info
-   info = media.get_stream_info("cam0_main")
+   # FdMediaClient has no separate stream-info API;
+   # read dimensions and format from the first frame
+   frame = media.get_frame("main", timeout_ms=5000)
 
-   if info:
-       print(f"Resolution: {info.width}x{info.height}")
-       print(f"Frame rate: {info.fps}")
-       print(f"Format: {info.format}")
-       print(f"Buffer count: {info.buffer_count}")
+   if frame:
+       print(f"Resolution: {frame.width}x{frame.height}")
+       print(f"Format: {frame.format}")
+       print(f"Available streams: {media.list_streams()}")
 
 Listing Available Streams
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -121,7 +135,7 @@ Frame Callback
        print(f"Received frame: {frame.sequence}")
 
    # Use callback for frame processing
-   thread = media.on_frame("cam0_main", handle_frame)
+   thread = media.on_frame("main", handle_frame)
 
    # Keep running
    import time
@@ -136,9 +150,9 @@ Image Processing
    import cv2
    import numpy as np
 
-   media = MediaClient()
+   media = FdMediaClient()
 
-   for frame in media.subscribe("cam0_main"):
+   for frame in media.subscribe("main"):
        # Convert to RGB
        rgb = frame.to_rgb()
 
@@ -160,12 +174,31 @@ Saving Images
 
 .. code-block:: python
 
-   media = MediaClient()
+   media = FdMediaClient()
 
-   for frame in media.subscribe("cam0_main"):
+   for frame in media.subscribe("main"):
        # Save as image
        frame.save("frame.jpg")
        break
+
+Getting Encoded Stream
+~~~~~~~~~~~~~~~~~~~~~~
+
+``get_encoded_stream()`` returns an :class:`EncodedStreamClient` (not an iterator) yielding H.264/H.265 Annex-B packets, which the ``recording`` module can write to disk directly:
+
+.. code-block:: python
+
+   from neoruntime_ipc_sdk import FdMediaClient
+
+   media = FdMediaClient()
+
+   # get_encoded_stream() returns an EncodedStreamClient, not an iterator
+   client = media.get_encoded_stream("main")
+
+   for packet in client.subscribe():
+       print(f"{packet.codec_name()} packet: {len(packet.data)} bytes")
+       if packet.is_keyframe():
+           print("  keyframe")
 
 Multi-Stream Processing
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -175,14 +208,14 @@ Multi-Stream Processing
    import threading
 
    def process_main_stream():
-       media = MediaClient()
-       for frame in media.subscribe("cam0_main"):
+       media = FdMediaClient()
+       for frame in media.subscribe("main"):
            # Process main stream (high resolution)
            process_high_res(frame.image)
 
    def process_sub_stream():
-       media = MediaClient()
-       for frame in media.subscribe("cam0_sub"):
+       media = FdMediaClient()
+       for frame in media.subscribe("sub"):
            # Process sub stream (low resolution)
            process_low_res(frame.image)
 
@@ -203,13 +236,13 @@ Frame Rate Control
 
    import time
 
-   media = MediaClient()
+   media = FdMediaClient()
    target_fps = 10
    frame_interval = 1.0 / target_fps
 
    last_time = time.time()
 
-   for frame in media.subscribe("cam0_main"):
+   for frame in media.subscribe("main"):
        current_time = time.time()
        elapsed = current_time - last_time
 
@@ -221,26 +254,33 @@ Frame Rate Control
 Saving Video
 ~~~~~~~~~~~~
 
+To save the H.264/H.265 encoded stream, prefer reusing it directly with the ``recording`` module (``TsWriter`` / ``HlsWriter``) — no decode/re-encode needed. The example below decodes frames and saves them with OpenCV:
+
 .. code-block:: python
 
    import cv2
 
-   media = MediaClient()
-   info = media.get_stream_info("cam0_main")
+   media = FdMediaClient()
 
-   # Create video writer
+   # Read the resolution from the first frame
+   # (FdMediaClient has no separate stream-info API)
+   first = media.get_frame("main", timeout_ms=5000)
+   if first is None:
+       raise RuntimeError("no frame received")
+
+   # Create video writer (fill in the fps of your actual stream, 30 here)
    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
    out = cv2.VideoWriter(
        'output.mp4',
        fourcc,
-       info.fps,
-       (info.width, info.height)
+       30.0,
+       (first.width, first.height)
    )
 
    frame_count = 0
    max_frames = 300  # Record 10 seconds (30fps)
 
-   for frame in media.subscribe("cam0_main"):
+   for frame in media.subscribe("main"):
        rgb = frame.to_rgb()
        bgr = rgb[:, :, ::-1]  # RGB to BGR
        out.write(bgr)
@@ -258,8 +298,8 @@ Context Manager
 .. code-block:: python
 
    # Use context manager for automatic resource management
-   with MediaClient() as media:
-       for frame in media.subscribe("cam0_main"):
+   with FdMediaClient() as media:
+       for frame in media.subscribe("main"):
            process_frame(frame.image)
 
 Zero-Copy Access
@@ -267,22 +307,27 @@ Zero-Copy Access
 
 .. code-block:: python
 
-   # The SDK uses shared memory (SHM) for zero-copy access
-   # frame.image directly maps to SHM without additional copying
+   # The default receive path copies pixel data on arrival
+   # (frame.image is immediately usable). keep_fd=True retains the
+   # dma-buf fds for true zero-copy: the buffer is only returned to
+   # the daemon on frame.release() / GC / client close
 
-   media = MediaClient()
+   media = FdMediaClient()
 
-   for frame in media.subscribe("cam0_main"):
-       # frame.image is a numpy array that directly references SHM
-       # Can be efficiently passed to AI inference or other processing modules
-       result = inference_engine.process(frame.image)
+   for frame in media.subscribe("main", keep_fd=True):
+       # frame.handle holds the dma-buf fds
+       # frame.to_array() maps them once on first call and caches
+       result = inference_engine.process(frame.to_array())
+
+       # Return the buffer as early as possible (idempotent, optional)
+       frame.release()
 
 Error Handling
 ~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   media = MediaClient()
+   media = FdMediaClient()
 
    try:
        for frame in media.subscribe("invalid_stream"):

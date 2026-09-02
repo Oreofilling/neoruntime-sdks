@@ -9,6 +9,11 @@ v0.8.0 (未发布)
 
 - **插件系统 API** (``PluginDiscovery`` / ``PluginServer`` / ``PluginEndpoint``) 已弃用,计划在 v0.8.0 移除。当前平台未部署 ``/run/aipc/plugins`` 插件发现机制,SDK 暂保留导入兼容并发出 ``DeprecationWarning``,文档页已下线。如有使用需求请提前反馈。
 
+文档
+~~~~
+
+- 修正文档与 README 中的视频流示例:移除对从未存在过的 ``MediaClient`` 的引用,统一改用 ``FdMediaClient``;流 ID 由 ``cam0_main`` / ``cam0_sub`` 修正为设备实际暴露的 ``main`` / ``sub``;移除不存在的 ``get_stream_info()`` / ``get_raw_stream()`` 用法;修正 ``get_encoded_stream()`` 返回值语义与 ``frame.data`` 展平数组误用;补全 ``EncodedStreamClient`` / ``EncodedFrame`` API 文档
+
 v0.7.0 (2026-09-02)
 -------------------
 
@@ -93,7 +98,7 @@ v0.2.0 (2026-03-02)
 
 - 添加插件系统支持 (PluginDiscovery, PluginServer)
 - 支持插件能力发现和 gRPC 服务调用
-- 新增 MediaClient 用于视频流访问
+- 新增视频流访问能力（现由 ``FdMediaClient`` / ``EncodedStreamClient`` 提供）
 - 支持原始视频流和编码视频流获取
 
 改进

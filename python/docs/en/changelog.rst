@@ -9,6 +9,11 @@ Deprecated
 
 - **Plugin system API** (``PluginDiscovery`` / ``PluginServer`` / ``PluginEndpoint``) is deprecated and scheduled for removal in v0.8.0. The platform does not ship the ``/run/aipc/plugins`` discovery mechanism; the SDK keeps the imports working for now, emits a ``DeprecationWarning``, and the docs page has been taken offline. Speak up if you depend on it.
 
+Documentation
+~~~~~~~~~~~~~
+
+- Fixed the video-stream examples across docs and README: dropped references to ``MediaClient`` (which never shipped), standardized on ``FdMediaClient``; stream IDs corrected from ``cam0_main`` / ``cam0_sub`` to the device-exposed ``main`` / ``sub``; removed usages of the nonexistent ``get_stream_info()`` / ``get_raw_stream()``; corrected the ``get_encoded_stream()`` return semantics and the flattened ``frame.data`` misuse; added API docs for ``EncodedStreamClient`` / ``EncodedFrame``
+
 v0.7.0 (2026-09-02)
 -------------------
 
@@ -126,7 +131,7 @@ New Features
 
 - Added plugin system support (PluginDiscovery, PluginServer)
 - Support for plugin capability discovery and gRPC service invocation
-- Added MediaClient for video stream access
+- Added video stream access (now provided by ``FdMediaClient`` / ``EncodedStreamClient``)
 - Support for raw and encoded video stream retrieval
 
 Improvements

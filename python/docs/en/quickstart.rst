@@ -231,19 +231,19 @@ Video Stream Access
 
 .. code-block:: python
 
-   from neoruntime_ipc_sdk import MediaClient, PixelFormat
+   from neoruntime_ipc_sdk import FdMediaClient
 
-   media = MediaClient()
+   media = FdMediaClient()
 
-   # Get raw video stream
-   for frame in media.get_raw_stream("cam0_main"):
+   # Get raw video stream (available stream IDs are usually main / sub)
+   for frame in media.subscribe("main"):
        print(f"Frame {frame.sequence}: {frame.width}x{frame.height}")
-       # frame.data is a numpy array
-       process_frame(frame.data)
+       # frame.image is the decoded numpy array
+       process_frame(frame.image)
 
-   # Get encoded video stream
-   for packet in media.get_encoded_stream("cam0_main"):
-       print(f"H.264 packet: {len(packet.data)} bytes")
+   # Get encoded video stream: get_encoded_stream() returns an EncodedStreamClient
+   for packet in media.get_encoded_stream("main").subscribe():
+       print(f"{packet.codec_name()} packet: {len(packet.data)} bytes")
 
 Error Handling
 --------------

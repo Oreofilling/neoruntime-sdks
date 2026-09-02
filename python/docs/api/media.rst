@@ -41,6 +41,20 @@ PixelFormat
    :members:
    :undoc-members:
 
+EncodedStreamClient
+~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.EncodedStreamClient
+   :members:
+   :undoc-members:
+
+EncodedFrame
+~~~~~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.EncodedFrame
+   :members:
+   :undoc-members:
+
 使用示例
 --------
 
@@ -49,13 +63,13 @@ PixelFormat
 
 .. code-block:: python
 
-   from neoruntime_ipc_sdk import MediaClient
+   from neoruntime_ipc_sdk import FdMediaClient
    import cv2
 
-   media = MediaClient()
+   media = FdMediaClient()
 
-   # 获取主码流
-   for frame in media.subscribe("cam0_main"):
+   # 获取主码流（可用流 ID 见 list_streams()，通常为 main / sub）
+   for frame in media.subscribe("main"):
        print(f"帧 {frame.sequence}: {frame.width}x{frame.height}")
        print(f"格式: {frame.format}, 时间戳: {frame.timestamp_ns}")
 
@@ -73,7 +87,7 @@ PixelFormat
 .. code-block:: python
 
    # 获取每一帧（不跳过）
-   for frame in media.subscribe("cam0_main", skip_frames=False):
+   for frame in media.subscribe("main", skip_frames=False):
        process_frame(frame.image)
 
 获取单帧
@@ -82,7 +96,7 @@ PixelFormat
 .. code-block:: python
 
    # 获取单帧
-   frame = media.get_frame("cam0_main", timeout_ms=1000)
+   frame = media.get_frame("main", timeout_ms=1000)
 
    if frame:
        print(f"帧: {frame.width}x{frame.height}")
@@ -93,14 +107,13 @@ PixelFormat
 
 .. code-block:: python
 
-   # 获取流配置信息
-   info = media.get_stream_info("cam0_main")
+   # FdMediaClient 没有独立的流信息接口，从首帧读取尺寸与格式
+   frame = media.get_frame("main", timeout_ms=5000)
 
-   if info:
-       print(f"分辨率: {info.width}x{info.height}")
-       print(f"帧率: {info.fps}")
-       print(f"格式: {info.format}")
-       print(f"缓冲数量: {info.buffer_count}")
+   if frame:
+       print(f"分辨率: {frame.width}x{frame.height}")
+       print(f"格式: {frame.format}")
+       print(f"可用流: {media.list_streams()}")
 
 列出可用流
 ~~~~~~~~~~~
@@ -121,7 +134,7 @@ PixelFormat
        print(f"收到帧: {frame.sequence}")
 
    # 使用回调处理帧
-   thread = media.on_frame("cam0_main", handle_frame)
+   thread = media.on_frame("main", handle_frame)
 
    # 保持运行
    import time
@@ -136,9 +149,9 @@ PixelFormat
    import cv2
    import numpy as np
 
-   media = MediaClient()
+   media = FdMediaClient()
 
-   for frame in media.subscribe("cam0_main"):
+   for frame in media.subscribe("main"):
        # 转换为 RGB
        rgb = frame.to_rgb()
 
@@ -160,12 +173,31 @@ PixelFormat
 
 .. code-block:: python
 
-   media = MediaClient()
+   media = FdMediaClient()
 
-   for frame in media.subscribe("cam0_main"):
+   for frame in media.subscribe("main"):
        # 保存为图片
        frame.save("frame.jpg")
        break
+
+获取编码流
+~~~~~~~~~~
+
+``get_encoded_stream()`` 返回 :class:`EncodedStreamClient`（不是迭代器），产出 H.264/H.265 Annex-B 码流包，配合 ``recording`` 模块可直接落盘：
+
+.. code-block:: python
+
+   from neoruntime_ipc_sdk import FdMediaClient
+
+   media = FdMediaClient()
+
+   # get_encoded_stream() 返回 EncodedStreamClient，不是迭代器
+   client = media.get_encoded_stream("main")
+
+   for packet in client.subscribe():
+       print(f"{packet.codec_name()} 包: {len(packet.data)} 字节")
+       if packet.is_keyframe():
+           print("  关键帧")
 
 多流处理
 ~~~~~~~~
@@ -175,14 +207,14 @@ PixelFormat
    import threading
 
    def process_main_stream():
-       media = MediaClient()
-       for frame in media.subscribe("cam0_main"):
+       media = FdMediaClient()
+       for frame in media.subscribe("main"):
            # 处理主码流（高分辨率）
            process_high_res(frame.image)
 
    def process_sub_stream():
-       media = MediaClient()
-       for frame in media.subscribe("cam0_sub"):
+       media = FdMediaClient()
+       for frame in media.subscribe("sub"):
            # 处理子码流（低分辨率）
            process_low_res(frame.image)
 
@@ -203,13 +235,13 @@ PixelFormat
 
    import time
 
-   media = MediaClient()
+   media = FdMediaClient()
    target_fps = 10
    frame_interval = 1.0 / target_fps
 
    last_time = time.time()
 
-   for frame in media.subscribe("cam0_main"):
+   for frame in media.subscribe("main"):
        current_time = time.time()
        elapsed = current_time - last_time
 
@@ -221,26 +253,32 @@ PixelFormat
 保存视频
 ~~~~~~~~
 
+如需保存 H.264/H.265 编码流，更推荐直接复用 ``recording`` 模块的 ``TsWriter`` / ``HlsWriter``，无需解码重编码。下面的示例演示解码后用 OpenCV 保存原始帧：
+
 .. code-block:: python
 
    import cv2
 
-   media = MediaClient()
-   info = media.get_stream_info("cam0_main")
+   media = FdMediaClient()
 
-   # 创建视频写入器
+   # 从首帧获取分辨率（FdMediaClient 没有独立的流信息接口）
+   first = media.get_frame("main", timeout_ms=5000)
+   if first is None:
+       raise RuntimeError("未收到视频帧")
+
+   # 创建视频写入器（fps 需按实际码流配置填写，这里以 30 为例）
    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
    out = cv2.VideoWriter(
        'output.mp4',
        fourcc,
-       info.fps,
-       (info.width, info.height)
+       30.0,
+       (first.width, first.height)
    )
 
    frame_count = 0
    max_frames = 300  # 录制 10 秒 (30fps)
 
-   for frame in media.subscribe("cam0_main"):
+   for frame in media.subscribe("main"):
        rgb = frame.to_rgb()
        bgr = rgb[:, :, ::-1]  # RGB to BGR
        out.write(bgr)
@@ -258,8 +296,8 @@ PixelFormat
 .. code-block:: python
 
    # 使用上下文管理器自动管理资源
-   with MediaClient() as media:
-       for frame in media.subscribe("cam0_main"):
+   with FdMediaClient() as media:
+       for frame in media.subscribe("main"):
            process_frame(frame.image)
 
 零拷贝访问
@@ -267,22 +305,26 @@ PixelFormat
 
 .. code-block:: python
 
-   # SDK 使用共享内存 (SHM) 实现零拷贝
-   # frame.image 直接映射到 SHM，无需额外拷贝
+   # 默认接收路径在收到帧时拷贝像素数据（frame.image 立即可用）
+   # keep_fd=True 保留 dma-buf fd，实现真正的零拷贝：
+   # 缓冲区延迟到 frame.release() / GC / 客户端关闭时才归还 daemon
 
-   media = MediaClient()
+   media = FdMediaClient()
 
-   for frame in media.subscribe("cam0_main"):
-       # frame.image 是 numpy array，直接引用 SHM
-       # 可以高效地传递给 AI 推理或其他处理模块
-       result = inference_engine.process(frame.image)
+   for frame in media.subscribe("main", keep_fd=True):
+       # frame.handle 持有 dma-buf fd
+       # frame.to_array() 首次调用时映射一次并缓存像素数据
+       result = inference_engine.process(frame.to_array())
+
+       # 处理完尽早归还缓冲区（幂等，可省略）
+       frame.release()
 
 错误处理
 ~~~~~~~~
 
 .. code-block:: python
 
-   media = MediaClient()
+   media = FdMediaClient()
 
    try:
        for frame in media.subscribe("invalid_stream"):

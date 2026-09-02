@@ -255,7 +255,7 @@
    当检测到告警事件时自动录制视频片段
    """
 
-   from neoruntime_ipc_sdk import MediaClient, EventClient
+   from neoruntime_ipc_sdk import FdMediaClient, EventClient
    import cv2
    import time
    import logging
@@ -266,7 +266,7 @@
 
    class EventRecorder:
        def __init__(self, output_dir="/app/recordings"):
-           self.media = MediaClient()
+           self.media = FdMediaClient()
            self.events = EventClient()
            self.output_dir = Path(output_dir)
            self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -281,13 +281,18 @@
            timestamp = int(time.time())
            filename = self.output_dir / f"{event_type}_{timestamp}.mp4"
 
-           info = self.media.get_stream_info("cam0_main")
+           # FdMediaClient 没有独立的流信息接口，从当前帧取分辨率
+           probe = self.media.get_frame("main")
+           if probe is None:
+               logger.warning("未收到视频帧，无法开始录制")
+               return
+
            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
            self.writer = cv2.VideoWriter(
                str(filename),
                fourcc,
-               info.fps,
-               (info.width, info.height)
+               30.0,  # fps 需按实际码流配置填写
+               (probe.width, probe.height)
            )
 
            self.recording = True
@@ -323,9 +328,11 @@
            recording_frames = 0
            max_recording_frames = 300  # 录制 10 秒 (30fps)
 
-           for frame in self.media.get_raw_stream("cam0_main"):
+           for frame in self.media.subscribe("main"):
                if self.recording:
-                   self.writer.write(frame.data)
+                   # frame.data 是展平的一维数组，cv2 需要三维 BGR 图像
+                   bgr = frame.to_rgb()[:, :, ::-1]
+                   self.writer.write(bgr)
                    recording_frames += 1
 
                    if recording_frames >= max_recording_frames:
@@ -399,7 +406,7 @@
                fps=5
            ):
                # 获取原始帧数据进行多模型推理
-               # 这里简化处理，实际应该从 MediaClient 获取
+               # 这里简化处理，实际应该从 FdMediaClient 获取
                logger.info(f"处理帧 {frame_seq}")
 
                # 发布综合分析结果
