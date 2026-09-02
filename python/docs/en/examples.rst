@@ -354,6 +354,7 @@ Combine multiple AI models for comprehensive analysis.
    """
 
    from neoruntime_ipc_sdk import InferenceClient, EventClient
+   import time
    import logging
 
    logging.basicConfig(level=logging.INFO)

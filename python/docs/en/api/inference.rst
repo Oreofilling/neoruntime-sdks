@@ -389,6 +389,8 @@ GenAI (LLM/VLM)
 
 .. code-block:: python
 
+   import json
+
    # Create a GenAI session
    session_id = inf.genai_create_session(
        hef_path="/opt/models/llm.hef",

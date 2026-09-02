@@ -13,6 +13,7 @@ v0.8.0 (未发布)
 ~~~~
 
 - 修正文档与 README 中的视频流示例:移除对从未存在过的 ``MediaClient`` 的引用,统一改用 ``FdMediaClient``;流 ID 由 ``cam0_main`` / ``cam0_sub`` 修正为设备实际暴露的 ``main`` / ``sub``;移除不存在的 ``get_stream_info()`` / ``get_raw_stream()`` 用法;修正 ``get_encoded_stream()`` 返回值语义与 ``frame.data`` 展平数组误用;补全 ``EncodedStreamClient`` / ``EncodedFrame`` API 文档
+- 修复应用示例中的缺失导入与误导性导入:多模型融合示例补 ``import time``;英文推理页 GenAI 示例补 ``import json``;错误处理示例移除 ``from grpc import RpcError`` (SDK 实际抛出 ``RuntimeError``);清理未使用的 ``numpy`` / ``sys`` 导入
 
 v0.7.0 (2026-09-02)
 -------------------
