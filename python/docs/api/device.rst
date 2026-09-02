@@ -251,8 +251,6 @@ RS-485 串口控制
 
 .. code-block:: python
 
-   from grpc import RpcError
-
    try:
        dev.set_white_light(150)  # 无效的值
    except RuntimeError as e:

@@ -148,7 +148,6 @@ Image Processing
 .. code-block:: python
 
    import cv2
-   import numpy as np
 
    media = FdMediaClient()
 

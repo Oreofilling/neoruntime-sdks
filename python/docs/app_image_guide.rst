@@ -41,7 +41,6 @@
    """My Application"""
 
    import signal
-   import sys
    from neoruntime_ipc_sdk import InferenceClient, EventClient, DeviceClient, Config
 
 

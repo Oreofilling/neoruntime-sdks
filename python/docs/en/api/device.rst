@@ -251,8 +251,6 @@ Error Handling
 
 .. code-block:: python
 
-   from grpc import RpcError
-
    try:
        dev.set_white_light(150)  # Invalid value
    except RuntimeError as e:
