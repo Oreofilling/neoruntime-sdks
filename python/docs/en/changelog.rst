@@ -16,6 +16,7 @@ New Features
 ~~~~~~~~~~~~
 
 - **App developer toolkit** (developed as 0.6.0, never released separately, shipped with 0.7.0):
+
   - ``Frame.crop()`` / ``Frame.resize()`` / ``Frame.to_jpeg_bytes()`` — crop, three resize modes (stretch/letterbox/crop), JPEG encoding; falls back to numpy/PIL when cv2 is missing
   - ``draw`` module — detection visualization (``draw_boxes`` / ``draw_text`` / ``draw_detections``)
   - ``recording`` module — pure-Python TS muxing, HLS segments, event pre-record buffer (``TsWriter`` / ``HlsWriter`` / ``PrerollBuffer``), no ffmpeg required
