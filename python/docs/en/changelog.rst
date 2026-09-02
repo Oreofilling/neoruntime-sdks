@@ -1,6 +1,65 @@
 Changelog
 =========
 
+v0.8.0 (unreleased)
+-------------------
+
+Deprecated
+~~~~~~~~~~
+
+- **Plugin system API** (``PluginDiscovery`` / ``PluginServer`` / ``PluginEndpoint``) is deprecated and scheduled for removal in v0.8.0. The platform does not ship the ``/run/aipc/plugins`` discovery mechanism; the SDK keeps the imports working for now, emits a ``DeprecationWarning``, and the docs page has been taken offline. Speak up if you depend on it.
+
+v0.7.0 (2026-09-02)
+-------------------
+
+New Features
+~~~~~~~~~~~~
+
+- **App developer toolkit** (developed as 0.6.0, never released separately, shipped with 0.7.0):
+  - ``Frame.crop()`` / ``Frame.resize()`` / ``Frame.to_jpeg_bytes()`` — crop, three resize modes (stretch/letterbox/crop), JPEG encoding; falls back to numpy/PIL when cv2 is missing
+  - ``draw`` module — detection visualization (``draw_boxes`` / ``draw_text`` / ``draw_detections``)
+  - ``recording`` module — pure-Python TS muxing, HLS segments, event pre-record buffer (``TsWriter`` / ``HlsWriter`` / ``PrerollBuffer``), no ffmpeg required
+  - ``web`` module — MJPEG streaming (``MjpegServer`` / ``MjpegStream`` / ``mjpeg_wsgi_app``)
+  - **DeviceClient** native autofocus group of 6 methods (``start_oneshot_af`` / ``start_zoom_follow`` / ``get_autofocus_status`` / ``cancel_autofocus`` / ``set_af_windows`` / ``get_af_measurement``)
+  - **CameraClient** imaging/infrared/privacy-mask/OSD/config group of 12 methods (incl. IR preset management, ``get_osd`` symmetric with ``set_osd``)
+- Fixed ``InferenceClient.subscribe()`` silently dropping failed frames
+
+Refactoring
+~~~~~~~~~~~
+
+- Internal layering: extracted the shared ``_transport`` primitives; split ``media`` into frame/encoded/fd_client, ``dsp`` into dsp_wire/dsp_format, ``inference`` into types/codec/genai. Facades keep every historical import path — **zero public API removals**
+- DSP CPU fallback now raises a ``UserWarning`` instead of a silent log
+- 2D-array grayscale inference input emits a ``DeprecationWarning`` (pass ``fmt=`` explicitly)
+- ``EncodedStreamClient()`` default socket path is now ``/run/aipc/encoded/{stream}.sock`` (``ENCODED_SOCK_DIR`` env override; explicit paths still win)
+
+Fixes
+~~~~~
+
+- Fixed an import crash on Python 3.8/3.9 (``from __future__ import annotations`` everywhere)
+
+Other
+~~~~~
+
+- Added ``py.typed`` marker to the package; test suite grown to 270 green tests
+
+v0.5.0 (2026-08-20)
+-------------------
+
+Refactoring
+~~~~~~~~~~~
+
+- Rebrand: ``hailo_ipc_sdk`` → ``neoruntime_ipc_sdk`` (breaking, no shim; functional names such as hailort/ne503/aipc are preserved)
+
+Fixes
+~~~~~
+
+- Fixed dual-layout decoding of ``audio_capture`` video-layout headers
+
+Other
+~~~~~
+
+- CI gained TestPyPI/PyPI trusted-publishing dual release flow
+
 v0.4.0 (2026-07-14)
 -------------------
 
