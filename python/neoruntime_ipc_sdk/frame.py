@@ -309,11 +309,11 @@ class Frame:
         """Return a new Frame resized to width x height.
 
         Modes:
-            "letterbox" — fit inside, preserve aspect ratio, pad with
-                          pad_value (NV12 pads luma with pad_value and
-                          chroma with neutral 128). Default.
-            "stretch"   — fill exactly, aspect ratio not preserved.
-            "crop"      — scale to cover, center-crop the overflow.
+            - "letterbox": fit inside, preserve aspect ratio, pad with
+              pad_value (NV12 pads luma with pad_value and chroma with
+              neutral 128). Default.
+            - "stretch": fill exactly, aspect ratio not preserved.
+            - "crop": scale to cover, center-crop the overflow.
 
         NV12/NV21 require even target dimensions. Frames received with
         keep_fd=True are scaled on the DSP without materializing their

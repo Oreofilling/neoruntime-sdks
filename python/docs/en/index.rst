@@ -1,5 +1,5 @@
 NeoRuntime Platform Python SDK Documentation
-=======================================
+=============================================
 
 Welcome to the NeoRuntime Platform Python SDK! This is a Python development toolkit for the NeoRuntime Edge AI Computing Platform.
 
@@ -110,6 +110,15 @@ Contents
    api/device
    api/app
    api/config
+   api/dsp
+   api/camera
+   api/audio
+   api/audio_stream
+   api/overlay
+   api/recording
+   api/web
+   api/draw
+   api/plugin
 
 .. toctree::
    :maxdepth: 1

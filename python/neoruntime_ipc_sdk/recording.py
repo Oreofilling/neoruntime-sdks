@@ -8,7 +8,8 @@ frames so an app can dump "seconds before the event" when something happens.
 No ffmpeg is required: Annex-B payloads from the EncodedPublisher are
 packetised into PES/TS directly, without re-encoding.
 
-Example:
+.. code-block:: python
+
     with HlsWriter("/var/tmp/hls", segment_seconds=6.0) as hls:
         for frame in client.subscribe_encoded("main"):
             hls.write(frame)
@@ -159,7 +160,8 @@ def _build_pes(frame: EncodedFrame) -> bytes:
 class TsWriter:
     """Single-file MPEG-TS recorder for EncodedFrame Annex-B payloads.
 
-    Usage:
+    .. code-block:: python
+
         w = TsWriter("event.ts", codec="h264")
         for frame in client.subscribe_encoded("main"):
             w.write(frame)
@@ -245,7 +247,8 @@ class HlsWriter:
     the stream at any segment boundary. The playlist is rewritten
     atomically (tmp + os.replace) after every segment close.
 
-    Usage:
+    .. code-block:: python
+
         hls = HlsWriter("/srv/hls", segment_seconds=6.0, window=5)
         for frame in client.subscribe_encoded("main"):
             hls.write(frame)      # blocks of frames -> seg000001.ts ...
@@ -381,7 +384,8 @@ class HlsWriter:
 class PrerollBuffer:
     """Ring buffer of encoded frames for "seconds before the event" clips.
 
-    Usage:
+    .. code-block:: python
+
         preroll = PrerollBuffer(seconds=10.0)
         for frame in client.subscribe_encoded("main"):
             preroll.push(frame)

@@ -1,5 +1,5 @@
 NeoRuntime Platform Python SDK 文档
-================================
+======================================
 
 欢迎使用 NeoRuntime Platform Python SDK！这是一个用于 NeoRuntime 边缘 AI 计算平台的 Python 开发工具包。
 
@@ -110,6 +110,15 @@ AI 推理
    api/device
    api/app
    api/config
+   api/dsp
+   api/camera
+   api/audio
+   api/audio_stream
+   api/overlay
+   api/recording
+   api/web
+   api/draw
+   api/plugin
 
 .. toctree::
    :maxdepth: 1

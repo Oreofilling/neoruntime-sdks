@@ -27,6 +27,13 @@ Frame
    :undoc-members:
    :no-index:
 
+FrameHandle
+~~~~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.FrameHandle
+   :members:
+   :undoc-members:
+
 StreamInfo
 ~~~~~~~~~~
 

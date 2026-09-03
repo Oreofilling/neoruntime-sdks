@@ -27,6 +27,13 @@ InferenceResult
    :undoc-members:
    :no-index:
 
+BatchInferItem
+~~~~~~~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.BatchInferItem
+   :members:
+   :undoc-members:
+
 DetectedObject
 ~~~~~~~~~~~~~~
 
