@@ -15,6 +15,7 @@ import grpc
 import numpy as np
 
 from .config import Config
+from ._transport import MAX_GRPC_MESSAGE_LENGTH
 from .inference_codec import (  # noqa: F401 — re-exported for API compat
     _numpy_to_tensor,
     _parse_infer_response,
@@ -92,9 +93,14 @@ class InferenceClient(GenAiMixin):
 
     async def _connect_async(self) -> None:
         # epoll1 (belt-and-suspenders); the async CQ already uses epoll.
+        # max_receive_message_length lifts grpc's 4 MiB default so inference
+        # responses can use the server's full 64 MiB limit.
         self.channel = grpc.aio.insecure_channel(
             self.endpoint,
-            options=[("grpc.poll_strategy", 1)],  # 1 = epoll1
+            options=[
+                ("grpc.max_receive_message_length", MAX_GRPC_MESSAGE_LENGTH),
+                ("grpc.poll_strategy", 1),  # 1 = epoll1
+            ],
         )
         self.stub = inference_pb2_grpc.InferenceServiceStub(self.channel)
 

@@ -33,7 +33,25 @@ __all__ = [
     "check_status",
     "recvmsg_with_fds",
     "sendmsg_plain",
+    "MAX_GRPC_MESSAGE_LENGTH",
 ]
+
+# ai-runtime accepts up to 64 MiB per message (SetMaxReceiveMessageSize /
+# SetMaxSendMessageSize in ai-runtime/src/main.cpp). grpc's default client
+# receive limit is 4 MiB — without this option, any server response larger
+# than that fails client-side with ResourceExhausted. Aligned at 64 MiB so
+# the pipe's effective limit is the server's, in both directions.
+MAX_GRPC_MESSAGE_LENGTH = 64 * 1024 * 1024
+
+
+def max_message_length_options() -> list[tuple[str, Any]]:
+    """Channel options lifting grpc's 4 MiB default receive limit.
+
+    Applied by GrpcClient.channel_options and by InferenceClient's
+    grpc.aio channel; subclasses that override ``channel_options`` should
+    merge these in (``super().channel_options + [...]``).
+    """
+    return [("grpc.max_receive_message_length", MAX_GRPC_MESSAGE_LENGTH)]
 
 
 def check_status(resp, label: str) -> None:
@@ -71,8 +89,10 @@ class GrpcClient:
 
     Subclasses set ``_stub_factory`` (channel -> stub callable) and either
     ``_endpoint_env``/``_endpoint_default`` or override
-    ``_get_default_endpoint()``. Override ``channel_options`` to pass
-    channel options (e.g. epoll1) at creation time.
+    ``_get_default_endpoint()``. Override ``channel_options`` to pass extra
+    channel options (e.g. epoll1) at creation time — merge the base options
+    in (``super().channel_options + [...]``) to keep the 64 MiB receive
+    limit.
 
     The ``_stub`` attribute stays a plain attribute on purpose: tests poke
     mock stubs into it, and ``stub`` is a read/write property onto the same
@@ -98,7 +118,7 @@ class GrpcClient:
     @property
     def channel_options(self) -> list[tuple[str, Any]]:
         """gRPC channel options applied at connect time."""
-        return []
+        return max_message_length_options()
 
     def _connect(self):
         """Return the stub, creating the channel on first use."""
