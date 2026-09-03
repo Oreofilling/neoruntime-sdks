@@ -137,7 +137,7 @@ def _parse_post_result(
     return objects, classifications, landmarks, masks, ocr_lines, embeddings, depth_maps
 
 
-def _parse_infer_response(self, response: inference_pb2.InferResponse) -> InferenceResult:
+def _parse_infer_response(response: inference_pb2.InferResponse) -> InferenceResult:
     """Parse an InferResponse proto into an InferenceResult dataclass.
 
     Shared by infer() and infer_batch() to avoid duplication.

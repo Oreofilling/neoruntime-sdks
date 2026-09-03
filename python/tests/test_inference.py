@@ -128,6 +128,22 @@ class TestInferenceClient:
         
         assert list(tensor.shape) == [100, 100, 3]
         assert tensor.dtype == inference_pb2.UINT8
+
+    def test_parse_infer_response(self):
+        # Regression: the codec function briefly kept a stray `self` after the
+        # 0.7.0 refactor, so every infer()/infer_batch() call failed with
+        # "_parse_infer_response() missing 1 required positional argument".
+        from neoruntime_ipc_sdk.proto import inference_pb2
+
+        client = InferenceClient()
+        resp = inference_pb2.InferResponse()
+        resp.status.success = True
+        resp.infer_time_us = 1234
+
+        result = client._parse_infer_response(resp)
+
+        assert isinstance(result, InferenceResult)
+        assert result.infer_time_us == 1234
     
     def test_dtype_conversion(self):
         client = InferenceClient()
