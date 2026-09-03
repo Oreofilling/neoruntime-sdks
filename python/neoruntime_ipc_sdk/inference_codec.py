@@ -40,7 +40,7 @@ def _numpy_to_tensor(arr: np.ndarray, name: str = "") -> inference_pb2.Tensor:
     return inference_pb2.Tensor(shape=list(arr.shape), dtype=dtype, data=arr.tobytes())
 
 
-def _tensor_to_numpy(self, tensor: inference_pb2.Tensor) -> np.ndarray:
+def _tensor_to_numpy(tensor: inference_pb2.Tensor) -> np.ndarray:
     dtype_map = {
         inference_pb2.UINT8: np.uint8,
         inference_pb2.INT8: np.int8,
@@ -66,7 +66,7 @@ def _tensor_to_numpy(self, tensor: inference_pb2.Tensor) -> np.ndarray:
 
 
 def _parse_post_result(
-    self, post_result: inference_pb2.PostResult
+    post_result: inference_pb2.PostResult
 ) -> tuple[
     list[DetectedObject],
     list[Classification],
@@ -137,7 +137,7 @@ def _parse_post_result(
     return objects, classifications, landmarks, masks, ocr_lines, embeddings, depth_maps
 
 
-def _parse_infer_response(self, response: inference_pb2.InferResponse) -> InferenceResult:
+def _parse_infer_response(response: inference_pb2.InferResponse) -> InferenceResult:
     """Parse an InferResponse proto into an InferenceResult dataclass.
 
     Shared by infer() and infer_batch() to avoid duplication.

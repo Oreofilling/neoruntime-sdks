@@ -86,7 +86,8 @@ class OverlayClient(GrpcClient):
     @property
     def channel_options(self):
         # epoll1; avoid the sched_yield busy-poll of the default poll strategy
-        return [("grpc.poll_strategy", 1)]
+        # (plus the base 64 MiB receive limit — see MAX_GRPC_MESSAGE_LENGTH)
+        return super().channel_options + [("grpc.poll_strategy", 1)]
 
     def _update(self, config: camera_pb2.AiOverlayConfig) -> None:
         if self.stub is None:

@@ -128,6 +128,65 @@ class TestInferenceClient:
         
         assert list(tensor.shape) == [100, 100, 3]
         assert tensor.dtype == inference_pb2.UINT8
+
+    def test_parse_infer_response(self):
+        # Regression: the codec function briefly kept a stray `self` after the
+        # 0.7.0 refactor, so every infer()/infer_batch() call failed with
+        # "_parse_infer_response() missing 1 required positional argument".
+        from neoruntime_ipc_sdk.proto import inference_pb2
+
+        client = InferenceClient()
+        resp = inference_pb2.InferResponse()
+        resp.status.success = True
+        resp.infer_time_us = 1234
+
+        result = client._parse_infer_response(resp)
+
+        assert isinstance(result, InferenceResult)
+        assert result.infer_time_us == 1234
+
+    def test_parse_infer_response_outputs(self):
+        # Regression: _tensor_to_numpy kept a stray `self` after the 0.7.0
+        # refactor, so infer() on models returning raw output tensors failed
+        # (seen live on device 93.72 with SDK 0.7.2).
+        from neoruntime_ipc_sdk.proto import inference_pb2
+
+        client = InferenceClient()
+        resp = inference_pb2.InferResponse()
+        resp.status.success = True
+        tensor = resp.outputs.add()
+        tensor.shape.extend([2, 2])
+        tensor.dtype = inference_pb2.FLOAT32
+        tensor.data = np.arange(4, dtype=np.float32).tobytes()
+
+        result = client._parse_infer_response(resp)
+
+        assert result.raw_outputs is not None
+        assert len(result.raw_outputs) == 1
+        assert result.raw_outputs[0].shape == (2, 2)
+        assert result.raw_outputs[0][1, 1] == 3.0
+
+    def test_parse_infer_response_post_result(self):
+        # Regression: _parse_post_result kept a stray `self` after the 0.7.0
+        # refactor, so infer() on detection models failed.
+        from neoruntime_ipc_sdk.proto import inference_pb2
+
+        client = InferenceClient()
+        resp = inference_pb2.InferResponse()
+        resp.status.success = True
+        det = resp.post_result.detections.add()
+        det.label = "person"
+        det.confidence = 0.9
+        det.bbox.x = 0.1
+        det.bbox.y = 0.2
+        det.bbox.w = 0.3
+        det.bbox.h = 0.4
+
+        result = client._parse_infer_response(resp)
+
+        assert len(result.objects) == 1
+        assert result.objects[0].label == "person"
+        assert result.objects[0].score == pytest.approx(0.9)
     
     def test_dtype_conversion(self):
         client = InferenceClient()
