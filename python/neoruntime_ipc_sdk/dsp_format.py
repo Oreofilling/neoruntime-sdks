@@ -16,6 +16,7 @@ try:  # cv2 accelerates the CPU fallback only; never required
 except ImportError:  # pragma: no cover
     _cv2 = None
 
+from .color import _Y_FROM_RGB, nv12_to_rgb, rgb_to_nv12
 from .dsp_wire import _DSP_FORMATS, _MAX_DIM, _MIN_DIM, DspError
 from .frame import Frame
 
@@ -165,3 +166,30 @@ def _cpu_crop_resize(src: np.ndarray, fmt: str, rect: tuple[int, ...]) -> np.nda
     if (dw, dh) != (w, h):
         out = _cpu_resize(out, fmt, dw, dh, "stretch", "bilinear")
     return out
+
+
+def _cpu_convert(src: np.ndarray, fmt: str, dst_fmt: str) -> np.ndarray:
+    """Pure-numpy format conversion — CPU fallback for CONVERT_FORMAT.
+
+    Mirrors the daemon contract: same dimensions, differing formats.
+    RGB↔NV12 delegates to :mod:`color`'s BT.601 converters so both legs
+    agree on the colorspace; gray8 pairs are trivial (replicate / luma
+    slice / neutral chroma). The caller validates geometry first.
+    """
+    if fmt == dst_fmt:
+        raise DspError("convert needs differing formats (dimensions stay equal)")
+    if fmt == "rgb24":
+        if dst_fmt == "nv12":
+            return rgb_to_nv12(src)
+        y = (16.0 + (src.astype(np.float32) @ _Y_FROM_RGB) / 255.0).round()
+        return np.clip(y, 0, 255).astype(np.uint8)
+    if fmt == "nv12":
+        h = src.shape[0] * 2 // 3
+        if dst_fmt == "rgb24":
+            return nv12_to_rgb(src, src.shape[1], h)
+        return src[:h].copy()  # gray8: luma plane verbatim
+    # gray8 source
+    if dst_fmt == "rgb24":
+        return np.repeat(src[..., None], 3, axis=2)
+    uv = np.full((src.shape[0] // 2, src.shape[1]), 128, dtype=np.uint8)
+    return np.vstack([src, uv])

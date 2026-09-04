@@ -82,6 +82,33 @@ Single-region crop
    # crop_hw crops and optionally rescales to the target size in one go
    tile = dsp.crop_hw(frame, 320, 500, 160, 48, dst_width=320, dst_height=48)
 
+Format conversion (RGB <-> NV12 / grayscale)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # convert_hw swaps the format at identical dimensions (the daemon's
+   # CONVERT P0 contract): no rects, a single destination buffer;
+   # dst_fmt is one of "nv12"/"rgb24"/"gray8".
+   # Byte order: rgb24 on the wire is RGB order — swap BGR pixels
+   # beforehand (or stay on the CPU path via color.bgr_to_nv12).
+   nv12 = dsp.convert_hw(rgb, "nv12", fmt="rgb24")
+   gray = dsp.convert_hw(rgb, "gray8", fmt="rgb24")
+
+   # When you also need scaling, CONVERT first, RESIZE second: NV12 is
+   # about half the rgb24 bytes, so the resize moves half the data.
+   small = dsp.resize_hw(nv12, 640, 384)
+
+   # When the DSP is unavailable the default is a CPU fallback (with a
+   # UserWarning); pass cpu_fallback=False to raise DspError instead —
+   # the router uses that for honest degradation accounting.
+
+   # The firmware pair matrix is device-dependent: measured on hailo15
+   # (93.72) only rgb24 <-> nv12 runs on the DSP — every gray8 pair is
+   # refused by the firmware (HAL rc=-2801). With the default
+   # cpu_fallback=True such job rejections also fall back to CPU with a
+   # warning; last_used_hw=False records the backend actually used.
+
 Pre-allocated buffer pool (repeated jobs)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

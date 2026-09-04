@@ -62,6 +62,20 @@ Default router: hardware first, automatic fallback
    print(health["ops"]["resize_nv12"]["backend"])
    print(health["recent_degradations"])
 
+Color conversion runs on the hardware leg too
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from neoruntime_ipc_sdk import get_default_router
+
+   router = get_default_router()
+   nv12 = router.run("rgb_to_nv12", rgb)               # DSP convert_hw
+   rgb2 = router.run("nv12_to_rgb", nv12, 1920, 1080)  # same leg, reversed
+   # The router calls the DSP with cpu_fallback=False — a real
+   # degradation is recorded once and the software leg runs exactly
+   # once (no hidden in-client CPU pass first).
+
 Forward degradations to the event bus
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

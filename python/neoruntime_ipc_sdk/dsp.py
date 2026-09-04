@@ -31,6 +31,7 @@ Usage::
     client = DspClient()
     small = client.resize_hw(frame.image, 640, 640, fmt="nv12")
     tiles = client.multi_crop_hw(frame.image, rects, fmt="nv12")
+    nv12 = client.convert_hw(frame.image, "nv12", fmt="rgb24")
 
     # zero-copy: keep the frame's dma-bufs and hand them over directly
     frame = media.get_frame("main", keep_fd=True)
@@ -56,6 +57,7 @@ from .dsp_format import (  # noqa: F401 — re-exported for API compat
     _CV_INTERP,
     _FRAME_FMT_TO_DSP,
     _as_pixels,
+    _cpu_convert,
     _cpu_crop,
     _cpu_crop_resize,
     _cpu_resize,
@@ -79,6 +81,7 @@ from .dsp_wire import (  # noqa: F401 — re-exported for API compat
     _MAX_BATCH,
     _MAX_DIM,
     _MIN_DIM,
+    _OP_CONVERT_FORMAT,
     _OP_CROP_AND_RESIZE,
     _OP_MULTI_CROP,
     _OP_RESIZE,
@@ -387,6 +390,17 @@ class DspClient(GrpcClient):
     pools with :meth:`alloc_buffers` and pass ``src_pool``/``dst_pool``
     (``dst_pools`` for multi-crop) so each call only writes, submits and
     reads.
+
+    Every ``*_hw`` method also takes ``cpu_fallback`` (default ``True``):
+    when the daemon lacks the DSP surface, array-source calls warn and
+    compute on CPU. Pass ``cpu_fallback=False`` to make unavailability
+    raise instead — :mod:`neoruntime_ipc_sdk.accel` does this so its
+    degradation accounting sees the real backend rather than CPU work
+    labeled as hardware. :meth:`convert_hw` additionally falls back on a
+    job the firmware refused: the pair matrix is device-dependent
+    (hailo15 ``dsp_convert_format`` takes RGB<->NV12 and rejects every
+    gray8 pair with ``HAL_ERR_RESULT``), so "the hardware doesn't do
+    this conversion" is a runtime outcome, not a caller bug.
     """
 
     _stub_factory = camera_pb2_grpc.CameraControlStub
@@ -607,6 +621,7 @@ class DspClient(GrpcClient):
         timeout_s: float = 5.0,
         src_pool: DspBufferPool | None = None,
         dst_pool: DspBufferPool | None = None,
+        cpu_fallback: bool = True,
     ) -> np.ndarray:
         """Scale ``src`` to ``(width, height)`` on the DSP.
 
@@ -646,6 +661,8 @@ class DspClient(GrpcClient):
                     "the silent CPU fallback (the frame holds fds, not "
                     "pixels; use frame.to_array() to accept the copy)"
                 ) from e
+            if not cpu_fallback:
+                raise
             warnings.warn(
                 f"DSP unavailable ({e}); CPU fallback engaged "
                 "(client.last_used_hw records the path used)",
@@ -671,6 +688,7 @@ class DspClient(GrpcClient):
         timeout_s: float = 5.0,
         src_pool: DspBufferPool | None = None,
         dst_pool: DspBufferPool | None = None,
+        cpu_fallback: bool = True,
     ) -> np.ndarray:
         """Crop ``(x, y, w, h)`` and scale to the destination size."""
         sw, sh, handle, fmt = _resolve_source(src, fmt)
@@ -708,6 +726,8 @@ class DspClient(GrpcClient):
                     "the silent CPU fallback (the frame holds fds, not "
                     "pixels; use frame.to_array() to accept the copy)"
                 ) from e
+            if not cpu_fallback:
+                raise
             warnings.warn(
                 f"DSP unavailable ({e}); CPU fallback engaged "
                 "(client.last_used_hw records the path used)",
@@ -731,6 +751,7 @@ class DspClient(GrpcClient):
         timeout_s: float = 5.0,
         src_pool: DspBufferPool | None = None,
         dst_pools: list[DspBufferPool] | None = None,
+        cpu_fallback: bool = True,
     ) -> list[np.ndarray]:
         """Crop/resize many windows in one job.
 
@@ -792,6 +813,8 @@ class DspClient(GrpcClient):
                     "the silent CPU fallback (the frame holds fds, not "
                     "pixels; use frame.to_array() to accept the copy)"
                 ) from e
+            if not cpu_fallback:
+                raise
             warnings.warn(
                 f"DSP unavailable ({e}); CPU fallback engaged "
                 "(client.last_used_hw records the path used)",
@@ -800,6 +823,149 @@ class DspClient(GrpcClient):
             )
             self.last_used_hw = False
             return [_cpu_crop_resize(_as_pixels(src), fmt, r) for r in rects]
+
+    def convert_hw(
+        self,
+        src: JobSource,
+        dst_fmt: str,
+        fmt: str | None = None,
+        priority: str = "normal",
+        timeout_s: float = 5.0,
+        src_pool: DspBufferPool | None = None,
+        dst_pool: DspBufferPool | None = None,
+        cpu_fallback: bool = True,
+    ) -> np.ndarray:
+        """Convert ``src`` to ``dst_fmt`` (``nv12``/``rgb24``/``gray8``) on
+        the DSP, keeping the dimensions.
+
+        The daemon's CONVERT contract (P0): source and destination share
+        geometry and differ in format — no rects, exactly one destination
+        buffer. Compose with :meth:`resize_hw` when you also need
+        scaling, and convert first: NV12 is half the rgb24 bytes, so
+        ``CONVERT → RESIZE`` moves less data than the reverse.
+
+        Byte order: ``rgb24`` means RGB order on the wire — BGR pixels
+        must be swapped beforehand (or kept on the CPU path via
+        ``color.bgr_to_nv12``); the DSP wire has no BGR variant, so
+        unswapped BGR comes back with R/B-swapped chroma.
+
+        Supported pairs are firmware-dependent: on hailo15 only
+        ``rgb24 <-> nv12`` run on the DSP — the gray8 pairs are refused
+        (``HAL_ERR_RESULT``) and, with the default ``cpu_fallback=True``,
+        compute on CPU with a warning.
+        """
+        sw, sh, handle, fmt = _resolve_source(src, fmt)
+        _validate_geometry(sw, sh, fmt, "source")
+        _validate_geometry(sw, sh, dst_fmt, "destination")
+        if dst_fmt == fmt:
+            raise DspError(
+                f"CONVERT needs differing formats (src is {fmt!r}); dimensions "
+                "stay equal — resize_hw scales"
+            )
+        if src_pool is not None and (src_pool.width, src_pool.height, src_pool.fmt) != (sw, sh, fmt):
+            raise DspError(
+                f"src_pool is {src_pool.width}x{src_pool.height} {src_pool.fmt}, "
+                f"source is {sw}x{sh} {fmt}"
+            )
+        if dst_pool is not None and (dst_pool.width, dst_pool.height, dst_pool.fmt) != (sw, sh, dst_fmt):
+            raise DspError(
+                f"dst_pool is {dst_pool.width}x{dst_pool.height} {dst_pool.fmt}, "
+                f"job needs {sw}x{sh} {dst_fmt} (CONVERT keeps dims)"
+            )
+        try:
+            # bespoke prep: _prep assumes one fmt for src AND dst pools,
+            # but CONVERT needs the dst pool in dst_fmt at the source geometry
+            own: list[object] = []
+            if handle is not None:
+                if src_pool is not None:
+                    raise DspError(
+                        "src_pool applies to numpy sources; a frame handle imports its own dma-bufs"
+                    )
+                source = _ImportedSource(self, self._import_source(handle, sw, sh, fmt, timeout_s))
+                own.append(source)
+            else:
+                pool = src_pool if src_pool is not None else self.alloc_buffers(sw, sh, fmt, 1)
+                if src_pool is None:
+                    own.append(pool)
+                pool.write(0, _as_pixels(src))
+                source = pool
+            out_pool = dst_pool if dst_pool is not None else self.alloc_buffers(sw, sh, dst_fmt, 1)
+            if dst_pool is None:
+                own.append(out_pool)
+            try:
+                try:
+                    self._submit_job(
+                        _OP_CONVERT_FORMAT,
+                        source.buffer_id(0),
+                        [out_pool.buffer_id(0)],
+                        [],  # CONVERT takes no rects (daemon: wants_rects is False)
+                        "bilinear",
+                        "stretch",
+                        priority,
+                        timeout_s,
+                    )
+                except DspError as e:
+                    # the daemon took the job but the hardware refused it —
+                    # on hailo15 firmware every gray8 pair lands here
+                    return self._job_rejected_fallback(
+                        src, fmt, dst_fmt, handle, cpu_fallback, str(e), e
+                    )
+                self.last_used_hw = True
+                return out_pool.read(0)
+            finally:
+                self._release_owned(own)
+        except _DspUnavailable as e:
+            if handle is not None:
+                raise DspError(
+                    "DSP unavailable with a zero-copy frame source — refusing "
+                    "the silent CPU fallback (the frame holds fds, not "
+                    "pixels; use frame.to_array() to accept the copy)"
+                ) from e
+            if not cpu_fallback:
+                raise
+            warnings.warn(
+                f"DSP unavailable ({e}); CPU fallback engaged "
+                "(client.last_used_hw records the path used)",
+                UserWarning,
+                stacklevel=3,
+            )
+            self.last_used_hw = False
+            return _cpu_convert(_as_pixels(src), fmt, dst_fmt)
+
+    def _job_rejected_fallback(
+        self,
+        src: JobSource,
+        fmt: str,
+        dst_fmt: str,
+        handle: object,
+        cpu_fallback: bool,
+        reason: str,
+        exc: Exception,
+    ) -> np.ndarray:
+        """Tail for a submitted-but-refused CONVERT job.
+
+        Mirrors the ``_DspUnavailable`` tail: zero-copy frame sources are
+        refused (the fallback would need pixels the frame doesn't hold),
+        ``cpu_fallback=False`` re-raises, and the default warns and
+        computes on CPU with ``last_used_hw=False`` so health reporting
+        stays truthful.
+        """
+        if handle is not None:
+            raise DspError(
+                "DSP rejected the conversion with a zero-copy frame source — "
+                "refusing the silent CPU fallback (the frame holds fds, not "
+                "pixels; use frame.to_array() to accept the copy)"
+            ) from exc
+        if not cpu_fallback:
+            raise exc
+        warnings.warn(
+            f"DSP rejected {fmt}->{dst_fmt} ({reason}); CPU fallback engaged "
+            "(client.last_used_hw records the path used)",
+            UserWarning,
+            stacklevel=3,
+        )
+        self.last_used_hw = False
+        return _cpu_convert(_as_pixels(src), fmt, dst_fmt)
 
     # -- internal plumbing ------------------------------------------------------
     def _prep(

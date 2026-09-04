@@ -13,7 +13,7 @@ the work.
 | [web-stream-url.md](web-stream-url.md) | `GetWebStreamUrl` — console-origin video URLs for app pages | none | RPC + nginx |
 | [ai-overlay-extended.md](ai-overlay-extended.md) | `AiOverlayConfig` v2 — polygons, tracks, per-app sources | dsp-offload (P1, optional) | renderer extension |
 | [hardware-first-roadmap.md](hardware-first-roadmap.md) | post-P0 work breakdown: HAL + platform + SDK items | dsp-offload experiments | cross-team checklist |
-| [sdk-hardware-routing.md](sdk-hardware-routing.md) | SDK capability router (landed) + asks: `convert_hw`, NMS params, JPEG encode | dsp-offload (P1 items only) | SDK + ai-runtime |
+| [sdk-hardware-routing.md](sdk-hardware-routing.md) | SDK capability router + `convert_hw` (both landed) + asks: NMS params, JPEG encode | dsp-offload (P2 items only) | SDK + ai-runtime |
 
 Suggested reading order for reviewers: `dsp-offload` (foundation) →
 `hardware-first-roadmap` (what the experiments commit each layer to) →

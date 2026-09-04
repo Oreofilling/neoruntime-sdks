@@ -41,6 +41,7 @@ from enum import Enum
 from typing import Any, Callable
 
 from .color import nv12_resize as _nv12_resize_sw
+from .color import nv12_to_rgb as _nv12_to_rgb_sw
 from .color import rgb_to_nv12 as _rgb_to_nv12_sw
 from .postprocess import nms as _nms_sw
 
@@ -109,16 +110,53 @@ def _lazy_dsp_client() -> Any:
         raise HardwareUnavailable(f"DSP service unreachable: {exc}") from exc
 
 
+def _dsp_call(method: str, *args: Any, **kwargs: Any) -> Any:
+    """Run one DspClient method with its built-in CPU fallback disabled.
+
+    The client's internal fallback would silently compute on CPU under a
+    "hardware" label — the router would count the op as hardware and
+    never record the degradation. With ``cpu_fallback=False`` the client
+    raises instead; the router records the fallback and runs its own
+    software leg exactly once.
+    """
+    client = _lazy_dsp_client()
+    try:
+        return getattr(client, method)(*args, **kwargs)
+    except Exception as exc:
+        raise HardwareUnavailable(f"DSP {method} failed: {exc}") from exc
+
+
 def _resize_nv12_hw(nv12: Any, src_size: tuple[int, int], dst_size: tuple[int, int]) -> Any:
     """DSP resize with the same signature as :func:`color.nv12_resize`."""
     import numpy as np  # noqa: PLC0415 — keep module import light
 
     dst_w, dst_h = dst_size
-    client = _lazy_dsp_client()
-    try:
-        return client.resize_hw(np.ascontiguousarray(nv12), dst_w, dst_h, fmt="nv12")
-    except Exception as exc:
-        raise HardwareUnavailable(f"DSP resize failed: {exc}") from exc
+    return _dsp_call(
+        "resize_hw", np.ascontiguousarray(nv12), dst_w, dst_h, fmt="nv12", cpu_fallback=False
+    )
+
+
+def _rgb_to_nv12_hw(rgb: Any) -> Any:
+    """DSP color convert with the same signature as :func:`color.rgb_to_nv12`."""
+    import numpy as np  # noqa: PLC0415 — keep module import light
+
+    return _dsp_call(
+        "convert_hw", np.ascontiguousarray(rgb), "nv12", fmt="rgb24", cpu_fallback=False
+    )
+
+
+def _nv12_to_rgb_hw(nv12: Any, width: int | None = None, height: int | None = None) -> Any:
+    """DSP color convert with the same signature as :func:`color.nv12_to_rgb`."""
+    import numpy as np  # noqa: PLC0415 — keep module import light
+
+    if nv12.ndim != 2:
+        raise ValueError(f"nv12 source must be 2D, got shape {nv12.shape}")
+    src_w, src_h = nv12.shape[1], nv12.shape[0] * 2 // 3
+    if (width, height) != (None, None) and (width, height) != (src_w, src_h):
+        raise ValueError(f"nv12 is {src_w}x{src_h}, got width/height {width}/{height}")
+    return _dsp_call(
+        "convert_hw", np.ascontiguousarray(nv12), "rgb24", fmt="nv12", cpu_fallback=False
+    )
 
 
 class AccelRouter:
@@ -293,9 +331,10 @@ _default_router_lock = threading.Lock()
 def get_default_router() -> AccelRouter:
     """Return the pre-registered router singleton.
 
-    Operations served today: ``resize_nv12`` (DSP when reachable, numpy
-    otherwise), ``rgb_to_nv12`` and ``nms`` (software only — hardware
-    legs pending, see docs/proposals/sdk-hardware-routing.md).
+    Operations served today: ``resize_nv12``, ``rgb_to_nv12`` and
+    ``nv12_to_rgb`` (DSP when reachable, numpy otherwise), ``nms``
+    (software only — hardware leg pending ai-runtime registration
+    params, see docs/proposals/sdk-hardware-routing.md).
     ``OverlayClient.annotate`` is hardware-first already and needs no
     routing.
     """
@@ -312,9 +351,14 @@ def get_default_router() -> AccelRouter:
             router.register(
                 "rgb_to_nv12",
                 software=_rgb_to_nv12_sw,
-                note="hardware leg pending DspClient.convert_hw — the daemon "
-                "already serves DSP_OP_CONVERT_FORMAT (equal dims, differing "
-                "formats) but the SDK client exposes resize/crop/multi_crop only",
+                hardware=_rgb_to_nv12_hw,
+                note="DSP convert via DspClient.convert_hw",
+            )
+            router.register(
+                "nv12_to_rgb",
+                software=_nv12_to_rgb_sw,
+                hardware=_nv12_to_rgb_hw,
+                note="DSP convert via DspClient.convert_hw",
             )
             router.register(
                 "nms",

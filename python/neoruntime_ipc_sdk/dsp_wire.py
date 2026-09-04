@@ -58,6 +58,7 @@ _ERROR_TEXT = {
 _OP_RESIZE = 0
 _OP_CROP_AND_RESIZE = 1
 _OP_MULTI_CROP = 2
+_OP_CONVERT_FORMAT = 3  # camera.proto DspOp — equal dims, differing formats
 
 _INTERP_WIRE = {
     "nearest": camera_pb2.DSP_INTERP_NEAREST,

@@ -61,6 +61,19 @@ get_default_router
    print(health["ops"]["resize_nv12"]["backend"])
    print(health["recent_degradations"])
 
+颜色转换同样走硬件腿
+~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from neoruntime_ipc_sdk import get_default_router
+
+   router = get_default_router()
+   nv12 = router.run("rgb_to_nv12", rgb)               # DSP convert_hw
+   rgb2 = router.run("nv12_to_rgb", nv12, 1920, 1080)  # 反方向同腿
+   # 路由器以 cpu_fallback=False 调用 DSP——真降级时只记一次，
+   # 软件腿恰好执行一遍（不会先在客户端内部悄悄跑一遍 CPU）。
+
 降级事件转发到事件总线
 ~~~~~~~~~~~~~~~~~~~~~~
 

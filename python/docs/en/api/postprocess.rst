@@ -35,7 +35,7 @@ Filter overlapping boxes after decoding
        print(f"{labels[class_ids[i]]} {scores[i]:.2f} @ ({x:.0f},{y:.0f},{w:.0f},{h:.0f})")
 
 Through the accel router (switches to hardware NMS when exposed)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
