@@ -118,6 +118,9 @@ Contents
    api/recording
    api/web
    api/draw
+   api/color
+   api/postprocess
+   api/accel
    api/plugin
 
 .. toctree::

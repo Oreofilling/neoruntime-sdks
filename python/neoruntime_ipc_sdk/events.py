@@ -136,6 +136,7 @@ class EventClient(GrpcClient):
         persistent: bool = False,
         ttl_ms: int | None = None,
         metadata: dict[str, str] | None = None,
+        compact: bool = False,
     ) -> str:
         if self.stub is None:
             self.connect()
@@ -144,7 +145,14 @@ class EventClient(GrpcClient):
             topic=topic,
             timestamp_ns=int(time.time() * 1e9),
             source=self.app_id,
-            payload=json.dumps(payload, default=_json_default).encode("utf-8"),
+            # compact drops the ", "/": " separators — smaller on the wire,
+            # and required by consumers that string-scan the payload (the
+            # camera-daemon overlay parser looks for "bbox":[ literally)
+            payload=json.dumps(
+                payload,
+                default=_json_default,
+                separators=(",", ":") if compact else None,
+            ).encode("utf-8"),
             payload_type="json",
         )
 

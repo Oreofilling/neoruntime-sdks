@@ -49,6 +49,21 @@ from .camera import (
     StreamStatus,
     TransformConfig,
 )
+from .accel import (
+    AccelRouter,
+    DegradationRecord,
+    HardwareUnavailable,
+    RouteDecision,
+    RoutePolicy,
+    get_default_router,
+)
+from .color import (
+    bgr_to_nv12,
+    nv12_resize,
+    nv12_to_bgr,
+    nv12_to_rgb,
+    rgb_to_nv12,
+)
 from .config import Config
 from .device import (
     AfJob,
@@ -103,6 +118,7 @@ from .overlay import (
     OverlayConfig,
 )
 from .plugin import PluginDiscovery, PluginEndpoint, PluginServer
+from .postprocess import nms
 from .recording import (
     HlsWriter,
     PrerollBuffer,
@@ -156,6 +172,19 @@ __all__ = [
     "draw_boxes",
     "draw_text",
     "draw_detections",
+    # App toolkit: color conversion / NMS / accel routing
+    "nv12_to_rgb",
+    "nv12_to_bgr",
+    "rgb_to_nv12",
+    "bgr_to_nv12",
+    "nv12_resize",
+    "nms",
+    "AccelRouter",
+    "RoutePolicy",
+    "RouteDecision",
+    "DegradationRecord",
+    "HardwareUnavailable",
+    "get_default_router",
     "TsWriter",
     "HlsWriter",
     "PrerollBuffer",

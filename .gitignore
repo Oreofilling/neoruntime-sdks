@@ -5,6 +5,8 @@ __pycache__/
 .mypy_cache/
 build/
 build-*/
+# Sphinx HTML output (python/docs, python/docs/en) — built locally, never committed
+**/_build/
 out/
 compile_commands.json
 .cache/

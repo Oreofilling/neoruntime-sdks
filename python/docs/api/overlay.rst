@@ -72,21 +72,32 @@ OverlayConfig
    )
    OverlayClient().apply(config)
 
-与推理结果联动
-~~~~~~~~~~~~~~
+与推理结果联动（annotate）
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   # 叠加层由 daemon 在编码前渲染：app 只需发布推理事件，
-   # daemon 自动把检测框画到码流上，无需 app 拿到视频帧
-   from neoruntime_ipc_sdk import EventClient, OverlayClient
+   # annotate() 把检测结果经事件总线推给 camera-daemon 的叠加渲染器：
+   # app 不接触视频帧，检测框在编码前由 daemon 画到码流上。结果
+   # 500ms 过期，按推理节奏持续调用；发空列表清屏
+   from neoruntime_ipc_sdk import OverlayClient
 
-   events = EventClient()
    overlay = OverlayClient()
    overlay.enable()
 
-   # 之后发布的检测事件会自动触发叠加渲染
-   events.publish("detection/vehicles", {"objects": [...]})
+   for result in inference_results:      # 如 InferenceClient.subscribe(...)
+       overlay.annotate("main", result.objects)
+
+   overlay.annotate("main", [])          # 清屏
+
+其他结果类型
+~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # annotate_result 按 objects > classifications > landmarks >
+   # ocr_lines 的优先级取 InferenceResult 中已填充的那一段
+   overlay.annotate_result("main", result)
 
 上下文管理器
 ~~~~~~~~~~~~

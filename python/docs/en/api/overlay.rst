@@ -73,22 +73,35 @@ Structured configuration
    )
    OverlayClient().apply(config)
 
-Combining with inference results
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Combining with inference results (annotate)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   # The overlay is rendered by the daemon before encoding: the app
-   # only publishes inference events and the daemon draws the boxes
-   # onto the stream — the app never needs the video frames.
-   from neoruntime_ipc_sdk import EventClient, OverlayClient
+   # annotate() pushes detections through the event bus to
+   # camera-daemon's overlay renderer: the app never touches video
+   # frames — the daemon draws the boxes onto the stream before
+   # encoding. Results expire after 500 ms, so call at inference
+   # cadence; publish an empty list to clear the screen.
+   from neoruntime_ipc_sdk import OverlayClient
 
-   events = EventClient()
    overlay = OverlayClient()
    overlay.enable()
 
-   # Detection events published afterwards trigger overlay rendering
-   events.publish("detection/vehicles", {"objects": [...]})
+   for result in inference_results:      # e.g. InferenceClient.subscribe(...)
+       overlay.annotate("main", result.objects)
+
+   overlay.annotate("main", [])          # clear
+
+Other result kinds
+~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # annotate_result picks whichever section of an InferenceResult is
+   # populated, with precedence objects > classifications > landmarks
+   # > ocr_lines
+   overlay.annotate_result("main", result)
 
 Context manager
 ~~~~~~~~~~~~~~~
