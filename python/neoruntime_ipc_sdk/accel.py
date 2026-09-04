@@ -43,6 +43,7 @@ from typing import Any, Callable
 from .color import nv12_resize as _nv12_resize_sw
 from .color import nv12_to_rgb as _nv12_to_rgb_sw
 from .color import rgb_to_nv12 as _rgb_to_nv12_sw
+from .frame import _encode_jpeg as _encode_jpeg_sw
 from .postprocess import nms as _nms_sw
 
 __all__ = [
@@ -156,6 +157,17 @@ def _nv12_to_rgb_hw(nv12: Any, width: int | None = None, height: int | None = No
         raise ValueError(f"nv12 is {src_w}x{src_h}, got width/height {width}/{height}")
     return _dsp_call(
         "convert_hw", np.ascontiguousarray(nv12), "rgb24", fmt="nv12", cpu_fallback=False
+    )
+
+
+def _encode_jpeg_hw(rgb: Any, quality: int = 85) -> bytes:
+    """camera-daemon EncodeImage with the same signature as the software leg
+    (:func:`frame._encode_jpeg` — RGB uint8 array, quality 1..100 → bytes)."""
+    import numpy as np  # noqa: PLC0415 — keep module import light
+
+    return _dsp_call(
+        "encode_jpeg_hw", np.ascontiguousarray(rgb), quality=quality, fmt="rgb24",
+        cpu_fallback=False,
     )
 
 
@@ -332,11 +344,12 @@ def get_default_router() -> AccelRouter:
     """Return the pre-registered router singleton.
 
     Operations served today: ``resize_nv12``, ``rgb_to_nv12`` and
-    ``nv12_to_rgb`` (DSP when reachable, numpy otherwise), ``nms``
-    (software only — suppression already runs in the HEF's integrated
-    hardware NMS before the app sees boxes, and its ``iou_threshold`` /
-    ``max_boxes`` are compile-time there; the runtime-tunable
-    ``detection_threshold`` lives in
+    ``nv12_to_rgb`` (DSP when reachable, numpy otherwise), ``encode_jpeg``
+    (camera-daemon EncodeImage when reachable, cv2/Pillow otherwise),
+    ``nms`` (software only — suppression already runs in the HEF's
+    integrated hardware NMS before the app sees boxes, and its
+    ``iou_threshold`` / ``max_boxes`` are compile-time there; the
+    runtime-tunable ``detection_threshold`` lives in
     :meth:`InferenceClient.update_postprocess_config`, honored for
     family-function postprocess models. See
     docs/proposals/sdk-hardware-routing.md S-2).
@@ -364,6 +377,13 @@ def get_default_router() -> AccelRouter:
                 software=_nv12_to_rgb_sw,
                 hardware=_nv12_to_rgb_hw,
                 note="DSP convert via DspClient.convert_hw",
+            )
+            router.register(
+                "encode_jpeg",
+                software=_encode_jpeg_sw,
+                hardware=_encode_jpeg_hw,
+                note="camera-daemon EncodeImage via DspClient.encode_jpeg_hw "
+                "(libjpeg on the DSP core — no dedicated JPEG block on hailo15)",
             )
             router.register(
                 "nms",

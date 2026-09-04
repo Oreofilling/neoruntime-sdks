@@ -76,6 +76,19 @@ Color conversion runs on the hardware leg too
    # degradation is recorded once and the software leg runs exactly
    # once (no hidden in-client CPU pass first).
 
+JPEG encode: daemon one-shot RPC, CPU leg as fallback
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   router = get_default_router()
+   jpeg = router.run("encode_jpeg", rgb, quality=85)
+   # Hardware leg = camera-daemon EncodeImage (DspClient.encode_jpeg_hw,
+   # N-threaded libjpeg on the DSP core — hailo15 has no dedicated JPEG
+   # encode block); software leg = cv2/Pillow. When the daemon does not
+   # expose the RPC it degrades automatically and honestly:
+   # health()["ops"]["encode_jpeg"]["backend"] shows the live backend.
+
 Forward degradations to the event bus
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

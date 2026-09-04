@@ -32,6 +32,7 @@ Usage::
     small = client.resize_hw(frame.image, 640, 640, fmt="nv12")
     tiles = client.multi_crop_hw(frame.image, rects, fmt="nv12")
     nv12 = client.convert_hw(frame.image, "nv12", fmt="rgb24")
+    jpeg = client.encode_jpeg_hw(frame.image, quality=85, fmt="rgb24")
 
     # zero-copy: keep the frame's dma-bufs and hand them over directly
     frame = media.get_frame("main", keep_fd=True)
@@ -107,6 +108,7 @@ from .frame import (
     Frame,
     FrameHandle,
     _dma_buf_sync,
+    _encode_jpeg,
 )
 from .proto import camera_pb2, camera_pb2_grpc
 
@@ -966,6 +968,123 @@ class DspClient(GrpcClient):
         )
         self.last_used_hw = False
         return _cpu_convert(_as_pixels(src), fmt, dst_fmt)
+
+    def encode_jpeg_hw(
+        self,
+        src: JobSource,
+        quality: int = 85,
+        fmt: str | None = None,
+        timeout_s: float = 5.0,
+        src_pool: DspBufferPool | None = None,
+        cpu_fallback: bool = True,
+    ) -> bytes:
+        """Encode ``src`` as one JPEG frame on the camera-daemon (S-3(a)).
+
+        Unlike the ``*_hw`` job methods this is the daemon's one-shot
+        ``EncodeImage`` RPC: the source is pinned in the DSP registry
+        (imported zero-copy for keep-fd frames, copied into a pool buffer
+        for arrays) and the complete JPEG bytes come back in the response
+        — no destination buffer, no read-back. The daemon owns one
+        standalone encoder keyed by ``(width, height, format, quality)``
+        and recreates it when that key changes, so alternating qualities
+        or geometries re-spins the encoder (first frame after a change
+        pays the pipeline start-up).
+
+        Despite the name, the encoder is N-threaded libjpeg on the DSP
+        core behind a GStreamer dispatch — hailo15 has no dedicated JPEG
+        block. The win is central encode + zero-copy input, not raw speed;
+        keep it out of tight per-frame loops that a CPU encode already
+        serves (see docs/proposals/sdk-hardware-routing.md S-3).
+
+        ``quality`` is 1..100. Inputs are ``rgb24``/``nv12`` arrays and
+        keep-fd frames (the daemon normalizes RGB through its DSP convert
+        — the encoder pipeline negotiates NV12 only). gray8 arrays
+        up-convert to rgb24 client-side (R=G=B=gray) and ride the same
+        hardware leg; gray8 keep-fd frames raise instead of silently
+        copying — accept the copy yourself with ``frame.to_array()``.
+        """
+        sw, sh, handle, fmt = _resolve_source(src, fmt)
+        _validate_geometry(sw, sh, fmt, "source")
+        if not 1 <= int(quality) <= 100:
+            raise DspError(f"quality must be 1..100, got {quality}")
+        if fmt == "gray8":
+            if handle is not None:
+                raise DspError(
+                    "gray8 frames cannot ride the hardware jpeg encoder "
+                    "without a copy (the daemon feeds nv12/rgb24); "
+                    "use frame.to_array() and pass the array"
+                )
+            # no hardware gray leg: replicate to rgb24 (R=G=B=gray) and
+            # let the daemon's DSP convert take it from there
+            src = _cpu_convert(_as_pixels(src), "gray8", "rgb24")
+            fmt = "rgb24"
+        if src_pool is not None and (src_pool.width, src_pool.height, src_pool.fmt) != (sw, sh, fmt):
+            raise DspError(
+                f"src_pool is {src_pool.width}x{src_pool.height} {src_pool.fmt}, "
+                f"source is {sw}x{sh} {fmt}"
+            )
+        try:
+            # bespoke prep (no dst pool — the JPEG rides the response)
+            own: list[object] = []
+            if handle is not None:
+                if src_pool is not None:
+                    raise DspError(
+                        "src_pool applies to numpy sources; a frame handle imports its own dma-bufs"
+                    )
+                source = _ImportedSource(self, self._import_source(handle, sw, sh, fmt, timeout_s))
+                own.append(source)
+            else:
+                pool = src_pool if src_pool is not None else self.alloc_buffers(sw, sh, fmt, 1)
+                if src_pool is None:
+                    own.append(pool)
+                pool.write(0, _as_pixels(src))
+                source = pool
+            try:
+                jpeg = self._encode_rpc(source.buffer_id(0), int(quality), timeout_s)
+                self.last_used_hw = True
+                return jpeg
+            finally:
+                self._release_owned(own)
+        except _DspUnavailable as e:
+            if handle is not None:
+                raise DspError(
+                    "EncodeImage unavailable with a zero-copy frame source — refusing "
+                    "the silent CPU fallback (the frame holds fds, not "
+                    "pixels; use frame.to_array() to accept the copy)"
+                ) from e
+            if not cpu_fallback:
+                raise
+            warnings.warn(
+                f"EncodeImage unavailable ({e}); CPU fallback engaged "
+                "(client.last_used_hw records the path used)",
+                UserWarning,
+                stacklevel=3,
+            )
+            self.last_used_hw = False
+            pixels = _as_pixels(src)
+            if fmt != "rgb24":  # _cpu_convert refuses identical formats
+                pixels = _cpu_convert(pixels, fmt, "rgb24")
+            return _encode_jpeg(pixels, int(quality))
+
+    def _encode_rpc(self, src_id: int, quality: int, timeout_s: float) -> bytes:
+        """One EncodeImage round-trip; raises _DspUnavailable when absent."""
+        req = camera_pb2.EncodeImageRequest(src_buffer_id=src_id, quality=quality)
+        try:
+            resp = self._connect().EncodeImage(req, timeout=timeout_s)
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.UNIMPLEMENTED:
+                raise _DspUnavailable("EncodeImage not in daemon") from e
+            raise DspError(f"EncodeImage rpc failed: {e}") from e
+        if not resp.success:
+            if resp.error_code == DSP_SERVICE_UNAVAILABLE:
+                raise _DspUnavailable("dsp service not running")
+            raise DspError(
+                f"jpeg encode failed: {resp.message or _ERROR_TEXT.get(resp.error_code)}",
+                code=resp.error_code,
+            )
+        if not resp.jpeg:
+            raise DspError("EncodeImage returned success with no jpeg payload")
+        return bytes(resp.jpeg)
 
     # -- internal plumbing ------------------------------------------------------
     def _prep(

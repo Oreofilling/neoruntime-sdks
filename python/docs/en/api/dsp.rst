@@ -109,6 +109,28 @@ Format conversion (RGB <-> NV12 / grayscale)
    # cpu_fallback=True such job rejections also fall back to CPU with a
    # warning; last_used_hw=False records the backend actually used.
 
+One-shot JPEG encode (snapshot / thumbnail)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # encode_jpeg_hw is the daemon's one-shot EncodeImage RPC: the source
+   # buffer is pinned in the DSP registry zero-copy (keep-fd frames import
+   # their dma-bufs, arrays are copied into a pool buffer) and the
+   # complete JPEG bytes ride the response — no destination buffer, no
+   # read-back.
+   jpeg = dsp.encode_jpeg_hw(frame, quality=85, fmt="nv12")
+   # array sources default to rgb24: jpeg = dsp.encode_jpeg_hw(rgb, quality=85)
+
+   # No "hardware block" despite the name: the encoder is N-threaded
+   # libjpeg on the DSP core behind a GStreamer dispatch — hailo15 has no
+   # dedicated JPEG encode block. The win is central encode + zero-copy
+   # input (app images can drop cv2/PIL), not raw speed; tight per-frame
+   # loops are still better served by a CPU encode. The daemon reuses one
+   # encoder keyed by (width, height, format, quality) and recreates it
+   # when that key changes (the first frame after a change pays the
+   # pipeline start-up).
+
 Pre-allocated buffer pool (repeated jobs)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -678,6 +678,13 @@ service CameraControl {
   // (FD_PUB_MSG_DSP_ALLOC / FD_PUB_MSG_DSP_BUF_RELEASE, fds via SCM_RIGHTS)
   // and referenced here by buffer id. Synchronous single-job form first.
   rpc SubmitDspJob(DspJobRequest) returns (DspJobResponse);
+
+  // One-shot JPEG encode of a registered DSP buffer (S-3(a), SDK
+  // hardware-routing proposal). Input: any buffer id from the DSP registry
+  // (alloc or import); output: a complete JPEG frame in the response. The
+  // daemon keeps one encoder context per distinct (width, height, format,
+  // quality) and recreates it when that key changes.
+  rpc EncodeImage(EncodeImageRequest) returns (EncodeImageResponse);
 }
 
 // Device capabilities auto-detected from loaded HAL modules
@@ -826,4 +833,19 @@ message DspJobResponse {
   string message = 2;
   int32 error_code = 3;     // negative HAL error, -EINVAL style codes for validation
   uint32 elapsed_ms = 4;
+}
+
+// One-shot JPEG encode (S-3(a)). src_buffer_id must reference a buffer in
+// the DSP registry (id from FD_PUB_MSG_DSP_ALLOC_RESP or a DSP import).
+message EncodeImageRequest {
+  uint64 src_buffer_id = 1;
+  uint32 quality = 2;         // JPEG quality [1..100]; 0 = daemon default (85)
+}
+
+message EncodeImageResponse {
+  bool success = 1;
+  string message = 2;
+  int32 error_code = 3;       // negative HAL error or DspServiceError
+  uint32 elapsed_ms = 4;
+  bytes jpeg = 5;             // complete JPEG frame (empty on failure)
 }

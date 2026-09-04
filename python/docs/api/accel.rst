@@ -74,6 +74,18 @@ get_default_router
    # 路由器以 cpu_fallback=False 调用 DSP——真降级时只记一次，
    # 软件腿恰好执行一遍（不会先在客户端内部悄悄跑一遍 CPU）。
 
+JPEG 编码：daemon 一发 RPC，CPU 兜底
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   router = get_default_router()
+   jpeg = router.run("encode_jpeg", rgb, quality=85)
+   # 硬件腿 = camera-daemon EncodeImage（DspClient.encode_jpeg_hw，
+   # DSP 核上 N 线程 libjpeg——hailo15 无专用 JPEG 编码块），
+   # 软件腿 = cv2/Pillow。daemon 未暴露该 RPC 时自动降级并记账，
+   # health()["ops"]["encode_jpeg"]["backend"] 如实反映当前后端。
+
 降级事件转发到事件总线
 ~~~~~~~~~~~~~~~~~~~~~~
 

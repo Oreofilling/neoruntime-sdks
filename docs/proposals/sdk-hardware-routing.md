@@ -63,7 +63,7 @@ where each one runs today:
 | Box suppression | `nms` | numpy | ✅ already in the HEF's integrated NMS (compile-time knobs; runtime `detection_threshold` via `update_postprocess_config`) | — (verified; see S-2) |
 | Draw onto outgoing stream | `OverlayClient.annotate` | — | ✅ camera-daemon renderer | — (live; contract below) |
 | Raster drawing (local frames) | `draw.py` | CPU raster | ⏸ DSP blend | dsp-offload P1 |
-| Snapshot JPEG | `frame.py:_encode_jpeg` | cv2 | ⏸ SoC encoder | platform RPC — see S-3 |
+| Snapshot JPEG | `encode_jpeg` / `encode_jpeg_hw` | cv2/Pillow | ✅ camera-daemon `EncodeImage` (N-threaded libjpeg on the DSP core) | — (live; S-3 record below) |
 | App frames → main stream | — | — | ⏸ convert + injection | [frame-injection.md](frame-injection.md) |
 
 ## Routing design
@@ -184,19 +184,62 @@ family-function NMS tensor layout is `[pad, count, rows of
 `float[0]` (parking-lot's `parse_nms_raw` reads `float[0]`, which reads
 0 for family models; the objects path is unaffected).
 
-### S-3 · codec: hardware JPEG encode RPC — open, needs a new camera-daemon RPC
+### S-3 · codec: hardware JPEG encode RPC — done 2026-09-04 (option a)
 
-`frame.py:92` (`_encode_jpeg`) burns CPU cv2 on every snapshot; the
-platform's own thumbnails already use the SoC encoder. Scoped 2026-09-04:
-`camera.proto`'s RPC surface has no one-shot encode/snapshot entry (only
-`UpdateEncoderConfig`/`ReconfigureEncoder`/`SwitchProfile` for the main
-stream), and camera-daemon has no http server to piggyback. Options:
-(a) `EncodeImage(buffer_id, format, quality)` unary RPC on
-camera-daemon (DMA-buf in, JPEG bytes out — closest to the DSP-job
-pattern); (b) an `EncodeImage` DSP-op-adjacent codec op riding the
-existing `SubmitDspJob` plumbing. Either way this is platform-repo work
-awaiting direction. Low urgency: snapshots are typically 1/few-Hz,
-unlike the per-frame ops above.
+`frame.py:_encode_jpeg` burned CPU cv2 on every snapshot. Landed as
+option (a): **`EncodeImage(src_buffer_id, quality)` unary RPC on
+camera-daemon** — source pinned in DspService (zero-copy for keep-fd
+frames, pool-copied for arrays), complete JPEG bytes in the response, no
+destination buffer, no read-back. `camera.proto` +
+`camera_control_service.cpp` (platform repo) and
+`DspClient.encode_jpeg_hw` + router op `encode_jpeg` (SDK) both verified
+on 93.72.
+
+**Premise correction**: this doc earlier assumed "the platform's own
+thumbnails use the SoC encoder" — hailo15 has **no dedicated JPEG encode
+block**. The daemon's encoder is N-threaded libjpeg on the DSP core
+behind a GStreamer dispatch (`hailoencodebin` → `hailojpegenc`). The win
+is centralized encode + zero-copy dma-buf input (app images can drop
+cv2/PIL), not raw speed: ~160 ms warm for 384×216, ~560 ms for a 4K
+snapshot (first frame of any key pays pipeline spin-up).
+
+Platform findings the next user of the standalone encoder needs:
+
+- **The pipeline negotiates NV12 only.** Every `hailoencodebin` carries
+  an OSD element whose pad templates accept NV12 alone
+  (`gsthailoosd.cpp:85`), even though `hailojpegenc` itself lists
+  RGB/BGR/GRAY8 among its sink caps — an RGB appsrc fails caps
+  negotiation deep in the bin (`Internal data stream error`, no packet,
+  2 s shot timeout). The daemon therefore normalizes before feeding:
+  NV12 direct; RGB/BGR via the DSP CONVERT job into a per-call scratch
+  NV12 buffer; anything else gets a clear error the SDK treats as a
+  normal hardware miss.
+- **A standalone (non-pipeline) encoder needs a ConfigManager
+  interactor.** The HAL clones the compiled-in default profile with
+  `sensor_id="SENSOR_1"`, registers it via `ConfigManagerInteractor::
+  create`, and discovers the plugin's global slot by scanning
+  `/proc/self/maps` for `libgstmedialib.so` + `dlopen(RTLD_NOLOAD|
+  RTLD_LOCAL)` + `dlsym` (the plugin exports its symbols RTLD_LOCAL).
+  SENSOR_1's real full-json interactor coexists — both registrations
+  live in the manager side by side.
+- **Vendor destroy-on-error hazard (libmedialib.so.1).** A GStreamer bus
+  error quits the encoder's main loop from the bus callback; `stop()`
+  then early-returns on `!is_started()` without joining the loop
+  thread, and `~Impl` destroys a still-joinable `std::thread` →
+  `std::terminate` → daemon SIGABRT (bit us once on device). HAL guard:
+  fed-vs-delivered frame accounting; at deinit, an unbalanced encoder is
+  parked in a process-lifetime graveyard instead of destroyed (bounded,
+  one per failed context), balanced encoders destroy normally. With the
+  NV12 normalization in place the only known error trigger is gone and
+  the guard is pure defense-in-depth.
+
+SDK contract: `encode_jpeg_hw(src, quality=85)` — arrays copy into one
+pool buffer, keep-fd frames import their dma-bufs (and refuse the silent
+CPU fallback, as everywhere), gray8 arrays up-convert to rgb24
+client-side (R=G=B) and ride the same hardware leg, gray8 keep-fd frames
+raise with a `to_array()` hint. Encoder daemon-side is keyed
+`(w, h, fmt, quality)` — key changes re-spin the pipeline. The router's
+`encode_jpeg` op uses `cpu_fallback=False` so degradations are honest.
 
 ### S-4 · overlay ingestion contract — no platform work, recorded here
 
@@ -226,6 +269,10 @@ contract the SDK now depends on, for the record:
 - **P2 (S-2 done 2026-09-04)** — S-2 verified on-device with no
   platform change needed (`detection_threshold` runtime-tunable on
   family functions; `iou_threshold`/`max_boxes` are HEF compile-time);
-  SDK docs/tests landed. Remaining: S-3 JPEG RPC (new camera-daemon
-  surface, options above), `draw.py` CPU raster → DSP blend follows
-  dsp-offload P1, frame injection per its own proposal.
+  SDK docs/tests landed.
+- **P3 (S-3 done 2026-09-04)** — `EncodeImage` unary RPC on
+  camera-daemon + `encode_jpeg_hw`/router op landed and e2e-verified on
+  93.72 (all legs incl. keep-fd 4K); platform constraints and the
+  vendor destroy hazard recorded in the S-3 section. Remaining:
+  `draw.py` CPU raster → DSP blend follows dsp-offload P1, frame
+  injection per its own proposal.

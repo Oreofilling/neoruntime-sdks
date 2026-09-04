@@ -102,6 +102,23 @@ DspError
    # cpu_fallback=True 下这类"作业被拒"同样回落 CPU 并告警，
    # last_used_hw=False 如实记录实际后端。
 
+单帧 JPEG 编码（快照/缩略图）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # encode_jpeg_hw 走 daemon 的 EncodeImage 一发 RPC：源缓冲零拷贝
+   # 注册进 DSP registry（keep-fd 帧直接导入 dma-buf，numpy 数组拷入
+   # 池缓冲），完整 JPEG 字节随响应返回——无目的缓冲、无回读。
+   jpeg = dsp.encode_jpeg_hw(frame, quality=85, fmt="nv12")
+   # 数组源则 rgb24 默认：jpeg = dsp.encode_jpeg_hw(rgb, quality=85)
+
+   # 名字里虽无"硬件块"：编码器是 DSP 核上 N 线程 libjpeg（GStreamer
+   # 分发）——hailo15 没有专用 JPEG 编码块。收益是集中编码 + 零拷贝
+   # 输入（app 镜像可省掉 cv2/PIL），不是原始速度；逐帧高频编码仍以
+   # CPU 路径为宜。encoder 按 (宽,高,格式,quality) 复用，参数一变
+   # 就重建（变更后首帧承担流水线启动开销）。
+
 预分配缓冲池（高帧率重复任务）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

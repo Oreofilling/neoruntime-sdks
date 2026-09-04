@@ -365,6 +365,11 @@ class CameraControlStub(object):
                 request_serializer=camera__pb2.DspJobRequest.SerializeToString,
                 response_deserializer=camera__pb2.DspJobResponse.FromString,
                 _registered_method=True)
+        self.EncodeImage = channel.unary_unary(
+                '/aipc.camera.CameraControl/EncodeImage',
+                request_serializer=camera__pb2.EncodeImageRequest.SerializeToString,
+                response_deserializer=camera__pb2.EncodeImageResponse.FromString,
+                _registered_method=True)
 
 
 class CameraControlServicer(object):
@@ -799,6 +804,17 @@ class CameraControlServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def EncodeImage(self, request, context):
+        """One-shot JPEG encode of a registered DSP buffer (S-3(a), SDK
+        hardware-routing proposal). Input: any buffer id from the DSP registry
+        (alloc or import); output: a complete JPEG frame in the response. The
+        daemon keeps one encoder context per distinct (width, height, format,
+        quality) and recreates it when that key changes.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_CameraControlServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1131,6 +1147,11 @@ def add_CameraControlServicer_to_server(servicer, server):
                     servicer.SubmitDspJob,
                     request_deserializer=camera__pb2.DspJobRequest.FromString,
                     response_serializer=camera__pb2.DspJobResponse.SerializeToString,
+            ),
+            'EncodeImage': grpc.unary_unary_rpc_method_handler(
+                    servicer.EncodeImage,
+                    request_deserializer=camera__pb2.EncodeImageRequest.FromString,
+                    response_serializer=camera__pb2.EncodeImageResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -2916,6 +2937,33 @@ class CameraControl(object):
             '/aipc.camera.CameraControl/SubmitDspJob',
             camera__pb2.DspJobRequest.SerializeToString,
             camera__pb2.DspJobResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EncodeImage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/EncodeImage',
+            camera__pb2.EncodeImageRequest.SerializeToString,
+            camera__pb2.EncodeImageResponse.FromString,
             options,
             channel_credentials,
             insecure,
