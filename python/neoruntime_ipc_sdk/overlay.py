@@ -330,7 +330,7 @@ def _landmark_dict(item: LandmarkSet) -> dict:
                 "x": float(p["x"] if isinstance(p, dict) else p.x),
                 "y": float(p["y"] if isinstance(p, dict) else p.y),
                 "confidence": float(
-                    (p.get("confidence", 1.0) if isinstance(p, dict) else getattr(p, "confidence", 1.0))
+                    p.get("confidence", 1.0) if isinstance(p, dict) else getattr(p, "confidence", 1.0)
                 ),
             }
             for p in points

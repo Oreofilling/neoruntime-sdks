@@ -391,6 +391,18 @@ CLIP 文本编码
    })
    inf.update_postprocess_config("clip_vit_b32", config)
 
+   # 运行时调整检测模型的分数门限（无需重新注册）
+   inf.update_postprocess_config("yolov8n", json.dumps({
+       "detection_threshold": 0.5
+   }))
+
+``detection_threshold`` 仅在模型后处理解析为家族函数
+（``hailo_yolov8n``/``s``/``m`` —— 检测模型注册时 variant JSON 不带
+``backend_function`` 的默认路径）时于运行时生效；通用插件导出会忽略
+JSON 调参。``iou_threshold`` 与 ``max_boxes`` 虽被链路接受但无行为
+效果：抑制与封顶发生在 HEF 编译期集成的硬件 NMS 里。未知键会使 RPC
+抛出服务端的拒绝信息（``-2801``）。
+
 GenAI (LLM/VLM)
 ~~~~~~~~~~~~~~~
 

@@ -23,7 +23,7 @@ from neoruntime_ipc_sdk import (
 
 
 class FakeEventClient:
-    instances: list["FakeEventClient"] = []
+    instances: list[FakeEventClient] = []
 
     def __init__(self, *args, **kwargs):
         self.published: list[dict] = []

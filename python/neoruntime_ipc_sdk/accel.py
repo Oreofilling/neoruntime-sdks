@@ -333,8 +333,13 @@ def get_default_router() -> AccelRouter:
 
     Operations served today: ``resize_nv12``, ``rgb_to_nv12`` and
     ``nv12_to_rgb`` (DSP when reachable, numpy otherwise), ``nms``
-    (software only — hardware leg pending ai-runtime registration
-    params, see docs/proposals/sdk-hardware-routing.md).
+    (software only — suppression already runs in the HEF's integrated
+    hardware NMS before the app sees boxes, and its ``iou_threshold`` /
+    ``max_boxes`` are compile-time there; the runtime-tunable
+    ``detection_threshold`` lives in
+    :meth:`InferenceClient.update_postprocess_config`, honored for
+    family-function postprocess models. See
+    docs/proposals/sdk-hardware-routing.md S-2).
     ``OverlayClient.annotate`` is hardware-first already and needs no
     routing.
     """
@@ -363,7 +368,9 @@ def get_default_router() -> AccelRouter:
             router.register(
                 "nms",
                 software=_nms_sw,
-                note="hardware leg pending ai-runtime NMS registration params",
+                note="HEF-integrated hardware NMS already suppressed pre-app; "
+                "runtime detection_threshold via InferenceClient."
+                "update_postprocess_config (family functions only)",
             )
             router.add_probe("cv2", _probe_cv2)
             router.add_probe("dsp", _probe_dsp)

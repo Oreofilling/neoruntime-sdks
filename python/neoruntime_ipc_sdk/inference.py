@@ -14,8 +14,8 @@ from typing import Any, Iterator
 import grpc
 import numpy as np
 
-from .config import Config
 from ._transport import MAX_GRPC_MESSAGE_LENGTH
+from .config import Config
 from .inference_codec import (  # noqa: F401 — re-exported for API compat
     _numpy_to_tensor,
     _parse_infer_response,
@@ -674,6 +674,27 @@ class InferenceClient(GenAiMixin):
 
         For CLIP models, config_json can contain:
             {"prompts": ["a person", "a car"], "score_threshold": 0.3}
+
+        For detection models, the numeric postprocess keys are accepted:
+            {"detection_threshold": 0.38, "iou_threshold": 0.45,
+             "max_boxes": 80}
+
+        Applicability, verified on-device (hailo15, 2026-09):
+
+        - ``detection_threshold`` is honored at runtime **only when the
+          model's postprocess resolves to a family function**
+          (``hailo_yolov8n``/``hailo_yolov8s``/``hailo_yolov8m`` — the
+          default for detection models registered without a
+          ``backend_function`` in their variant JSON). Generic plugin
+          exports (e.g. ``yolov5m_vehicles``) hardcode their thresholds
+          and ignore JSON tuning entirely.
+        - ``iou_threshold`` / ``max_boxes`` are accepted by the chain but
+          have no behavioral effect: suppression and box capping happen
+          in the HEF's compile-time integrated NMS on the accelerator,
+          so they cannot be moved after compilation.
+
+        Unknown keys are rejected server-side (the RPC raises) — push
+        only keys the model's postprocess schema knows.
 
         Returns True on success.
         """

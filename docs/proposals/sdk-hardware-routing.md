@@ -5,7 +5,11 @@ Status: SDK skeleton **landed 2026-09-04** (`accel.py` router,
 338 tests green); **P1 `DspClient.convert_hw` landed same day** (both
 convert directions registered as DSP hardware legs; verified on-device
 on 93.72 — RGB↔NV12 run on the DSP, the gray8 pairs are firmware-
-refused and degrade to CPU; 362 tests green);
+refused and degrade to CPU; 362 tests green); **P2 S-2 verified
+2026-09-04** — the runtime NMS-tuning chain ships today:
+`detection_threshold` is runtime-tunable for family-function
+postprocess models, `iou_threshold`/`max_boxes` are HEF compile-time
+(verified on 93.72, probes v4-v6);
 this document is the component inventory, the routing design, and the
 service-layer asks that turn the remaining software legs hardware-first.
 
@@ -56,7 +60,7 @@ where each one runs today:
 |---|---|---|---|---|
 | NV12 geometry (resize/crop/multi-crop) | `router.run("resize_nv12", ...)` | numpy | ✅ DSP `resize_hw` | — (live) |
 | RGB↔NV12 color convert | `router.run("rgb_to_nv12"/"nv12_to_rgb", ...)` | numpy | ✅ DSP `CONVERT_FORMAT` | — (live; S-1 record below) |
-| Box suppression | `nms` | numpy | ⏸ ai-runtime postprocess | ai-runtime params — see S-2 |
+| Box suppression | `nms` | numpy | ✅ already in the HEF's integrated NMS (compile-time knobs; runtime `detection_threshold` via `update_postprocess_config`) | — (verified; see S-2) |
 | Draw onto outgoing stream | `OverlayClient.annotate` | — | ✅ camera-daemon renderer | — (live; contract below) |
 | Raster drawing (local frames) | `draw.py` | CPU raster | ⏸ DSP blend | dsp-offload P1 |
 | Snapshot JPEG | `frame.py:_encode_jpeg` | cv2 | ⏸ SoC encoder | platform RPC — see S-3 |
@@ -128,28 +132,71 @@ Zero-copy frame sources are still refused a silent copy (use
 `frame.to_array()`), and the router legs (`cpu_fallback=False`) keep
 raising so a degradation is recorded exactly once.
 
-### S-2 · ai-runtime: expose NMS registration params
+### S-2 · ai-runtime: expose NMS registration params — ✅ verified 2026-09-04 (no platform change needed)
 
-The accelerator's postprocess already runs NMS at hardware speed, but
-its knobs are compile-time constants per model type:
+The original ask (accept `nms_threshold` / `confidence_threshold` /
+`max_detections` as registration parameters, replacing the hard-codes at
+`model_manager.cpp:253`/`:309`) turned out to be already answered by
+machinery that ships today. The full chain exists end-to-end:
 
-- `platform/ai-runtime/src/model_manager.cpp:253` and `:309` —
-  `nms_threshold = 0.45f`, `confidence_threshold = 0.25f`,
-  `max_detections = 64` hard-coded in the detection postprocess config.
+- SDK `InferenceClient.update_postprocess_config(model_id, json)` →
+  gRPC `UpdatePostprocessConfig` → `ModelManager::update_postprocess_config`
+  → HAL `apply_config_json` (`hailo15_postprocess_impl.cpp:2165`):
+  patches `merged_vendor_json` with the numeric keys
+  (`detection_threshold`, `iou_threshold`, `max_boxes`, …), rewrites the
+  plugin's temp config file and re-runs the plugin's `init`.
+- At registration, the model's variant JSON blob IS the tuning channel
+  (`init_post_process`, `model_manager.cpp:313-378`) — a full blob lands
+  in the plugin's config verbatim.
 
-Ask: accept these three as model-registration parameters (defaulting to
-today's values) so the SDK can register `nms`'s hardware leg as
-"the already-configured accelerator postprocess" and stop paying the
-CPU round on every frame. Until then the router's `nms` stays
-software-only with the current note.
+On-device ground truth (93.72, hailo15, probes v4-v6 on a fixed test
+image with two `vehicle` detections at scores 0.886 / 0.771):
 
-### S-3 · codec: hardware JPEG encode RPC
+- **`detection_threshold` is runtime-tunable — for family functions
+  only.** Sweeping it on `hailo_yolov8n_384_640.hef` (postprocess
+  resolves to the `hailo_yolov8n` default) moved the count exactly as
+  the scores predict: ≥0.886 → 0 boxes, ≤0.771 → 2 boxes, across ten
+  pushed values with no re-registration.
+- **Generic plugin exports ignore all JSON tuning.** The identical sweep
+  on `yolov5m_vehicles` (variant names `backend_function:
+  "yolov5m_vehicles"`) never moved the results; the device's journald
+  shows the repo's own guard warning
+  (`hailo15_postprocess_impl.cpp:1324`) for that registration. App
+  consequence: a custom-named detection model's thresholds are
+  compile-time fixed — re-compile the HEF or switch the postprocess to a
+  family function to tune at runtime.
+- **`iou_threshold` / `max_boxes` are chain-accepted but behaviorally
+  inert.** The test pair overlaps at IoU ≈ 0.32, yet `iou_threshold`
+  0.99 vs 0.01 and `max_boxes=1` never changed the output: suppression
+  and capping happen in the HEF's compile-time integrated NMS
+  ("HEF nms: 1 class, 80 boxes/class" at activation), which the plugin
+  cannot re-knob after compilation.
+
+SDK side (landed with this update): honest applicability notes in the
+`update_postprocess_config` docstring, three new tests (request shape,
+failure surfaces the server's `-2801`, CLIP prompts ride the same RPC),
+zh+en `inference.rst` examples, and the router's `nms` op note now says
+the hardware leg already ran — pre-app, inside the HEF.
+
+Side finding recorded for apps parsing raw NMS tensors: the
+family-function NMS tensor layout is `[pad, count, rows of
+(ymin, xmin, ymax, xmax, conf)]` — the count is `float[1]`, not
+`float[0]` (parking-lot's `parse_nms_raw` reads `float[0]`, which reads
+0 for family models; the objects path is unaffected).
+
+### S-3 · codec: hardware JPEG encode RPC — open, needs a new camera-daemon RPC
 
 `frame.py:92` (`_encode_jpeg`) burns CPU cv2 on every snapshot; the
-platform's own thumbnails already use the SoC encoder. A
-`EncodeImage(buffer_id, format, quality)` camera-daemon RPC (or an
-`DSP_OP`-adjacent codec op) closes it. Low urgency: snapshots are
-typically 1/few-Hz, unlike the per-frame ops above.
+platform's own thumbnails already use the SoC encoder. Scoped 2026-09-04:
+`camera.proto`'s RPC surface has no one-shot encode/snapshot entry (only
+`UpdateEncoderConfig`/`ReconfigureEncoder`/`SwitchProfile` for the main
+stream), and camera-daemon has no http server to piggyback. Options:
+(a) `EncodeImage(buffer_id, format, quality)` unary RPC on
+camera-daemon (DMA-buf in, JPEG bytes out — closest to the DSP-job
+pattern); (b) an `EncodeImage` DSP-op-adjacent codec op riding the
+existing `SubmitDspJob` plumbing. Either way this is platform-repo work
+awaiting direction. Low urgency: snapshots are typically 1/few-Hz,
+unlike the per-frame ops above.
 
 ### S-4 · overlay ingestion contract — no platform work, recorded here
 
@@ -176,6 +223,9 @@ contract the SDK now depends on, for the record:
 - **P1 (done, SDK-only)** — S-1 `convert_hw` + both convert hardware
   legs; revisit `resize_nv12` to accept a dma-buf fast path when
   `dsp-offload` P1 lands.
-- **P2 (blocked on service layers)** — S-2 NMS params, S-3 JPEG RPC;
-  `draw.py` CPU raster → DSP blend follows dsp-offload P1; frame
-  injection per its own proposal.
+- **P2 (S-2 done 2026-09-04)** — S-2 verified on-device with no
+  platform change needed (`detection_threshold` runtime-tunable on
+  family functions; `iou_threshold`/`max_boxes` are HEF compile-time);
+  SDK docs/tests landed. Remaining: S-3 JPEG RPC (new camera-daemon
+  surface, options above), `draw.py` CPU raster → DSP blend follows
+  dsp-offload P1, frame injection per its own proposal.

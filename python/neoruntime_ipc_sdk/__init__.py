@@ -19,6 +19,14 @@ from __future__ import annotations
 
 __version__ = "0.7.3"
 
+from .accel import (
+    AccelRouter,
+    DegradationRecord,
+    HardwareUnavailable,
+    RouteDecision,
+    RoutePolicy,
+    get_default_router,
+)
 from .app import (
     AppClient,
     AppInfo,
@@ -48,14 +56,6 @@ from .camera import (
     SensorInfo,
     StreamStatus,
     TransformConfig,
-)
-from .accel import (
-    AccelRouter,
-    DegradationRecord,
-    HardwareUnavailable,
-    RouteDecision,
-    RoutePolicy,
-    get_default_router,
 )
 from .color import (
     bgr_to_nv12,

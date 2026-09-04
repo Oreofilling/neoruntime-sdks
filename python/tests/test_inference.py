@@ -198,6 +198,73 @@ class TestInferenceClient:
         assert client._dtype_str_to_enum("int32") == inference_pb2.INT32
         assert client._dtype_str_to_enum("unknown") == inference_pb2.FLOAT32
 
+    def test_update_postprocess_config_success(self):
+        # The runtime-tuning surface for detection postprocess (NMS
+        # thresholds): request must carry model_id + verbatim config_json.
+        from neoruntime_ipc_sdk.proto import inference_pb2
+
+        client, thread = _client_with_fake_loop()
+        captured = {}
+
+        class _FakeUpdateStub:
+            async def UpdatePostprocessConfig(self, request):
+                captured["request"] = request
+                resp = inference_pb2.UpdatePostprocessConfigResponse()
+                resp.status.success = True
+                return resp
+
+        client.stub = _FakeUpdateStub()
+
+        cfg = '{"detection_threshold": 0.38, "iou_threshold": 0.45, "max_boxes": 80}'
+        assert client.update_postprocess_config("yolov8n", cfg) is True
+        _stop_fake_loop(client, thread)
+
+        assert captured["request"].model_id == "yolov8n"
+        assert captured["request"].config_json == cfg
+
+    def test_update_postprocess_config_failure_raises(self):
+        # HAL rejects unknown keys with -2801; the SDK must surface the
+        # server's message instead of returning False.
+        from neoruntime_ipc_sdk.proto import inference_pb2
+
+        client, thread = _client_with_fake_loop()
+
+        class _FakeUpdateStub:
+            async def UpdatePostprocessConfig(self, request):
+                resp = inference_pb2.UpdatePostprocessConfigResponse()
+                resp.status.success = False
+                resp.status.message = "apply_config_json failed: -2801"
+                return resp
+
+        client.stub = _FakeUpdateStub()
+
+        with pytest.raises(RuntimeError, match="-2801"):
+            client.update_postprocess_config("yolov8n", '{"bogus_key": 1}')
+        _stop_fake_loop(client, thread)
+
+    def test_update_postprocess_config_clip_prompts(self):
+        # CLIP prompt updates ride the same RPC; the config_json is opaque
+        # to the SDK (schema lives server-side).
+        from neoruntime_ipc_sdk.proto import inference_pb2
+
+        client, thread = _client_with_fake_loop()
+        captured = {}
+
+        class _FakeUpdateStub:
+            async def UpdatePostprocessConfig(self, request):
+                captured["request"] = request
+                resp = inference_pb2.UpdatePostprocessConfigResponse()
+                resp.status.success = True
+                return resp
+
+        client.stub = _FakeUpdateStub()
+
+        cfg = '{"prompts": ["a person", "a car"], "score_threshold": 0.3}'
+        assert client.update_postprocess_config("clip_vit_b_32", cfg) is True
+        _stop_fake_loop(client, thread)
+
+        assert captured["request"].config_json == cfg
+
     def test_subscribe_close_cancels_background_stream(self):
         client, thread = _client_with_fake_loop()
         response = _FakeStreamInferResponse()

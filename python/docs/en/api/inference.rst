@@ -391,6 +391,20 @@ Update Postprocess Config
    })
    inf.update_postprocess_config("clip_vit_b32", config)
 
+   # Tune a detection model's score gate at runtime (no re-registration)
+   inf.update_postprocess_config("yolov8n", json.dumps({
+       "detection_threshold": 0.5
+   }))
+
+``detection_threshold`` is honored at runtime when the model's
+postprocess resolves to a family function (``hailo_yolov8n``/``s``/``m``
+— the default for detection models registered without a
+``backend_function`` in their variant JSON); generic plugin exports
+ignore JSON tuning. ``iou_threshold`` and ``max_boxes`` are accepted but
+have no behavioral effect: suppression and capping run in the HEF's
+compile-time integrated NMS on the accelerator. Unknown keys make the
+RPC raise with the server's rejection (``-2801``).
+
 GenAI (LLM/VLM)
 ~~~~~~~~~~~~~~~
 
