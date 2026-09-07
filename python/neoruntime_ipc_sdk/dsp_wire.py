@@ -45,6 +45,9 @@ _MAX_BATCH = 64
 
 # ---- DspService error codes ----
 DSP_SERVICE_UNAVAILABLE = -5
+# wait_job-specific readings of the shared codes (dsp_service.cpp):
+DSP_ERR_NO_BUFFER = -2  # unknown or already-reaped job id
+DSP_ERR_TIMEOUT = -4    # job still pending after timeout_ms (re-wait works)
 
 _ERROR_TEXT = {
     -1: "invalid request",

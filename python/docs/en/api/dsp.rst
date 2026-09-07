@@ -30,6 +30,13 @@ DspError
    :members:
    :undoc-members:
 
+PendingDspJob
+~~~~~~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.PendingDspJob
+   :members:
+   :undoc-members:
+
 Usage Examples
 --------------
 
@@ -108,6 +115,10 @@ Format conversion (RGB <-> NV12 / grayscale)
    # refused by the firmware (HAL rc=-2801). With the default
    # cpu_fallback=True such job rejections also fall back to CPU with a
    # warning; last_used_hw=False records the backend actually used.
+   # After the first refusal the SDK remembers the firmware gap: later
+   # gray8 array pairs take the CPU leg directly — no warning, no doomed
+   # submit (keep-fd sources cannot take that leg and keep raising
+   # honestly).
 
 One-shot JPEG encode (snapshot / thumbnail)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -121,6 +132,15 @@ One-shot JPEG encode (snapshot / thumbnail)
    # read-back.
    jpeg = dsp.encode_jpeg_hw(frame, quality=85, fmt="nv12")
    # array sources default to rgb24: jpeg = dsp.encode_jpeg_hw(rgb, quality=85)
+
+   # P2 pass-through leg: src_buffer_id chains the encode onto a pool
+   # buffer / async job — the result never leaves the device, zero
+   # read-back (pairs with PendingDspJob.buffer_id under wait=False,
+   # see "Async jobs" below).
+   jpeg = dsp.encode_jpeg_hw(None, quality=85, src_buffer_id=job.buffer_id)
+   # src and src_buffer_id are mutually exclusive; this leg has no
+   # client pixels to fall back on, so DSP unavailability raises
+   # DspError directly.
 
    # No "hardware block" despite the name: the encoder is N-threaded
    # libjpeg on the DSP core behind a GStreamer dispatch — hailo15 has no
@@ -153,17 +173,87 @@ Annotation blending (detection boxes onto NV12, dsp-offload P1)
    # The accel router is the one-call entry:
    # router.run("draw_detections", nv12, result)
 
-   # Contract notes: the base must be an NV12 array (the vendor op
-   # writes NV12 only; a keep-fd frame belongs to the camera and in-place
-   # compositing would rewrite it — accept the copy via frame.to_array());
-   # overlays smaller than 16x16 (the daemon floor) are padded with fully
-   # transparent pixels to 16; the hardware ARGB32 memory byte order is
-   # [A, R, G, B] and the SDK packs it internally; quota is charged on
-   # (base + overlays) pixel area — keep the canvas minimal (exactly what
-   # render_overlay_rgba produces). When the DSP is unreachable or the
-   # job is rejected, behavior matches the other *_hw calls: default
-   # warns and falls back to CPU (_cpu_blend with identical straight-
-   # alpha math); cpu_fallback=False raises instead.
+   # Contract notes: the base must be NV12 (the vendor op writes NV12
+   # only). Arrays blend in place on the pool copy — the annotated NV12
+   # array comes back and the input array is never touched; keep-fd
+   # frames are **refused by default** (see the firmware-defect note in
+   # the zero-copy section below); overlays smaller than 16x16 (the
+   # daemon floor) are padded with fully transparent pixels to 16; the
+   # hardware ARGB32 memory byte order is [A, R, G, B] and the SDK packs
+   # it internally; quota is charged on (base + overlays) pixel area —
+   # keep the canvas minimal (exactly what render_overlay_rgba
+   # produces). When the DSP is unreachable or the job is rejected,
+   # behavior matches the other *_hw calls: default warns and falls
+   # back to CPU (_cpu_blend with identical straight-alpha math);
+   # cpu_fallback=False raises instead (a keep-fd base has no client
+   # pixels to fall back on — unavailability always raises there).
+
+Async jobs (submit now, wait later — dsp-offload P2)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # All five job methods (resize/crop/multi_crop/convert/blend) accept
+   # wait=False: SubmitDspJobAsync returns a job_id immediately and you
+   # get a PendingDspJob handle. Old daemons without the rpc fall back
+   # to the synchronous submit transparently — that handle is "born
+   # done" and wait() costs no extra RPC.
+   job1 = dsp.resize_hw(frame, 640, 384, wait=False)
+   job2 = dsp.multi_crop_hw(frame, rects, wait=False)
+   ...  # submission overlaps execution: the single worker thread runs
+        # jobs in submission order
+
+   small = job1.wait()          # WaitDspJob + pool read-back + release
+   tiles = job2.wait()          # multi_crop returns a list
+   if job1.done():              # non-blocking poll (timeout 0); the
+       ...                      # completion — including a failure — is
+                                # cached after the first report
+   job1.wait_result()           # wait without reading — result stays
+                                # device-side
+   bid = job1.buffer_id         # chains into encode_jpeg_hw(src_buffer_id=)
+   job1.release()               # drop the result, return buffers
+                                # (idempotent)
+
+   # Semantics worth knowing: a wait timeout (rc=-4) keeps the registry
+   # entry, so you can wait again; a failed job raises DspError from
+   # the consuming wait (done() polling only reports state); waiting
+   # after release raises; wait=False does not change the CPU fallback
+   # story — when a fallback runs you get pixels, not a handle (there
+   # is no hardware job to wait for).
+
+Zero-copy blend chain (firmware-defect record: refused by default)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # blend_hw with a keep-fd frame raises by default — not a missing
+   # capability but a firmware defect: on current hailo15 silicon this
+   # chain **wedged the DSP device-wide** (2/2 on 93.72: 720p, media
+   # pipeline live, 700 MB general CMA free — the blend command simply
+   # never returned; only a reboot recovers; the xrp driver latches
+   # "fatal error, reboot required"). Array bases via frame.to_array()
+   # are the proven, safe path.
+   try:
+       annotated = dsp.blend_hw(frame, [(rgba, x0, y0)])
+   except DspError:
+       annotated = dsp.blend_hw(frame.to_array(), [(rgba, x0, y0)])
+
+   # zero_copy=True forces the chain explicitly (import dma-buf -> 1:1
+   # RESIZE onto a pool -> in-place BLEND; with wait=False the result
+   # never crosses the socket and encode_jpeg_hw(src_buffer_id=...)
+   # skips the read-back) — for experiments once firmware is fixed;
+   # nothing about it is guaranteed today:
+   job = dsp.blend_hw(frame, [(rgba, x0, y0)],
+                      wait=False, zero_copy=True)
+   job.wait_result()                              # result stays pooled
+   jpeg = dsp.encode_jpeg_hw(None, src_buffer_id=job.buffer_id)
+   job.release()                                  # return after encoding
+
+   # Ordering note: the RESIZE copy leg always runs synchronously (an
+   # async job nobody waits would leak its daemon-side registry entry
+   # and occupy one of the 32 pending slots per connection) — only the
+   # BLEND compositing leg goes async. Full record:
+   # docs/proposals/dsp-offload.md, P2 section.
 
 Pre-allocated buffer pool (repeated jobs)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

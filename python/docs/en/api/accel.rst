@@ -76,6 +76,11 @@ Color conversion runs on the hardware leg too
    # degradation is recorded once and the software leg runs exactly
    # once (no hidden in-client CPU pass first).
 
+   # Keep-fd sources (Frame/FrameHandle) pass straight through to the
+   # *_hw methods: their dma-bufs import zero-copy inside DspClient and
+   # the router legs skip the ascontiguousarray copy (dsp-offload P2).
+   # Array sources behave exactly as before.
+
 JPEG encode: daemon one-shot RPC, CPU leg as fallback
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

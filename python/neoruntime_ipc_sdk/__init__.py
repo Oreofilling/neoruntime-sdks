@@ -77,6 +77,7 @@ from .device import (
 from .draw import (
     draw_boxes,
     draw_detections,
+    draw_polygons,
     draw_text,
     render_overlay_rgba,
 )
@@ -84,6 +85,7 @@ from .dsp import (
     DspBufferPool,
     DspClient,
     DspError,
+    PendingDspJob,
 )
 from .events import (
     Event,
@@ -173,6 +175,7 @@ __all__ = [
     "draw_boxes",
     "draw_text",
     "draw_detections",
+    "draw_polygons",
     "render_overlay_rgba",
     # App toolkit: color conversion / NMS / accel routing
     "nv12_to_rgb",

@@ -9,7 +9,10 @@ refused and degrade to CPU; 362 tests green); **P2 S-2 verified
 2026-09-04** — the runtime NMS-tuning chain ships today:
 `detection_threshold` is runtime-tunable for family-function
 postprocess models, `iou_threshold`/`max_boxes` are HEF compile-time
-(verified on 93.72, probes v4-v6);
+(verified on 93.72, probes v4-v6); **dsp-offload P2 landed 2026-09-07**
+— `wait=False` async jobs (`PendingDspJob`), the keep-fd zero-copy
+blend chain, router dma-buf fast paths, and `draw_polygons`/
+`render_overlay_rgba(polygons=, tracks=)` (S-6 record below);
 this document is the component inventory, the routing design, and the
 service-layer asks that turn the remaining software legs hardware-first.
 
@@ -62,7 +65,7 @@ where each one runs today:
 | RGB↔NV12 color convert | `router.run("rgb_to_nv12"/"nv12_to_rgb", ...)` | numpy | ✅ DSP `CONVERT_FORMAT` | — (live; S-1 record below) |
 | Box suppression | `nms` | numpy | ✅ already in the HEF's integrated NMS (compile-time knobs; runtime `detection_threshold` via `update_postprocess_config`) | — (verified; see S-2) |
 | Draw onto outgoing stream | `OverlayClient.annotate` | — | ✅ camera-daemon renderer | — (live; contract below) |
-| Raster drawing (local frames) | `draw.py` | CPU raster | ✅ DSP `blend_hw` (`render_overlay_rgba` → blend) | — (live; S-5 record below) |
+| Raster drawing (local frames) | `draw.py` | CPU raster | ✅ DSP `blend_hw` (`render_overlay_rgba` → blend; keep-fd base = zero-copy chain) | — (live; S-5/S-6 records below) |
 | Snapshot JPEG | `encode_jpeg` / `encode_jpeg_hw` | cv2/Pillow | ✅ camera-daemon `EncodeImage` (N-threaded libjpeg on the DSP core) | — (live; S-3 record below) |
 | App frames → main stream | — | — | ⏸ convert + injection | [frame-injection.md](frame-injection.md) |
 
@@ -276,6 +279,41 @@ USERPTR blend overlays (dma-heap staging inside the HAL fixes it), and
 at 1280×720 both legs measure ~180 ms wall-clock because the round
 trip is transport-bound — the value today is CPU offload, not latency.
 
+### S-6 · async jobs + zero-copy chain + shape polish — done 2026-09-07 (dsp-offload P2)
+
+Three additions on the same routing surface:
+
+- **Async**: every `_hw` op takes `wait=False` and returns a
+  `PendingDspJob` (`.wait()` → ndarray, `.wait_result(timeout_s)` →
+  completion without read-back, `.done()`, `.buffer_id`, idempotent
+  `.release()`). Old daemons without `SubmitDspJobAsync` fall back
+  to the sync RPC with a born-done result — honest degradation, no
+  error.
+- **Zero-copy chain (implemented, gated off)**: `blend_hw` accepts a
+  keep-fd `Frame`/`FrameHandle` base via `zero_copy=True` — import →
+  1:1 RESIZE onto a fresh pool → in-place BLEND → one `pool.read(0)`;
+  with `wait=False` + `encode_jpeg_hw(src_buffer_id=job.buffer_id)`
+  the pixels never cross the socket. **Refused by default**: the
+  chain is firmware-fatal on current hailo15 (blend never returns,
+  DSP wedged device-wide 2/2 — see the dsp-offload P2 record), so
+  the default contract is array bases. Router legs pass keep-fd
+  sources through verbatim for resize/convert/encode (no
+  `ascontiguousarray` pre-copy) — those are safe and verified; the
+  `draw_detections` hardware leg is arrays-only.
+- **Polish**: `render_overlay_rgba(polygons=[(pts, color)],
+  tracks=[(pts, color)])` joins the minimal-canvas union (zones and
+  trajectories composite in the same single blend), software
+  `draw_polygons(image, shapes, closed=)` for RGB, and gray8
+  converts stop paying the submit-refuse-fallback round trip (the
+  known firmware refusal is now detected client-side).
+
+Full contract, the `dsp:` daemon config table, verified-on-device
+evidence (async jobs bit-exact, quota enforcement, blend correctness
++ 222 ms timing, keep-fd refusal), and the two operational records —
+the firmware-fatal zero-copy chain and the media-heap ceiling that
+makes blend/encoder availability boot-dependent:
+[dsp-offload.md](dsp-offload.md) P2 record.
+
 ## Phased rollout
 
 - **P0 (done)** — router skeleton, overlay direct-push, color/NMS
@@ -293,3 +331,8 @@ trip is transport-bound — the value today is CPU offload, not latency.
   vendor destroy hazard recorded in the S-3 section. Remaining:
   `draw.py` CPU raster → DSP blend follows dsp-offload P1, frame
   injection per its own proposal.
+- **P4 (done 2026-09-07)** — dsp-offload P2: async `PendingDspJob`
+  surface, keep-fd zero-copy blend chain (`src_buffer_id` encode
+  chaining included), router dma-buf fast paths, polygon/track shapes,
+  gray8 warning cleanup. `resize_nv12`'s dma-buf fast path promised in
+  P1 is delivered here. Frame injection remains per its own proposal.

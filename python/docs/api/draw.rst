@@ -22,6 +22,16 @@ draw_detections
 
 .. autofunction:: neoruntime_ipc_sdk.draw_detections
 
+draw_polygons
+-------------
+
+.. autofunction:: neoruntime_ipc_sdk.draw_polygons
+
+render_overlay_rgba
+-------------------
+
+.. autofunction:: neoruntime_ipc_sdk.render_overlay_rgba
+
 使用示例
 --------
 
@@ -66,6 +76,30 @@ draw_detections
 
    # 接受 InferenceResult 或 list[DetectedObject]，自动画框 + 标签 + 置信度
    annotated = draw_detections(frame, result)
+
+多边形与轨迹（区域/轨迹可视化，dsp-offload P2）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from neoruntime_ipc_sdk import draw_polygons, render_overlay_rgba
+
+   # shapes = [(points, color)]；points 是 (N, 2) 像素坐标序列，
+   # color=None 用默认绿色。closed=False 画开放折线（轨迹）。
+   zone = [(80, 60), (560, 60), (560, 380), (80, 380)]
+   track = [(100, 240), (200, 200), (320, 210), (430, 260)]
+   annotated = draw_polygons(image, [(zone, (255, 192, 0)),
+                                      (track, (0, 200, 255))], closed=True)
+   # 轨迹单独画：draw_polygons(image, [(track, (0, 200, 255))], closed=False)
+
+   # 硬件腿：同样的 shapes 进 render_overlay_rgba 的 polygons/tracks，
+   # 与 boxes 一起并入最小画布并集，一次 blend_hw 合成
+   rgba, x0, y0 = render_overlay_rgba(
+       w, h, boxes, labels, scores, colors,
+       polygons=[(zone, (255, 192, 0))],
+       tracks=[(track, (0, 200, 255))],
+   )
+   annotated = dsp.blend_hw(nv12, [(rgba, x0, y0)])
 
 .. note::
 

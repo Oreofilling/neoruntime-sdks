@@ -1,5 +1,6 @@
 """
-Tests for draw utilities: draw_boxes / draw_text / draw_detections
+Tests for draw utilities: draw_boxes / draw_text / draw_detections /
+draw_polygons
 """
 
 import sys
@@ -8,7 +9,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from neoruntime_ipc_sdk.draw import draw_boxes, draw_detections, draw_text
+from neoruntime_ipc_sdk.draw import (
+    draw_boxes,
+    draw_detections,
+    draw_polygons,
+    draw_text,
+)
 from neoruntime_ipc_sdk.inference import BoundingBox, DetectedObject
 
 
@@ -136,3 +142,45 @@ class TestDrawDetections:
         img = black_canvas()
         out = draw_detections(img, self._objects())
         assert (out[10, 12:58] > 0).any()
+
+
+class TestDrawPolygons:
+    def _square(self):
+        return [(10, 10), (90, 10), (90, 90), (10, 90)]
+
+    def test_polygon_pixels_drawn(self):
+        img = black_canvas()
+        out = draw_polygons(img, [(self._square(), (0, 255, 0))])
+        assert (out[10, 12:88, 1] == 255).all()  # top edge
+        assert (out[90, 12:88, 1] == 255).all()  # bottom edge (closing side)
+        assert out.shape == img.shape
+
+    def test_input_not_mutated(self):
+        img = black_canvas()
+        before = img.copy()
+        draw_polygons(img, [(self._square(), None)])
+        np.testing.assert_array_equal(img, before)
+
+    def test_empty_shapes_returns_copy(self):
+        img = black_canvas()
+        out = draw_polygons(img, [])
+        np.testing.assert_array_equal(out, img)
+        assert out is not img
+
+    def test_open_track_skips_closing_segment(self):
+        img = black_canvas()
+        pts = [(10, 10), (90, 10), (90, 90)]
+        out = draw_polygons(img, [(pts, (0, 255, 0))], closed=False)
+        # the closing diagonal through (50, 50) is not drawn
+        assert not out[45:56, 45:56].any()
+
+    def test_none_color_defaults_green(self):
+        img = black_canvas()
+        out = draw_polygons(img, [(self._square(), None)])
+        assert (out[10, 12:88, 1] == 255).all()
+
+    def test_without_cv2(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "cv2", None)
+        img = black_canvas()
+        out = draw_polygons(img, [(self._square(), (0, 255, 0))])
+        assert (out[10, 12:88, 1] == 255).all()

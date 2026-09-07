@@ -30,6 +30,13 @@ DspError
    :members:
    :undoc-members:
 
+PendingDspJob
+~~~~~~~~~~~~~
+
+.. autoclass:: neoruntime_ipc_sdk.PendingDspJob
+   :members:
+   :undoc-members:
+
 使用示例
 --------
 
@@ -100,7 +107,9 @@ DspError
    # 固件支持矩阵与设备相关：hailo15 实测（93.72）仅 rgb24 <-> nv12
    # 走 DSP，gray8 各组合被固件拒绝（HAL rc=-2801）。默认
    # cpu_fallback=True 下这类"作业被拒"同样回落 CPU 并告警，
-   # last_used_hw=False 如实记录实际后端。
+   # last_used_hw=False 如实记录实际后端。首次被拒后 SDK 会记住该
+   # 固件缺口：后续 gray8 数组对直接走 CPU 腿——不再告警、不再提交
+   # 必败作业（keep-fd 源无法走 CPU 腿，仍会如实抛错）。
 
 单帧 JPEG 编码（快照/缩略图）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -112,6 +121,13 @@ DspError
    # 池缓冲），完整 JPEG 字节随响应返回——无目的缓冲、无回读。
    jpeg = dsp.encode_jpeg_hw(frame, quality=85, fmt="nv12")
    # 数组源则 rgb24 默认：jpeg = dsp.encode_jpeg_hw(rgb, quality=85)
+
+   # P2 直通腿：src_buffer_id 把编码接到池缓冲/异步作业上——结果
+   # 留在设备侧，零回读（与 wait=False 的 PendingDspJob.buffer_id
+   # 组成零拷贝链尾，见下方"异步作业"）。
+   jpeg = dsp.encode_jpeg_hw(None, quality=85, src_buffer_id=job.buffer_id)
+   # src 与 src_buffer_id 互斥；此腿没有客户端像素可回退，
+   # DSP 不可用时直接抛 DspError。
 
    # 名字里虽无"硬件块"：编码器是 DSP 核上 N 线程 libjpeg（GStreamer
    # 分发）——hailo15 没有专用 JPEG 编码块。收益是集中编码 + 零拷贝
@@ -139,14 +155,72 @@ DspError
    annotated = dsp.blend_hw(nv12, [(rgba, x0, y0)])
    # 更省事的入口是 accel 路由器：router.run("draw_detections", nv12, result)
 
-   # 契约要点：base 必须是 NV12 数组（vendor op 只写 NV12；keep-fd 帧
-   # 属于相机，原地合成会改写它——用 frame.to_array() 接受拷贝）；
+   # 契约要点：base 必须是 NV12（vendor op 只写 NV12）。数组走池拷贝
+   # 原地合成、返回已标注的 NV12 数组；keep-fd 帧默认**直接拒绝**
+   # （见下方"零拷贝合成链"的固件缺陷记录）；
    # overlay 小于 16x16（daemon 下限）自动补全透明像素到 16；
    # 硬件 ARGB32 内存字节序为 [A, R, G, B]，SDK 内部打包；
    # quota 按 (base + 各 overlay) 像素量计费——最小画布（上面
    # render_overlay_rgba 正是）才省。DSP 不可用/作业被拒时与其它
    # *_hw 相同：默认告警回落 CPU（_cpu_blend 直通 alpha 数学一致），
-   # cpu_fallback=False 直接抛错。
+   # cpu_fallback=False 直接抛错（keep-fd base 无客户端像素可回退，
+   # 不可用时必抛）。
+
+异步作业（submit 后择机 wait，dsp-offload P2）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # 五个作业方法（resize/crop/multi_crop/convert/blend）都接受
+   # wait=False：SubmitDspJobAsync 立即返回 job_id，返回
+   # PendingDspJob 句柄。老 daemon（无该 rpc）自动回落同步提交——
+   # 得到的句柄"生而完成"，wait() 无额外 RPC。
+   job1 = dsp.resize_hw(frame, 640, 384, wait=False)
+   job2 = dsp.multi_crop_hw(frame, rects, wait=False)
+   ...  # 提交与执行重叠：单个 worker 线程按提交顺序执行
+
+   small = job1.wait()          # WaitDspJob + 池回读 + 释放（阻塞）
+   tiles = job2.wait()          # multi_crop 返回列表
+   if job1.done():              # 非阻塞轮询（timeout 0）；完成即缓存
+       ...
+   job1.wait_result()           # 只等完成不回读——结果留在设备侧
+   bid = job1.buffer_id         # 链喂 encode_jpeg_hw(src_buffer_id=)
+   job1.release()               # 丢弃结果、归还缓冲（幂等）
+
+   # 语义要点：wait 超时（rc=-4）表项保留可再等；job 失败在 wait
+   # 时抛 DspError（done() 轮询只报状态）；release 后再 wait 抛错；
+   # wait=False 不改变 CPU 回退语义——回退发生时拿到的就是像素
+   # 数组（没有可等的硬件作业）。
+
+零拷贝合成链（固件缺陷记录：默认拒绝）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # keep-fd 帧直入 blend_hw 默认抛错——不是能力缺失，而是当前
+   # hailo15 固件上这条链**会挂死整个 DSP**（93.72 两度复现：720p
+   # 主管道在跑、常规 CMA 尚余 700MB，blend 命令提交后固件永不
+   # 返回，设备级卡死，仅重启可恢复；xrp 驱动自判 fatal error）。
+   # 数组 base（frame.to_array()）是已验证的安全路径。
+   try:
+       dsp.blend_hw(frame, [(rgba, x0, y0)])
+   except DspError:
+       annotated = dsp.blend_hw(frame.to_array(), [(rgba, x0, y0)])
+
+   # zero_copy=True 显式强制该链（导入 dma-buf → 1:1 RESIZE 落池 →
+   # 原地 BLEND，配 wait=False 结果不过 socket，
+   # encode_jpeg_hw(src_buffer_id=job.buffer_id) 免回读）——供未来
+   # 固件修复后实验用，今天不保证可用：
+   job = dsp.blend_hw(frame, [(rgba, x0, y0)],
+                      wait=False, zero_copy=True)
+   job.wait_result()                              # 结果留在池里
+   jpeg = dsp.encode_jpeg_hw(None, src_buffer_id=job.buffer_id)
+   job.release()                                  # 编码完再归还
+
+   # 注意链式顺序：RESIZE 拷贝腿始终同步执行（无人 wait 的异步
+   # 作业会泄漏 daemon 侧登记项，也占用每连接 32 个未决槽位）——
+   # 异步的只有 BLEND 合成腿。详情见
+   # docs/proposals/dsp-offload.md 的 P2 记录。
 
 预分配缓冲池（高帧率重复任务）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

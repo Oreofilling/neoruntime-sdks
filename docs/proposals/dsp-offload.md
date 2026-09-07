@@ -1,6 +1,7 @@
 # Proposal: DSP Offload Service (`SubmitDspJob`)
 
-Status: draft — daemon-side contract proposal, no code yet
+Status: P0/P1/P2 landed and verified on device — this doc now carries
+the implementation records below the original proposal text
 Target service: camera-daemon (`aipc.camera.CameraControl`)
 SDK layer affected: Python + C++ (Tier 1 helpers would migrate to it)
 
@@ -158,8 +159,12 @@ hence quota-first, open-by-opt-in.
    Buffer allocation had already shipped inside P0 (`DSP_ALLOC`); the
    `Frame.resize` fast path routes through `resize_hw` since
    parking-lot 1.1.0.
-3. **P2**: async jobs (submit/wait by `job_id`), priority field wired
-   to the real queue, quota configurable per app manifest.
+3. **P2 (done 2026-09-07)**: async jobs (submit/wait by `job_id`),
+   configurable quota, and the zero-copy blend chain — see
+   [P2 record](#p2-implementation-verified-on-device-2026-09-07). The
+   priority field was already wired in P0 (`submit_job` enqueues
+   `q_normal_`/`q_background_`); manifest-level per-app identity remains
+   future work (quota buckets are per-connection today).
 
 ## Relationship to other proposals
 
@@ -363,3 +368,200 @@ plus NV12 copy-in/copy-back, not DSP time (e4 measured the blend
 itself at 0.67-1.57 ms on dma-buf). Today's value is CPU offload and
 shared scheduling, not latency; a zero-copy camera-fd base with
 dma-buf overlays is the follow-up that would change the math.
+
+## P2 implementation verified on device (2026-09-07)
+
+Landed on branch `feat/dsp-service-p0` (platform) and SDK main:
+`SubmitDspJobAsync`/`WaitDspJob` (job_id-keyed registry, monotonic
+ids, per-owner pending cap 32, disconnect reaping, `stop()` drain),
+the sync `SubmitDspJob` rewritten as submit+wait over the same path,
+a `dsp:` YAML section for every tunable, and the SDK's
+`wait=False` surface (`PendingDspJob`: `.wait()`, `.wait_result()`,
+`.done()`, `.buffer_id`, idempotent `.release()`; old daemons without
+the RPC fall back to the sync call with a born-done result). The
+zero-copy blend chain (keep-fd base → dma-buf import → 1:1 RESIZE →
+in-place BLEND → single read, or with `wait=False` +
+`encode_jpeg_hw(src_buffer_id=…)` no read-back at all) is implemented
+but **gated off by default** — see the firmware finding below.
+Router legs (`resize_nv12`/color converts/encode) pass keep-fd
+sources through verbatim instead of `ascontiguousarray`-ing them
+first; those paths are safe (the resize leg is the verified one).
+
+### `dsp:` daemon configuration
+
+`/data/aipc/etc/camera-daemon.yaml`, all keys optional under one
+`dsp:` section (defaults as logged at startup —
+`max_batch=64 quota=100 jobs/s 120 MPix/s timeout=2000ms`):
+
+| key | default | meaning |
+|---|---|---|
+| `quota_jobs_per_sec` | 100 | per-owner submit rate; over → rc −7 quota rejection |
+| `quota_mpix_per_sec` | 120 | per-owner source-megapixel rate |
+| `job_timeout_ms` | 2000 | sync wait + async wait_result deadline |
+| `max_batch` | 64 | MULTI_CROP rects per job (128 verified, 260 truncates) |
+| `max_buffers_per_client` | 128 | live pool buffers per owner |
+| `max_client_pixels` | 16 MPix | summed live pool pixels per owner |
+| `max_imports_per_client` | 64 | imported (keep-fd) buffers per owner |
+| `max_async_jobs_per_client` | 32 | pending async jobs per owner |
+
+Quota ownership is the buffer owner's UDS fd — one bucket per app
+connection. There is no app-identity passthrough on `camera.sock`
+(no manifest field reaches the DSP service), so "per app" is
+per-connection today: an app holding two connections gets two
+buckets. Recording that honestly rather than pretending otherwise;
+manifest identity is future work alongside a platform-side registry.
+
+### Verified on the live daemon (93.72, 2026-09-07)
+
+Async contract (checks 1-3 of the e2e, run inside the parking-lot
+container; every item below observed across multiple runs and two
+reboots — job ids 1339/1341 → 3/4 → 137/138 → 297/298 → 2/3):
+
+- two async resizes in flight → distinct job ids, outputs
+  **bit-exact vs the sync call**, luma Δ0 vs the CPU mirror;
+- `priority="background"` accepted and completes through the
+  background queue;
+- **poll semantics, verified from the completed side** — a 0-timeout
+  `WaitDspJob` answers immediately, `.done()` is True, stacked jobs
+  complete in submit order with exact outputs, double `.release()`
+  is idempotent, wait-after-release raises "already released";
+- **timeout semantics, exercised for real** — when a blend job
+  stalled server-side (heap-pressure boot, below), `wait_result`
+  returned the documented "still pending … the daemon keeps it;
+  wait again" error cleanly, and the server-side 2000 ms watchdog
+  logged `job timed out` and reaped the job. The client never hangs
+  on a dead job;
+- a poll observing *pending* requires the worker to be slower than
+  one UDS round trip, and on hailo15 it never is: five queue-depth
+  constructions (two 4K multi-crops → correct 16 MPix client-budget
+  refusal; four small multi-crops; 4K upscale + fresh submits;
+  pre-staged pools allocated between submits; two fully pre-staged
+  single-RPC submits) all completed the 8.3 MPix upscale *and* the
+  polled resize within the ~0.6 ms submit+poll path. "Pending" is
+  observable only under multi-client contention or a genuinely slow
+  op — recorded as a device property, not a contract defect;
+- 4K 1:1 RESIZE (the chain's copy leg, run standalone) is
+  **lossless** — max delta 0 on a 3840×2160 gradient (first boot of
+  the day; later boots ran the media heap at ceiling and the probe
+  declined gracefully as pool-limited).
+
+Blend, quota, and encode checks:
+
+- **array-base blend** (the safe contract): byte-identical to the
+  CPU mirror outside the overlay footprint and luma Δ0 vs it — twice
+  on the final SDK build — with wall-clock median **222 ms** at
+  720p (transport-bound, consistent with P1's ~180 ms);
+- **keep-fd refusal** (the firmware gate): `blend_hw` raises
+  "refuses keep-fd (frame/handle) bases by default" on a live
+  keep-fd sub-stream frame — verified standalone and in-run;
+- **quota** (check 7): `dsp: quota_jobs_per_sec: 1` in
+  camera-daemon.yaml → startup line flips to `quota=1 jobs/s` in the
+  journal → a 6-submit burst gets 1 accepted / 5 quota-rejected →
+  config restored → defaults line back (`quota=100 jobs/s`);
+- **journal evidence** (check 8): `SubmitDspJobAsync: op=… src=…
+  dsts=… rects=…` per submit (11 lines across the runs);
+  `WaitDspJob` has no log line by design (a pure registry lookup +
+  condition-variable wait — its evidence is the client results);
+- **`buffer_id` → encode chain**: the async-job half is verified
+  (job completes, pools stay live past completion for a later
+  read-back), but the composed encode shot is **blocked on this
+  boot by an S-3-surface failure**: `EncodeImage` answers
+  `standalone jpeg encoder init failed` for plain array sources
+  too (discriminator run), so the init failure predates and is
+  unrelated to the P2 changes — encoder and `src_buffer_id`
+  composition remain covered by SDK unit tests and the 2026-09-04
+  S-3 on-device record.
+
+### Operational finding: the zero-copy blend chain is firmware-fatal
+
+Three e2e attempts, two device wedges, and one overturned theory —
+recorded in full because the trap is subtle and the failure is
+catastrophic.
+
+**What happens**: `blend_hw` on a keep-fd `Frame` runs the chain
+import → 1:1 RESIZE onto a fresh pool → in-place BLEND. The RESIZE
+leg completes (journal evidence: the resize submit precedes the blend
+submit and the SDK only submits the blend after the resize returns);
+the **BLEND command then never completes** — `xrp_wait_for_cmd_
+completion: timeout`, error 9 on every subsequent job device-wide,
+and the driver latches `DSP encountered fatal error before. Reboot
+required`. A daemon restart does not clear it; an xrp driver
+unbind/rebind does not clear it (runtime PM is unsupported for the
+device; the latch survives re-probe). Only a reboot recovers.
+Reproduced 2/2 — once at 4K under CMA pressure, once at 720p on a
+fresh boot with ~700 MB general CMA free and the media pipeline live.
+
+**What it is NOT**:
+
+- not an RPC-contract violation — the blend base is a legal daemon
+  pool (the resized copy), overlays are legal staged ARGB;
+- not the HAL staging path — `hailo15_dsp_impl.cpp:383-405` checks
+  every `allocate_dma_buffer` and returns `HAL_ERR_NO_MEM` cleanly on
+  failure (verified in source after the second wedge; the first
+  incident report blamed an unstaged overlay and was wrong);
+- not general CMA exhaustion — `/proc/meminfo` CmaFree measures the
+  1.28 GB `linux,cma` window, but the media allocator draws from the
+  dedicated `hailo_media_buf,cma` reserved-memory pool; dmesg shows
+  `cma_alloc: hailo_media_buf,cma: alloc failed ret:-12` bursts at
+  blend time while hundreds of MB of general CMA stand free. Reading
+  CmaFree to judge media-buffer headroom is a measurement trap.
+
+**Conclusion**: `dsp_blend` on a pool whose contents were produced by
+a RESIZE from an imported (camera dma-buf) source does not return on
+this firmware. The trigger is inside the firmware/idma domain; no
+daemon- or SDK-side fix can make it safe. SDK contract since the
+finding: `blend_hw` **refuses keep-fd bases by default**
+(`zero_copy=True` forces the chain for post-fix experiments; the
+router's `draw_detections` hardware leg likewise raises for frames
+and stays arrays-only). Array bases — `frame.to_array()` — are the
+proven path (P1 19/19). Vendor engagement on the firmware behavior
+is the prerequisite for ever flipping the default.
+
+What remains true and verified regardless: keep-fd **RESIZE** on
+imported camera dma-bufs is safe and lossless (the chain's resize leg
+completed in both incidents; a separate 4K 1:1 check measured max
+delta 0), so the router's frame passthrough for resize/convert/
+encode legs keeps its value.
+
+### Operational finding: media-heap ceiling days vs clean days
+
+The 2026-09-07 e2e spanned three boots of the same daemon binary and
+config, and the device's DSP service behaved differently on each —
+worth recording because it changes what an e2e can prove on a given
+day:
+
+- **Boot 1 (clean)**: everything passes — blend correctness, 3×
+  blend timing, 4K 1:1 pools, the lot.
+- **Later boots (ceiling)**: the pipeline's own frame pools fail to
+  grow at startup or within minutes (`hal_v2_frame_request_pool
+  pool3840x2160_32_y: Failed to allocate chunk … async_worker_loop:
+  Async chunk allocation failed`, `hailo_media_buf,cma alloc failed
+  ret:-12` while general CmaFree stands at ~950 MB — the same
+  measurement trap as above). Under that ceiling:
+  - blend **staging** or the blend job itself stalls probabilistically
+    (import succeeded 5×, then a job sat pending until the 2000 ms
+    watchdog reaped it; another run completed 4 blends then stalled
+    on the 5th). The stall is a blocked dma-heap ioctl, not an error
+    return — `DSP_IMPORT` and the job both just stop answering, and
+    once the worker thread is inside the blocked call every later
+    job queues behind it until a daemon restart;
+  - `EncodeImage` answers `standalone jpeg encoder init failed` for
+    **plain array sources too** — the standalone encoder's GStreamer
+    spin-up is down for the boot, independent of any P2 code path;
+  - client-visible allocs keep failing *cleanly* (`out of memory`,
+    `client limit exceeded`) — the daemon's own accounting holds; it
+    is the vendor allocator/ioctl layer that blocks.
+- **Recovery**: a daemon restart restores allocs and small jobs
+  immediately, but on ceiling days the pool drains back to the edge
+  within minutes (the exhaustion also looked kernel-sticky once —
+  restart did *not* restore blend staging that time; only a reboot
+  did). Budget one e2e attempt per daemon restart on such days.
+
+App-side implications: run heavy DSP transients sparsely (one 4K
+pool at a time, release eagerly — the e2e now models this), treat a
+`DSP_IMPORT`/wait timeout as a poisoned connection (close the
+client, don't reuse the socket), and don't read media-buffer
+headroom from CmaFree. The daemon-side follow-ups this surfaces:
+reply with an error (not silence) when staging blocks, and make the
+`job timed out` watchdog log line print its dst id (`(dst
+undefined)` today — cosmetic but confusing in incident logs).

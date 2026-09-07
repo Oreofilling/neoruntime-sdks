@@ -7,7 +7,8 @@ pixel), the memfd-import overlay transport (the deployed HAL on 93.72
 refuses ARGB32 pool allocs — overlays ride DSP_IMPORT/USERPTR instead),
 the daemon floor (sub-16 overlays padded transparent), copy semantics
 (blend runs on the pool copy — input untouched, result read back from
-the base buffer), client-side validation (nv12-only and array-only base,
+the base buffer), the keep-fd base zero-copy chain (import + 1:1 RESIZE
+copy + in-place BLEND — P2), client-side validation (nv12-only base,
 placement bounds, overlay count/shape), the fallback semantics shared
 with the other ``*_hw`` methods, the straight-alpha renderer, and the
 accel-router registration of ``draw_detections``.
@@ -16,6 +17,7 @@ accel-router registration of ``draw_detections``.
 import os
 import socket
 import struct
+from types import SimpleNamespace
 from unittest import mock
 
 import grpc
@@ -23,9 +25,10 @@ import numpy as np
 import pytest
 
 from neoruntime_ipc_sdk import accel
+from neoruntime_ipc_sdk.accel import HardwareUnavailable
 from neoruntime_ipc_sdk import dsp as dsp_module
 from neoruntime_ipc_sdk.draw import render_overlay_rgba
-from neoruntime_ipc_sdk.dsp import DspClient, DspError
+from neoruntime_ipc_sdk.dsp import DspBufferPool, DspClient, DspError
 from neoruntime_ipc_sdk.dsp_format import _cpu_blend
 from neoruntime_ipc_sdk.dsp_wire import (
     _HAL_PIXEL_FORMAT,
@@ -84,6 +87,20 @@ def importing(client):
 
     client._import_memfd = fake
     client._blend_imports = imports
+
+    # keep-fd bases import through _import_source (dma-buf import, not a
+    # memfd) — ids from 3000 so tests can tell base imports from overlays
+    src_imports = []
+    state_src = {"next": 3000}
+
+    def fake_source(handle, width, height, fmt, timeout_s=5.0):
+        src_imports.append((width, height, fmt))
+        bid = state_src["next"]
+        state_src["next"] += 1
+        return bid
+
+    client._import_source = fake_source
+    client._blend_src_imports = src_imports
     return imports
 
 
@@ -292,16 +309,79 @@ class TestValidation:
         with pytest.raises(DspError):
             client.blend_hw(np.zeros((32, 64, 3), np.uint8), [(rgba_solid(16, 16), 0, 0)])
 
-    def test_handle_base_refuses_in_place_mutation(self):
+    def test_handle_base_rides_zero_copy_chain(self):
+        # P2: a keep-fd base no longer raises — it imports zero-copy, the
+        # DSP copies it into the base pool with a 1:1 RESIZE, and the
+        # blend composites in place on that copy. The base pixels never
+        # cross the client: the pool receives no write before the jobs.
         from neoruntime_ipc_sdk.frame import FrameHandle
 
-        client = DspClient()
+        client, pools, stub = blending_client(
+            side_effect=lambda req, p: (
+                daemon_blend(req, p)
+                if req.op == camera_pb2.DSP_OP_BLEND
+                else camera_pb2.DspJobResponse(success=True, elapsed_ms=1)
+            )
+        )
         handle = FrameHandle(
             [memfd(64 * 32 * 3 // 2)], (64,), (64 * 32 * 3 // 2,), 7,
             width=64, height=32, format="NV12",
         )
-        with pytest.raises(DspError, match="cannot be the base"):
-            client.blend_hw(handle, [(rgba_solid(16, 16), 0, 0)])
+
+        out = client.blend_hw(handle, [(rgba_solid(16, 16), 0, 0)],
+                              zero_copy=True)
+
+        assert client._blend_src_imports == [(64, 32, "nv12")]
+        copy_req, blend_req = stub.requests
+        # leg 1: 1:1 RESIZE import -> the fresh base pool (the DSP-side copy)
+        assert copy_req.op == camera_pb2.DSP_OP_RESIZE
+        assert copy_req.src_buffer_id == 3000
+        assert list(copy_req.dst_buffer_ids) == [1000]
+        assert list(copy_req.rects) == []
+        # leg 2: in-place BLEND on the pool copy
+        assert blend_req.op == camera_pb2.DSP_OP_BLEND
+        assert blend_req.src_buffer_id == 1000
+        assert list(blend_req.dst_buffer_ids) == [2000]
+        # the annotated result comes back from the pool, not the frame
+        assert out.shape == (48, 64)
+        assert out[0, 0] == 250  # daemon_blend bumped the placement rect
+        assert client.last_used_hw is True
+
+    def test_handle_base_pool_never_written_client_side(self):
+        # zero-copy means it: the base pool's buffer holds no client bytes
+        # before the jobs run (the RESIZE leg fills it on the device)
+        from neoruntime_ipc_sdk.frame import FrameHandle
+
+        client, pools, stub = blending_client()
+        handle = FrameHandle(
+            [memfd(64 * 32 * 3 // 2)], (64,), (64 * 32 * 3 // 2,), 8,
+            width=64, height=32, format="NV12",
+        )
+
+        with mock.patch.object(
+            DspBufferPool, "write", side_effect=AssertionError("client write")
+        ) as bw:
+            client.blend_hw(handle, [(rgba_solid(16, 16), 0, 0)],
+                            zero_copy=True)
+            # only the overlay memfd import exists; the base had no write
+            bw.assert_not_called()
+
+    def test_handle_base_refused_by_default(self):
+        # the zero-copy chain is firmware-fatal on current hailo15 (the
+        # blend command never returns; DSP wedged device-wide 2/2 on
+        # 93.72) — the default contract must refuse before any wire work
+        from neoruntime_ipc_sdk.frame import FrameHandle
+
+        client = DspClient()
+        handle = FrameHandle(
+            [memfd(64 * 32 * 3 // 2)], (64,), (64 * 32 * 3 // 2,), 9,
+            width=64, height=32, format="NV12",
+        )
+
+        with mock.patch.object(client, "alloc_buffers") as alloc:
+            with pytest.raises(DspError, match="refuses keep-fd"):
+                client.blend_hw(handle, [(rgba_solid(16, 16), 0, 0)])
+            alloc.assert_not_called()  # refused before any pool/import work
 
     def test_empty_overlays_rejected(self):
         client = DspClient()
@@ -439,8 +519,59 @@ class TestRenderOverlay:
             render_overlay_rgba(640, 480, [(700, 500, 900, 700)])
 
     def test_no_boxes_raise(self):
-        with pytest.raises(ValueError, match="at least one box"):
+        with pytest.raises(ValueError, match="at least one shape"):
             render_overlay_rgba(640, 480, [])
+
+    def test_polygon_canvas_from_point_extents(self):
+        pts = [(50, 60), (120, 60), (120, 140)]
+        rgba, x0, y0 = render_overlay_rgba(
+            640, 480, polygons=[(pts, (255, 0, 0))], thickness=2,
+        )
+        # same stroke margin (t + 1 per side) as boxes, no label strip
+        assert (x0, y0) == (50 - 3, 60 - 3)
+        assert rgba.shape == ((140 + 3) - y0, (120 + 3) - x0, 4)
+        assert rgba[..., 3].max() == 255
+
+    def test_polygon_closed_track_open(self):
+        # the closing segment (last -> first point) exists for polygons,
+        # never for tracks
+        pts = [(10, 10), (90, 10), (90, 90)]
+        mid = (50, 50)  # midpoint of the closing diagonal
+        rgba_c, xc, yc = render_overlay_rgba(
+            200, 200, polygons=[(pts, None)], thickness=1,
+        )
+        assert rgba_c[mid[1] - yc, mid[0] - xc, 3] > 0
+        rgba_o, xo, yo = render_overlay_rgba(
+            200, 200, tracks=[(pts, None)], thickness=1,
+        )
+        assert rgba_o[mid[1] - yo, mid[0] - xo, 3] == 0
+
+    def test_polygon_color_and_green_default(self):
+        pts = [(10, 10), (60, 10), (60, 60)]
+        rgba, *_ = render_overlay_rgba(
+            100, 100, polygons=[(pts, (1, 2, 3))], thickness=2,
+        )
+        hit = rgba[..., 3] > 0
+        assert hit.any()
+        assert (rgba[..., :3][hit] == (1, 2, 3)).all()
+
+        rgba2, *_ = render_overlay_rgba(100, 100, polygons=[(pts, None)])
+        hit2 = rgba2[..., 3] > 0
+        assert (rgba2[..., :3][hit2] == (0, 255, 0)).all()
+
+    def test_boxes_and_tracks_union_canvas(self):
+        rgba, x0, y0 = render_overlay_rgba(
+            640, 480, [(300, 200, 500, 400)], labels=[None],
+            tracks=[([(10, 40), (80, 120)], None)],
+        )
+        assert (x0, y0) == (10 - 3, 40 - 3)
+        assert rgba.shape == ((400 + 3) - y0, (500 + 3) - x0, 4)
+
+    def test_bad_points_shape_raises(self):
+        with pytest.raises(ValueError, match=r"\(N, 2\)"):
+            render_overlay_rgba(
+                100, 100, polygons=[([(10, 10, 1), (60, 10, 1)], None)],
+            )
 
     def test_renderer_composite_matches_software_raster(self):
         # the whole point: renderer + straight-alpha composite == the
@@ -467,6 +598,28 @@ class TestRenderOverlay:
         delta = np.abs(got.astype(int) - region.astype(int))
         assert delta.max() <= 3
         assert (delta > 0).mean() < 0.5  # overwhelmingly identical
+
+    def test_polygon_composite_matches_software_raster(self):
+        # same contract as the boxes test above, on the polygons leg
+        from neoruntime_ipc_sdk.draw import draw_polygons
+
+        pts = [(40, 30), (200, 30), (200, 150), (90, 170)]
+        base = np.full((240, 320, 3), 100, np.uint8)
+        sw = draw_polygons(base.copy(), [(pts, (0, 255, 0))], thickness=2)
+        rgba, x0, y0 = render_overlay_rgba(
+            320, 240, polygons=[(pts, (0, 255, 0))], thickness=2,
+        )
+        composited = _cpu_blend(base, "rgb24", [(rgba, x0, y0)])
+
+        mask = np.zeros(base.shape[:2], bool)
+        mask[y0 : y0 + rgba.shape[0], x0 : x0 + rgba.shape[1]] = True
+        assert np.array_equal(composited[~mask], base[~mask])
+
+        region = sw[y0 : y0 + rgba.shape[0], x0 : x0 + rgba.shape[1]]
+        got = composited[y0 : y0 + rgba.shape[0], x0 : x0 + rgba.shape[1]]
+        delta = np.abs(got.astype(int) - region.astype(int))
+        assert delta.max() <= 3
+        assert (delta > 0).mean() < 0.5
 
 
 # ------------------------------------------------------------ router legs --
@@ -558,3 +711,79 @@ class TestRouterLegs:
         from neoruntime_ipc_sdk.draw import draw_detections
 
         assert np.array_equal(expected, draw_detections(rgb.copy(), one_object()))
+
+
+# ------------------------------------------------------ dma-buf fast paths --
+class TestFastPaths:
+    """Keep-fd sources (Frame/FrameHandle-like) must reach the *_hw
+    client methods verbatim — no ascontiguousarray copy — while plain
+    arrays keep arriving contiguous."""
+
+    def _frame(self, width=64, height=32):
+        return SimpleNamespace(handle=object(), width=width, height=height)
+
+    def test_frames_pass_through_uncopied(self, monkeypatch):
+        seen = {}
+
+        class FakeDsp:
+            def resize_hw(self, src, w, h, **kw):
+                seen["resize"] = (src, w, h)
+                return src
+
+            def convert_hw(self, src, dst_fmt, **kw):
+                seen[f"convert->{dst_fmt}"] = src
+                return src
+
+            def encode_jpeg_hw(self, src, **kw):
+                seen["encode"] = src
+                return b"J"
+
+            def blend_hw(self, base, overlays, **kw):
+                seen["blend"] = base
+                return base
+
+        monkeypatch.setattr(accel, "_lazy_dsp_client", lambda: FakeDsp())
+        frame = self._frame()
+
+        accel._resize_nv12_hw(frame, (64, 32), (32, 16))
+        accel._rgb_to_nv12_hw(frame)
+        accel._nv12_to_rgb_hw(frame)
+        accel._encode_jpeg_hw(frame)
+        # frames no longer take the blend leg at all (firmware-fatal
+        # zero-copy chain — DspClient.blend_hw refuses them)
+        with pytest.raises(HardwareUnavailable, match="keep-fd"):
+            accel._draw_detections_hw(frame, one_object())
+
+        # every surviving leg handed the client the frame object itself —
+        # the zero-copy import happens inside DspClient, not in the router
+        assert seen["resize"][0] is frame
+        assert (seen["resize"][1], seen["resize"][2]) == (32, 16)
+        assert seen["convert->nv12"] is frame
+        assert seen["convert->rgb24"] is frame
+        assert seen["encode"] is frame
+
+    def test_frame_geometry_mismatch_raises(self):
+        with pytest.raises(ValueError, match="frame is 64x32"):
+            accel._nv12_to_rgb_hw(self._frame(), width=32, height=32)
+
+    def test_noncontiguous_arrays_arrive_contiguous(self, monkeypatch):
+        seen = {}
+
+        class FakeDsp:
+            def resize_hw(self, src, w, h, **kw):
+                seen["resize"] = src
+                return src
+
+            def convert_hw(self, src, dst_fmt, **kw):
+                seen["convert"] = src
+                return src
+
+        monkeypatch.setattr(accel, "_lazy_dsp_client", lambda: FakeDsp())
+        # sliced arrays are not C-contiguous on the way in
+        strided = np.zeros((48, 128), np.uint8)[::2]
+
+        accel._resize_nv12_hw(strided, (128, 32), (64, 32))
+        accel._rgb_to_nv12_hw(np.zeros((32, 64, 6), np.uint8)[:, :, ::2])
+
+        assert seen["resize"].flags["C_CONTIGUOUS"]
+        assert seen["convert"].flags["C_CONTIGUOUS"]

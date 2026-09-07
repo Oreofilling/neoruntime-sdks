@@ -679,6 +679,15 @@ service CameraControl {
   // and referenced here by buffer id. Synchronous single-job form first.
   rpc SubmitDspJob(DspJobRequest) returns (DspJobResponse);
 
+  // DSP offload P2: the async submit/wait pair. SubmitDspJobAsync enqueues
+  // the same DspJobRequest and returns immediately with a job_id;
+  // WaitDspJob blocks (caller-chosen timeout, 0 = non-blocking poll) and
+  // returns the DspJobResponse of the finished job. A job is reaped when
+  // waited to completion or its owner disconnects — re-waiting a reaped id
+  // is an error, re-waiting a timed-out one is fine.
+  rpc SubmitDspJobAsync(DspJobRequest) returns (DspJobResponse);
+  rpc WaitDspJob(DspWaitRequest) returns (DspJobResponse);
+
   // One-shot JPEG encode of a registered DSP buffer (S-3(a), SDK
   // hardware-routing proposal). Input: any buffer id from the DSP registry
   // (alloc or import); output: a complete JPEG frame in the response. The
@@ -842,6 +851,16 @@ message DspJobResponse {
   string message = 2;
   int32 error_code = 3;     // negative HAL error, -EINVAL style codes for validation
   uint32 elapsed_ms = 4;
+  uint64 job_id = 5;        // SubmitDspJobAsync ack; echoed by WaitDspJob
+  bool done = 6;            // WaitDspJob: job finished (false = timed-out poll)
+}
+
+// P2 async wait: timeout_ms 0 = non-blocking poll (HAL wait() convention).
+// The id comes from a SubmitDspJobAsync response and stays valid until the
+// job is waited to completion or its owner disconnects.
+message DspWaitRequest {
+  uint64 job_id = 1;
+  uint32 timeout_ms = 2;
 }
 
 // One-shot JPEG encode (S-3(a)). src_buffer_id must reference a buffer in

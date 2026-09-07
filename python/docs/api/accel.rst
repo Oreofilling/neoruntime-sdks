@@ -74,6 +74,10 @@ get_default_router
    # 路由器以 cpu_fallback=False 调用 DSP——真降级时只记一次，
    # 软件腿恰好执行一遍（不会先在客户端内部悄悄跑一遍 CPU）。
 
+   # keep-fd 源（Frame/FrameHandle）直接透传给 *_hw：dma-buf 在
+   # DspClient 内部零拷贝导入，路由腿不再 ascontiguousarray 拷贝
+   #（dsp-offload P2）。数组源行为不变。
+
 JPEG 编码：daemon 一发 RPC，CPU 兜底
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

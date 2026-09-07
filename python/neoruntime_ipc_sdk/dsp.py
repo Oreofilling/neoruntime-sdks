@@ -92,6 +92,8 @@ from .dsp_wire import (  # noqa: F401 — re-exported for API compat
     _PRIORITY_WIRE,
     _RELEASE_FMT,
     _SCALING_WIRE,
+    DSP_ERR_NO_BUFFER,
+    DSP_ERR_TIMEOUT,
     DSP_SERVICE_UNAVAILABLE,
     DspError,
     _DspUnavailable,
@@ -290,6 +292,157 @@ class _ImportedSource:
         self.import_id = -1
 
 
+class PendingDspJob:
+    """The ``wait=False`` return of the ``*_hw`` job methods (P2 async).
+
+    Wraps one submitted job and owns every buffer it needs — destination
+    pool, imported sources — until the job is consumed:
+
+    * :meth:`wait` — block, read the destination array(s), release
+      everything. The sync-call equivalent, just later.
+    * :meth:`wait_result` — block but keep the result device-side and the
+      buffers owned: chain ``buffer_id`` into
+      :meth:`DspClient.encode_jpeg_hw` (``src_buffer_id=``) for a zero
+      read-back encode, then :meth:`release`.
+    * :meth:`done` — poll; ``timeout_s=0`` is a pure non-blocking check.
+    * :meth:`release` — drop the result and free the buffers (idempotent).
+
+    A job the daemon *refused* or a daemon without the async rpcs never
+    produces one of these — refused jobs fall back to CPU and return
+    pixels (the ``wait=False`` contract only covers accepted jobs), and
+    the sync fallback inside ``_submit_job`` yields ``job_id=None``,
+    meaning the job already ran by construction.
+    """
+
+    _PENDING, _DONE, _RELEASED = "pending", "done", "released"
+
+    def __init__(
+        self,
+        client: "DspClient",
+        reads: Sequence[tuple[DspBufferPool, int]],
+        job_id: int | None,
+        owns: Sequence[object],
+        timeout_s: float,
+        multi: bool = False,
+    ):
+        self._client = client
+        self._reads = list(reads)
+        self._owns = list(owns)
+        self._timeout_s = timeout_s
+        self._multi = multi
+        self._error: DspError | None = None
+        self.job_id = job_id
+        # job_id None = the sync fallback already executed the job
+        self._state = self._DONE if job_id is None else self._PENDING
+
+    @property
+    def buffer_id(self) -> int:
+        """Daemon id of the (first) destination buffer."""
+        pool, index = self._reads[0]
+        return pool.buffer_id(index)
+
+    def done(self, timeout_s: float = 0.0) -> bool:
+        """Poll for completion without consuming the result.
+
+        ``timeout_s=0`` maps to the daemon's non-blocking wait. A job
+        that *failed* still counts as done — the error surfaces from
+        :meth:`wait`/:meth:`wait_result`.
+        """
+        if self._state != self._PENDING:
+            return self._state == self._DONE
+        try:
+            resp = self._wait_rpc(int(max(timeout_s, 0.0) * 1000))
+        except _DspUnavailable:
+            raise  # transport-level: the job's state is simply unknown
+        except DspError as e:
+            self._state, self._error = self._DONE, e
+            return True
+        if resp is None:
+            return False
+        self._state = self._DONE
+        return True
+
+    def wait_result(self, timeout_s: float | None = None) -> "PendingDspJob":
+        """Block until the job completes, the result staying device-side.
+
+        A timed-out job raises but stays pending in the daemon — re-wait
+        with a longer timeout. A failed job raises its error; release the
+        buffers afterwards either way.
+        """
+        if self._state == self._RELEASED:
+            raise DspError("pending job already released")
+        if self._state == self._PENDING:
+            limit = self._timeout_s if timeout_s is None else timeout_s
+            resp = self._wait_rpc(int(max(limit, 0.0) * 1000))
+            if resp is None:
+                raise DspError(
+                    f"dsp job {self.job_id} still pending after {limit}s — "
+                    "the daemon keeps it; wait again with a longer timeout"
+                )
+            self._state = self._DONE
+        if self._error is not None:
+            raise self._error
+        return self
+
+    def wait(self, timeout_s: float | None = None) -> np.ndarray | list[np.ndarray]:
+        """Block, read the destination, release the buffers."""
+        self.wait_result(timeout_s)
+        out = [pool.read(index) for pool, index in self._reads]
+        self.release()
+        return out if self._multi else out[0]
+
+    def release(self) -> None:
+        """Drop the result and release the owned buffers (idempotent).
+
+        The daemon-side job is *not* cancelled: a still-pending job is
+        first reaped with one bounded wait (it executes regardless — the
+        daemon's single worker runs it either way); a job that outlives
+        that wait lingers in the daemon registry until client disconnect.
+        """
+        if self._state == self._RELEASED:
+            return
+        if self._state == self._PENDING:
+            try:
+                self._wait_rpc(int(max(self._timeout_s, 0.0) * 1000))
+            except DspError:
+                pass  # callers that care surface errors from wait_result
+        self._state = self._RELEASED
+        for owned in self._owns:
+            owned.release()
+        self._reads = []
+
+    def _wait_rpc(self, timeout_ms: int):
+        """One WaitDspJob round-trip.
+
+        Returns the response when the job completed (the daemon reaped
+        its registry entry), ``None`` while it is still pending
+        (``DSP_ERR_TIMEOUT``), and raises for rpc failures, unknown ids
+        and failed jobs.
+        """
+        req = camera_pb2.DspWaitRequest(
+            job_id=self.job_id if self.job_id is not None else 0,
+            timeout_ms=timeout_ms,
+        )
+        try:
+            # the server holds its reply for up to timeout_ms — keep the
+            # rpc deadline comfortably past it
+            resp = self._client._connect().WaitDspJob(
+                req, timeout=timeout_ms / 1000.0 + 2.0
+            )
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.UNIMPLEMENTED:
+                raise _DspUnavailable("WaitDspJob not in daemon") from e
+            raise DspError(f"WaitDspJob rpc failed: {e}") from e
+        if not resp.success:
+            if resp.error_code == DSP_ERR_TIMEOUT:
+                return None  # still pending — entry kept for a re-wait
+            raise DspError(
+                f"dsp job failed: {resp.message or _ERROR_TEXT.get(resp.error_code)}",
+                code=resp.error_code,
+            )
+        return resp
+
+
 def _recv_one_msg(sock: socket.socket) -> tuple[int, bytes, list[int]]:
     """One complete UDS message: ``(type, payload-with-header, fds)``.
 
@@ -423,6 +576,9 @@ class DspClient(GrpcClient):
         self.sock_path = sock_path
         self._sock: socket.socket | None = None
         self.last_used_hw: bool | None = None
+        # set once the daemon refuses a gray8 CONVERT (hailo15 firmware
+        # gap) — later gray8 pairs skip the doomed submit quietly
+        self._gray8_refused = False
 
     # -- life cycle ----------------------------------------------------------
     def _ensure_sock(self) -> socket.socket:
@@ -625,7 +781,16 @@ class DspClient(GrpcClient):
         scaling: str,
         priority: str,
         timeout_s: float,
-    ) -> int:
+        wait: bool = True,
+    ) -> int | None:
+        """Submit one job; the sync form returns ``elapsed_ms``.
+
+        With ``wait=False`` the job rides ``SubmitDspJobAsync`` and the
+        return value is the daemon job id for :class:`PendingDspJob` —
+        or ``None`` when the daemon lacks the rpc and transparently fell
+        back to the sync submit (the job already ran; a pending object
+        built on that is born done).
+        """
         try:
             interp = _INTERP_WIRE[interpolation]
             scale = _SCALING_WIRE[scaling]
@@ -649,8 +814,20 @@ class DspClient(GrpcClient):
             scaling_mode=scale,
             priority=prio,
         )
+        shadowed = False
         try:
-            resp = self._connect().SubmitDspJob(req, timeout=timeout_s)
+            if wait:
+                resp = self._connect().SubmitDspJob(req, timeout=timeout_s)
+            else:
+                try:
+                    resp = self._connect().SubmitDspJobAsync(req, timeout=timeout_s)
+                except grpc.RpcError as e:
+                    if e.code() != grpc.StatusCode.UNIMPLEMENTED:
+                        raise
+                    # old daemon: run the job synchronously instead — the
+                    # pending handle is born already done
+                    shadowed = True
+                    resp = self._connect().SubmitDspJob(req, timeout=timeout_s)
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.UNIMPLEMENTED:
                 raise _DspUnavailable("SubmitDspJob not in daemon") from e
@@ -662,7 +839,9 @@ class DspClient(GrpcClient):
                 f"dsp job failed: {resp.message or _ERROR_TEXT.get(resp.error_code)}",
                 code=resp.error_code,
             )
-        return resp.elapsed_ms
+        if shadowed:
+            return None
+        return resp.elapsed_ms if wait else resp.job_id
 
     # -- public hw API ----------------------------------------------------------
     def resize_hw(
@@ -678,11 +857,15 @@ class DspClient(GrpcClient):
         src_pool: DspBufferPool | None = None,
         dst_pool: DspBufferPool | None = None,
         cpu_fallback: bool = True,
-    ) -> np.ndarray:
+        wait: bool = True,
+    ) -> np.ndarray | PendingDspJob:
         """Scale ``src`` to ``(width, height)`` on the DSP.
 
         ``src`` is a numpy array (copied in) or a keep-fd Frame/FrameHandle
-        (imported zero-copy — see the module docstring).
+        (imported zero-copy — see the module docstring). ``wait=False``
+        returns a :class:`PendingDspJob` instead of the array: the job is
+        enqueued without blocking and the buffers stay owned until the
+        pending job consumes them.
         """
         _sw, _sh, handle, fmt = _resolve_source(src, fmt)
         _validate_geometry(width, height, fmt, "destination")
@@ -695,8 +878,9 @@ class DspClient(GrpcClient):
                 [dst_pool] if dst_pool else None,
                 timeout_s,
             )
+            handed = False
             try:
-                self._submit_job(
+                job_id = self._submit_job(
                     _OP_RESIZE,
                     source.buffer_id(0),
                     [pools[0].buffer_id(0)],
@@ -705,11 +889,18 @@ class DspClient(GrpcClient):
                     scaling,
                     priority,
                     timeout_s,
+                    wait,
                 )
                 self.last_used_hw = True
+                if not wait:
+                    handed = True
+                    return PendingDspJob(
+                        self, [(pools[0], 0)], job_id, own, timeout_s
+                    )
                 return pools[0].read(0)
             finally:
-                self._release_owned(own)
+                if not handed:
+                    self._release_owned(own)
         except _DspUnavailable as e:
             if handle is not None:
                 raise DspError(
@@ -745,8 +936,12 @@ class DspClient(GrpcClient):
         src_pool: DspBufferPool | None = None,
         dst_pool: DspBufferPool | None = None,
         cpu_fallback: bool = True,
-    ) -> np.ndarray:
-        """Crop ``(x, y, w, h)`` and scale to the destination size."""
+        wait: bool = True,
+    ) -> np.ndarray | PendingDspJob:
+        """Crop ``(x, y, w, h)`` and scale to the destination size.
+
+        ``wait=False`` returns a :class:`PendingDspJob` (async submit).
+        """
         sw, sh, handle, fmt = _resolve_source(src, fmt)
         dst_width = width if dst_width is None else dst_width
         dst_height = height if dst_height is None else dst_height
@@ -760,8 +955,9 @@ class DspClient(GrpcClient):
                 [dst_pool] if dst_pool else None,
                 timeout_s,
             )
+            handed = False
             try:
-                self._submit_job(
+                job_id = self._submit_job(
                     _OP_CROP_AND_RESIZE,
                     source.buffer_id(0),
                     [pools[0].buffer_id(0)],
@@ -770,11 +966,18 @@ class DspClient(GrpcClient):
                     scaling,
                     priority,
                     timeout_s,
+                    wait,
                 )
                 self.last_used_hw = True
+                if not wait:
+                    handed = True
+                    return PendingDspJob(
+                        self, [(pools[0], 0)], job_id, own, timeout_s
+                    )
                 return pools[0].read(0)
             finally:
-                self._release_owned(own)
+                if not handed:
+                    self._release_owned(own)
         except _DspUnavailable as e:
             if handle is not None:
                 raise DspError(
@@ -808,12 +1011,14 @@ class DspClient(GrpcClient):
         src_pool: DspBufferPool | None = None,
         dst_pools: list[DspBufferPool] | None = None,
         cpu_fallback: bool = True,
-    ) -> list[np.ndarray]:
+        wait: bool = True,
+    ) -> list[np.ndarray] | PendingDspJob:
         """Crop/resize many windows in one job.
 
         ``rects`` are ``(x, y, w, h, dst_width, dst_height)``. Destination
         buffers are grouped by geometry (one pool per distinct output
-        size); results come back in rect order.
+        size); results come back in rect order. ``wait=False`` returns a
+        :class:`PendingDspJob` whose ``wait()`` then yields the list.
         """
         sw, sh, handle, fmt = _resolve_source(src, fmt)
         if not rects:
@@ -835,6 +1040,7 @@ class DspClient(GrpcClient):
 
         try:
             source, pools, own = self._prep(src, fmt, specs, src_pool, dst_pools, timeout_s)
+            handed = False
             try:
                 slots = {g: 0 for g in order}
                 dst_ids = []
@@ -842,7 +1048,7 @@ class DspClient(GrpcClient):
                     geom = (r[4], r[5])
                     dst_ids.append(pools[order.index(geom)].buffer_id(slots[geom]))
                     slots[geom] += 1
-                self._submit_job(
+                job_id = self._submit_job(
                     _OP_MULTI_CROP,
                     source.buffer_id(0),
                     dst_ids,
@@ -851,8 +1057,22 @@ class DspClient(GrpcClient):
                     scaling,
                     priority,
                     timeout_s,
+                    wait,
                 )
                 self.last_used_hw = True
+                if not wait:
+                    handed = True
+                    # slot per rect = its position within its geometry
+                    # group (mirrors the dst_ids loop above)
+                    slot_of = {g: 0 for g in order}
+                    reads = []
+                    for r in rects:
+                        geom = (r[4], r[5])
+                        reads.append((pools[order.index(geom)], slot_of[geom]))
+                        slot_of[geom] += 1
+                    return PendingDspJob(
+                        self, reads, job_id, own, timeout_s, multi=True
+                    )
                 out, done = [], {g: 0 for g in order}
                 for r in rects:
                     geom = (r[4], r[5])
@@ -861,7 +1081,8 @@ class DspClient(GrpcClient):
                     done[geom] += 1
                 return out
             finally:
-                self._release_owned(own)
+                if not handed:
+                    self._release_owned(own)
         except _DspUnavailable as e:
             if handle is not None:
                 raise DspError(
@@ -890,7 +1111,8 @@ class DspClient(GrpcClient):
         src_pool: DspBufferPool | None = None,
         dst_pool: DspBufferPool | None = None,
         cpu_fallback: bool = True,
-    ) -> np.ndarray:
+        wait: bool = True,
+    ) -> np.ndarray | PendingDspJob:
         """Convert ``src`` to ``dst_fmt`` (``nv12``/``rgb24``/``gray8``) on
         the DSP, keeping the dimensions.
 
@@ -906,9 +1128,13 @@ class DspClient(GrpcClient):
         unswapped BGR comes back with R/B-swapped chroma.
 
         Supported pairs are firmware-dependent: on hailo15 only
-        ``rgb24 <-> nv12`` run on the DSP — the gray8 pairs are refused
-        (``HAL_ERR_RESULT``) and, with the default ``cpu_fallback=True``,
-        compute on CPU with a warning.
+        ``rgb24 <-> nv12`` run on the DSP. Every gray8 pair is refused
+        (``HAL_ERR_RESULT``) — the first refusal warns and falls back to
+        CPU, and this client remembers: later gray8 pairs go straight to
+        the CPU leg, quietly (no repeat warning, ``last_used_hw=False``).
+
+        ``wait=False`` returns a :class:`PendingDspJob` (async submit) —
+        only for accepted jobs; a refused pair still returns CPU pixels.
         """
         sw, sh, handle, fmt = _resolve_source(src, fmt)
         _validate_geometry(sw, sh, fmt, "source")
@@ -928,6 +1154,19 @@ class DspClient(GrpcClient):
                 f"dst_pool is {dst_pool.width}x{dst_pool.height} {dst_pool.fmt}, "
                 f"job needs {sw}x{sh} {dst_fmt} (CONVERT keeps dims)"
             )
+        if "gray8" in (fmt, dst_fmt) and self._gray8_refused:
+            # the daemon already refused a gray8 pair this session (the
+            # firmware has no gray8 leg) — skip the doomed submit and the
+            # repeat warning; zero-copy frames can't take this path (no
+            # pixels to convert), see _job_rejected_fallback
+            if handle is not None:
+                raise DspError(
+                    "gray8 conversions are firmware-refused on this device — "
+                    "refusing the silent CPU fallback for a zero-copy frame "
+                    "source; use frame.to_array() to accept the copy"
+                )
+            self.last_used_hw = False
+            return _cpu_convert(_as_pixels(src), fmt, dst_fmt)
         try:
             # bespoke prep: _prep assumes one fmt for src AND dst pools,
             # but CONVERT needs the dst pool in dst_fmt at the source geometry
@@ -948,9 +1187,10 @@ class DspClient(GrpcClient):
             out_pool = dst_pool if dst_pool is not None else self.alloc_buffers(sw, sh, dst_fmt, 1)
             if dst_pool is None:
                 own.append(out_pool)
+            handed = False
             try:
                 try:
-                    self._submit_job(
+                    job_id = self._submit_job(
                         _OP_CONVERT_FORMAT,
                         source.buffer_id(0),
                         [out_pool.buffer_id(0)],
@@ -959,6 +1199,7 @@ class DspClient(GrpcClient):
                         "stretch",
                         priority,
                         timeout_s,
+                        wait,
                     )
                 except DspError as e:
                     # the daemon took the job but the hardware refused it —
@@ -967,9 +1208,15 @@ class DspClient(GrpcClient):
                         src, fmt, dst_fmt, handle, cpu_fallback, str(e), e
                     )
                 self.last_used_hw = True
+                if not wait:
+                    handed = True
+                    return PendingDspJob(
+                        self, [(out_pool, 0)], job_id, own, timeout_s
+                    )
                 return out_pool.read(0)
             finally:
-                self._release_owned(own)
+                if not handed:
+                    self._release_owned(own)
         except _DspUnavailable as e:
             if handle is not None:
                 raise DspError(
@@ -1004,8 +1251,11 @@ class DspClient(GrpcClient):
         refused (the fallback would need pixels the frame doesn't hold),
         ``cpu_fallback=False`` re-raises, and the default warns and
         computes on CPU with ``last_used_hw=False`` so health reporting
-        stays truthful.
+        stays truthful. A refused gray8 pair also sets the client's
+        firmware-gap flag — later gray8 pairs skip the doomed submit.
         """
+        if "gray8" in (fmt, dst_fmt):
+            self._gray8_refused = True
         if handle is not None:
             raise DspError(
                 "DSP rejected the conversion with a zero-copy frame source — "
@@ -1031,38 +1281,53 @@ class DspClient(GrpcClient):
         priority: str = "normal",
         timeout_s: float = 5.0,
         cpu_fallback: bool = True,
-    ) -> np.ndarray:
+        wait: bool = True,
+        zero_copy: bool = False,
+    ) -> np.ndarray | PendingDspJob:
         """Composite ARGB32 ``overlays`` onto an NV12 ``base`` on the DSP (P1).
 
         ``overlays`` is a sequence of ``(rgba, x, y)`` — an ``(h, w, 4)``
         uint8 array plus its position on the base; overlays paste 1:1 in
         order (no scaling, later overlays draw over earlier ones). The
         blend runs IN PLACE on a daemon pool copy and the annotated NV12
-        array is returned — the input array is never modified.
+        array is returned — the input is never modified.
 
-        The base must be NV12 (the vendor op writes NV12 only) and an
-        array, not a keep-fd frame: in-place compositing would mutate the
-        camera's buffer, so frame handles raise — accept the copy with
-        ``frame.to_array()``. Use :func:`draw.render_overlay_rgba` to
-        turn detection boxes into a minimal overlay canvas, then blend it
-        here; that keeps the overlay small and the DSP footprint (quota
-        charges ``base + overlays`` megapixels) tight.
+        The base must be NV12 (the vendor op writes NV12 only). Arrays
+        are copied in. Keep-fd Frame/FrameHandle bases are **refused
+        by default** (``zero_copy=False``): on the current hailo15
+        firmware the import->1:1 RESIZE->BLEND chain is
+        firmware-fatal — the resize completes but the blend command
+        never returns, wedging the DSP device-wide until a reboot
+        (reproduced 2/2 on 93.72 at 720p with the media pipeline
+        live; see docs/proposals/dsp-offload.md P2 record). Pass
+        ``frame.to_array()`` — the array path is the proven one.
+        ``zero_copy=True`` forces the chain for experiments on
+        future firmware; nothing about it is guaranteed today.
+        Use
+        :func:`draw.render_overlay_rgba` to turn detection boxes into a
+        minimal overlay canvas, then blend it here; that keeps the
+        overlay small and the DSP footprint (quota charges ``base +
+        overlays`` megapixels) tight.
 
         Overlays smaller than 16x16 (the daemon floor) are padded with
         fully transparent pixels to 16 — a semantic no-op. Wire byte
         order is ARGB32 ([A, R, G, B] per pixel); the RGBA->ARGB pack is
-        internal.
+        internal. ``wait=False`` submits the blend (and the keep-fd copy
+        leg) without blocking and returns a :class:`PendingDspJob`.
         """
         if fmt is not None and fmt != "nv12":
             raise DspError(f"BLEND base must be nv12 (daemon contract), got {fmt!r}")
         # fmt is nv12 by definition — never leave it to shape inference
         # (a 2D nv12 array would ambiguously infer gray8)
         bw, bh, handle, fmt = _resolve_source(base, "nv12")
-        if handle is not None:
+        if handle is not None and not zero_copy:
             raise DspError(
-                "blend composites the base in place — a keep-fd frame's "
-                "dma-bufs cannot be the base; use frame.to_array() to "
-                "accept the copy"
+                "blend_hw refuses keep-fd (frame/handle) bases by default: "
+                "on the current hailo15 firmware the import->resize->blend "
+                "chain wedges the DSP device-wide until reboot (reproduced "
+                "2/2 on 93.72). Pass frame.to_array() — the array path is "
+                "the proven one — or zero_copy=True to force the chain at "
+                "your own risk."
             )
         _validate_geometry(bw, bh, fmt, "base")
         if not overlays:
@@ -1097,10 +1362,38 @@ class DspClient(GrpcClient):
 
         try:
             own: list[object] = []
+            handed = False
             try:
                 base_pool = self.alloc_buffers(bw, bh, "nv12", 1)
                 own.append(base_pool)
-                base_pool.write(0, _as_pixels(base))
+                if handle is not None:
+                    # keep-fd base (P2): import the frame zero-copy and let
+                    # the DSP copy it into the pool with a 1:1 RESIZE — the
+                    # blend then composites in place on that copy. The
+                    # daemon rejects imported BLEND *destinations* and the
+                    # camera's dma-bufs must never be written, so the copy
+                    # is the point; it just never crosses the client. The
+                    # RESIZE leg always runs synchronously: execution order
+                    # equals submit order (single daemon worker, one
+                    # priority queue), but a queued-and-never-waited job
+                    # would leak its registry entry — the sync path reaps
+                    # its own.
+                    imported = _ImportedSource(
+                        self, self._import_source(handle, bw, bh, fmt, timeout_s)
+                    )
+                    own.append(imported)
+                    self._submit_job(
+                        _OP_RESIZE,
+                        imported.buffer_id(0),
+                        [base_pool.buffer_id(0)],
+                        [],
+                        "bilinear",
+                        "stretch",
+                        priority,
+                        timeout_s,
+                    )
+                else:
+                    base_pool.write(0, _as_pixels(base))
                 # Overlays travel as memfd imports, not pool allocs: the
                 # deployed HAL on some devices (93.72) rejects ARGB32 pool
                 # allocation (rc=-2809) while the DSP itself blends ARGB
@@ -1116,7 +1409,7 @@ class DspClient(GrpcClient):
                     own.append(src)
                     ov_srcs.append(src)
                 try:
-                    self._submit_job(
+                    job_id = self._submit_job(
                         _OP_BLEND,
                         base_pool.buffer_id(0),
                         [s.buffer_id(0) for s in ov_srcs],
@@ -1129,8 +1422,16 @@ class DspClient(GrpcClient):
                         "stretch",
                         priority,
                         timeout_s,
+                        wait,
                     )
                 except DspError as e:
+                    if handle is not None:
+                        raise DspError(
+                            "DSP rejected the blend with a zero-copy frame "
+                            "base — refusing the silent CPU fallback (the "
+                            "frame holds fds, not pixels; use "
+                            "frame.to_array() to accept the copy)"
+                        ) from e
                     if not cpu_fallback:
                         raise
                     warnings.warn(
@@ -1142,10 +1443,22 @@ class DspClient(GrpcClient):
                     self.last_used_hw = False
                     return _cpu_blend(_as_pixels(base), fmt, prepared)
                 self.last_used_hw = True
+                if not wait:
+                    handed = True
+                    return PendingDspJob(
+                        self, [(base_pool, 0)], job_id, own, timeout_s
+                    )
                 return base_pool.read(0)  # blend ran in place on the copy
             finally:
-                self._release_owned(own)
+                if not handed:
+                    self._release_owned(own)
         except _DspUnavailable as e:
+            if handle is not None:
+                raise DspError(
+                    "DSP unavailable with a zero-copy frame base — refusing "
+                    "the silent CPU fallback (the frame holds fds, not "
+                    "pixels; use frame.to_array() to accept the copy)"
+                ) from e
             if not cpu_fallback:
                 raise
             warnings.warn(
@@ -1159,12 +1472,13 @@ class DspClient(GrpcClient):
 
     def encode_jpeg_hw(
         self,
-        src: JobSource,
+        src: JobSource | None,
         quality: int = 85,
         fmt: str | None = None,
         timeout_s: float = 5.0,
         src_pool: DspBufferPool | None = None,
         cpu_fallback: bool = True,
+        src_buffer_id: int | None = None,
     ) -> bytes:
         """Encode ``src`` as one JPEG frame on the camera-daemon (S-3(a)).
 
@@ -1190,7 +1504,28 @@ class DspClient(GrpcClient):
         up-convert to rgb24 client-side (R=G=B=gray) and ride the same
         hardware leg; gray8 keep-fd frames raise instead of silently
         copying — accept the copy yourself with ``frame.to_array()``.
+
+        ``src_buffer_id`` (with ``src=None``) encodes straight from a
+        daemon-side buffer — the zero-copy chain tail:
+        ``blend_hw(..., wait=False).wait_result().buffer_id`` lands here
+        and the annotated frame becomes JPEG without a single read-back.
+        There is no CPU fallback on that leg (the client holds no
+        pixels); unavailability raises.
         """
+        if src_buffer_id is not None:
+            if src is not None:
+                raise DspError("pass either src or src_buffer_id, not both")
+            if not 1 <= int(quality) <= 100:
+                raise DspError(f"quality must be 1..100, got {quality}")
+            try:
+                jpeg = self._encode_rpc(int(src_buffer_id), int(quality), timeout_s)
+            except _DspUnavailable as e:
+                raise DspError(
+                    "EncodeImage unavailable for a daemon-side buffer — no "
+                    "client pixels to fall back on; pass the array instead"
+                ) from e
+            self.last_used_hw = True
+            return jpeg
         sw, sh, handle, fmt = _resolve_source(src, fmt)
         _validate_geometry(sw, sh, fmt, "source")
         if not 1 <= int(quality) <= 100:

@@ -22,6 +22,16 @@ draw_detections
 
 .. autofunction:: neoruntime_ipc_sdk.draw_detections
 
+draw_polygons
+-------------
+
+.. autofunction:: neoruntime_ipc_sdk.draw_polygons
+
+render_overlay_rgba
+-------------------
+
+.. autofunction:: neoruntime_ipc_sdk.render_overlay_rgba
+
 Usage Examples
 --------------
 
@@ -68,6 +78,32 @@ Render inference results directly
    # Accepts an InferenceResult or list[DetectedObject]; draws boxes +
    # labels + confidence automatically
    annotated = draw_detections(frame, result)
+
+Polygons and tracks (zones / trajectory overlays, dsp-offload P2)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from neoruntime_ipc_sdk import draw_polygons, render_overlay_rgba
+
+   # shapes = [(points, color)]; points is an (N, 2) pixel coordinate
+   # sequence, color=None means the default green. closed=False draws
+   # open polylines (trajectories).
+   zone = [(80, 60), (560, 60), (560, 380), (80, 380)]
+   track = [(100, 240), (200, 200), (320, 210), (430, 260)]
+   annotated = draw_polygons(image, [(zone, (255, 192, 0)),
+                                      (track, (0, 200, 255))], closed=True)
+   # tracks alone: draw_polygons(image, [(track, (0, 200, 255))], closed=False)
+
+   # Hardware leg: the same shapes feed render_overlay_rgba's
+   # polygons/tracks, join the boxes in the minimal canvas union, and
+   # composite in one blend_hw call
+   rgba, x0, y0 = render_overlay_rgba(
+       w, h, boxes, labels, scores, colors,
+       polygons=[(zone, (255, 192, 0))],
+       tracks=[(track, (0, 200, 255))],
+   )
+   annotated = dsp.blend_hw(nv12, [(rgba, x0, y0)])
 
 .. note::
 

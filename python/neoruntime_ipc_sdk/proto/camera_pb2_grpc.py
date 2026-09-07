@@ -365,6 +365,16 @@ class CameraControlStub(object):
                 request_serializer=camera__pb2.DspJobRequest.SerializeToString,
                 response_deserializer=camera__pb2.DspJobResponse.FromString,
                 _registered_method=True)
+        self.SubmitDspJobAsync = channel.unary_unary(
+                '/aipc.camera.CameraControl/SubmitDspJobAsync',
+                request_serializer=camera__pb2.DspJobRequest.SerializeToString,
+                response_deserializer=camera__pb2.DspJobResponse.FromString,
+                _registered_method=True)
+        self.WaitDspJob = channel.unary_unary(
+                '/aipc.camera.CameraControl/WaitDspJob',
+                request_serializer=camera__pb2.DspWaitRequest.SerializeToString,
+                response_deserializer=camera__pb2.DspJobResponse.FromString,
+                _registered_method=True)
         self.EncodeImage = channel.unary_unary(
                 '/aipc.camera.CameraControl/EncodeImage',
                 request_serializer=camera__pb2.EncodeImageRequest.SerializeToString,
@@ -804,6 +814,24 @@ class CameraControlServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SubmitDspJobAsync(self, request, context):
+        """DSP offload P2: the async submit/wait pair. SubmitDspJobAsync enqueues
+        the same DspJobRequest and returns immediately with a job_id;
+        WaitDspJob blocks (caller-chosen timeout, 0 = non-blocking poll) and
+        returns the DspJobResponse of the finished job. A job is reaped when
+        waited to completion or its owner disconnects — re-waiting a reaped id
+        is an error, re-waiting a timed-out one is fine.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WaitDspJob(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def EncodeImage(self, request, context):
         """One-shot JPEG encode of a registered DSP buffer (S-3(a), SDK
         hardware-routing proposal). Input: any buffer id from the DSP registry
@@ -1146,6 +1174,16 @@ def add_CameraControlServicer_to_server(servicer, server):
             'SubmitDspJob': grpc.unary_unary_rpc_method_handler(
                     servicer.SubmitDspJob,
                     request_deserializer=camera__pb2.DspJobRequest.FromString,
+                    response_serializer=camera__pb2.DspJobResponse.SerializeToString,
+            ),
+            'SubmitDspJobAsync': grpc.unary_unary_rpc_method_handler(
+                    servicer.SubmitDspJobAsync,
+                    request_deserializer=camera__pb2.DspJobRequest.FromString,
+                    response_serializer=camera__pb2.DspJobResponse.SerializeToString,
+            ),
+            'WaitDspJob': grpc.unary_unary_rpc_method_handler(
+                    servicer.WaitDspJob,
+                    request_deserializer=camera__pb2.DspWaitRequest.FromString,
                     response_serializer=camera__pb2.DspJobResponse.SerializeToString,
             ),
             'EncodeImage': grpc.unary_unary_rpc_method_handler(
@@ -2936,6 +2974,60 @@ class CameraControl(object):
             target,
             '/aipc.camera.CameraControl/SubmitDspJob',
             camera__pb2.DspJobRequest.SerializeToString,
+            camera__pb2.DspJobResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SubmitDspJobAsync(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/SubmitDspJobAsync',
+            camera__pb2.DspJobRequest.SerializeToString,
+            camera__pb2.DspJobResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WaitDspJob(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/WaitDspJob',
+            camera__pb2.DspWaitRequest.SerializeToString,
             camera__pb2.DspJobResponse.FromString,
             options,
             channel_credentials,
