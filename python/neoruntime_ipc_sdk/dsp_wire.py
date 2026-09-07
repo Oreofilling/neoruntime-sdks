@@ -34,8 +34,9 @@ _DSP_MAX_FDS = 64  # FD_PUB_DSP_MAX_FDS
 
 # HalPixelFormat wire values (hal_v2 hal_buffer.h) — deliberately separate
 # from the SDK PixelFormat enum, whose numbering does not match the wire.
-_HAL_PIXEL_FORMAT = {"nv12": 0, "rgb24": 4, "gray8": 8}
-_DSP_FORMATS = ("nv12", "rgb24", "gray8")
+_HAL_PIXEL_FORMAT = {"nv12": 0, "rgb24": 4, "gray8": 8, "argb": 6}
+# argb: blend overlays only — no job op reads an argb *source* today
+_DSP_FORMATS = ("nv12", "rgb24", "gray8", "argb")
 
 # ---- daemon caps (dsp_service.cpp), mirrored for fail-fast validation ----
 _MIN_DIM = 16
@@ -59,6 +60,7 @@ _OP_RESIZE = 0
 _OP_CROP_AND_RESIZE = 1
 _OP_MULTI_CROP = 2
 _OP_CONVERT_FORMAT = 3  # camera.proto DspOp — equal dims, differing formats
+_OP_BLEND = 4  # camera.proto DspOp — ARGB32 overlays onto an NV12 base, in place
 
 _INTERP_WIRE = {
     "nearest": camera_pb2.DSP_INTERP_NEAREST,
@@ -160,6 +162,8 @@ def _plane_rows(fmt: str, width: int, height: int) -> list[tuple[int, int]]:
         return [(width, height), (width, height // 2)]
     if fmt == "rgb24":
         return [(width * 3, height)]
+    if fmt == "argb":
+        return [(width * 4, height)]
     return [(width, height)]
 
 

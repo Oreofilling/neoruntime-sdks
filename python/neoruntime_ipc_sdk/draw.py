@@ -5,6 +5,10 @@ All functions take an RGB uint8 array (H, W, 3) and return a NEW array;
 the input is never modified. cv2 accelerates rendering when installed,
 otherwise Pillow (a hard SDK dependency) is used.
 
+render_overlay_rgba is the hardware companion: it renders the same
+annotation as a minimal straight-alpha RGBA canvas (plus its frame
+offset) for DspClient.blend_hw instead of rasterizing onto the pixels.
+
 Example:
     frame = client.get_frame("main")            # Frame
     rgb = draw_detections(frame.to_rgb(), result)
@@ -179,3 +183,110 @@ def draw_detections(
     for box, label, score, col in zip(boxes, labels, scores, colors):
         out = draw_boxes(out, [box], labels=[label], scores=[score], color=col, thickness=2)
     return out
+
+
+# px reserved above a box for its caption (cv2 scale-0.5 ascent + baseline
+# offset 6 + margin) — same strip the software draw_boxes text occupies
+_LABEL_STRIP = 20
+# daemon DSP floor (dsp_wire._MIN_DIM): blend_hw pads transparently, but a
+# canvas born legal avoids a copy at paste time
+_MIN_OVERLAY_DIM = 16
+
+
+def render_overlay_rgba(
+    frame_w: int,
+    frame_h: int,
+    boxes: Iterable,
+    labels: Sequence[str | None] | None = None,
+    scores: Sequence[float | None] | None = None,
+    colors: Sequence[tuple[int, int, int]] | None = None,
+    thickness: int = 2,
+) -> tuple[np.ndarray, int, int]:
+    """Render boxes + captions as a minimal straight-alpha RGBA overlay.
+
+    Returns ``(rgba, x0, y0)``: an ``(h, w, 4)`` uint8 canvas holding
+    every shape and its top-left position on the frame. Hand it to
+    :meth:`DspClient.blend_hw` for the hardware composite — the canvas
+    is the union bbox of all shapes (clamped to the frame, floored at
+    16x16), so untouched pixels never enter the blend and the quota
+    footprint stays small.
+
+    Straight alpha by construction: each shape is first drawn
+    white-on-black as a coverage mask (cv2 LINE_AA captions give edge
+    coverage t; rectangles stay hard-edged like :func:`draw_boxes`),
+    then shapes are colored in draw order and alpha is the mask union —
+    so compositing with ``t*C + (1-t)*base`` reproduces the software
+    output. Colors default to green; pick from :data:`PALETTE` by
+    class_id to match :func:`draw_detections`.
+    """
+    t = max(1, int(thickness))
+    items = [_to_xyxy(b) for b in boxes]
+    if not items:
+        raise ValueError("render_overlay_rgba needs at least one box")
+    texts = [
+        _format_label(
+            labels[i] if labels and i < len(labels) else None,
+            scores[i] if scores and i < len(scores) else None,
+        )
+        for i in range(len(items))
+    ]
+    cols = [
+        tuple(colors[i]) if colors and i < len(colors) else (0, 255, 0)
+        for i in range(len(items))
+    ]
+
+    # canvas = union bbox of strokes + caption strips, clamped to the frame
+    x_min, y_min, x_max, y_max = int(frame_w), int(frame_h), 0, 0
+    rects = []
+    for (x1, y1, x2, y2), text in zip(items, texts):
+        xi1, yi1, xi2, yi2 = int(x1), int(y1), int(x2), int(y2)
+        rects.append((xi1, yi1, xi2, yi2, text))
+        x_min = min(x_min, xi1 - t - 1)
+        y_min = min(y_min, yi1 - t - 1 - (_LABEL_STRIP if text else 0))
+        x_max = max(x_max, xi2 + t + 1)
+        y_max = max(y_max, yi2 + t + 1)
+    x0 = max(0, x_min)
+    y0 = max(0, y_min)
+    x_end = min(int(frame_w), x_max)
+    y_end = min(int(frame_h), y_max)
+    if x_end <= x0 or y_end <= y0:
+        raise ValueError("all boxes lie outside the frame")
+    cw = max(_MIN_OVERLAY_DIM, x_end - x0)
+    ch = max(_MIN_OVERLAY_DIM, y_end - y0)
+
+    masks: list[np.ndarray] = []
+    try:
+        import cv2
+
+        for xi1, yi1, xi2, yi2, text in rects:
+            m = np.zeros((ch, cw), np.uint8)
+            # rectangle default LINE_8, matching draw_boxes' hard edges
+            cv2.rectangle(m, (xi1 - x0, yi1 - y0), (xi2 - x0, yi2 - y0), 255, t)
+            if text:
+                ty = min(max(yi1 - 6 - y0, 12), ch - 2)
+                cv2.putText(
+                    m, text, (xi1 - x0, ty),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, 255, 1, cv2.LINE_AA,
+                )
+            masks.append(m)
+    except ImportError:
+        from PIL import Image, ImageDraw
+
+        for xi1, yi1, xi2, yi2, text in rects:
+            img = Image.new("L", (cw, ch), 0)
+            d = ImageDraw.Draw(img)
+            d.rectangle(
+                [xi1 - x0, yi1 - y0, xi2 - x0, yi2 - y0], outline=255, width=t
+            )
+            if text:
+                ty = min(max(yi1 - 12 - y0, 0), ch - 2)
+                d.text((xi1 - x0 + 2, ty), text, fill=255)
+            masks.append(np.array(img))
+
+    rgb = np.zeros((ch, cw, 3), np.uint8)
+    alpha = np.zeros((ch, cw), np.uint8)
+    for m, col in zip(masks, cols):
+        hit = m > 0
+        rgb[hit] = col  # draw order: later shapes overwrite inside overlaps
+        np.maximum(alpha, m, out=alpha)
+    return np.dstack([rgb, alpha]), x0, y0

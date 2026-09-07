@@ -62,7 +62,7 @@ where each one runs today:
 | RGB↔NV12 color convert | `router.run("rgb_to_nv12"/"nv12_to_rgb", ...)` | numpy | ✅ DSP `CONVERT_FORMAT` | — (live; S-1 record below) |
 | Box suppression | `nms` | numpy | ✅ already in the HEF's integrated NMS (compile-time knobs; runtime `detection_threshold` via `update_postprocess_config`) | — (verified; see S-2) |
 | Draw onto outgoing stream | `OverlayClient.annotate` | — | ✅ camera-daemon renderer | — (live; contract below) |
-| Raster drawing (local frames) | `draw.py` | CPU raster | ⏸ DSP blend | dsp-offload P1 |
+| Raster drawing (local frames) | `draw.py` | CPU raster | ✅ DSP `blend_hw` (`render_overlay_rgba` → blend) | — (live; S-5 record below) |
 | Snapshot JPEG | `encode_jpeg` / `encode_jpeg_hw` | cv2/Pillow | ✅ camera-daemon `EncodeImage` (N-threaded libjpeg on the DSP core) | — (live; S-3 record below) |
 | App frames → main stream | — | — | ⏸ convert + injection | [frame-injection.md](frame-injection.md) |
 
@@ -258,6 +258,23 @@ contract the SDK now depends on, for the record:
 - payload kinds: `{"num_detections", "detections":[{bbox, class_id,
   confidence, label}]}` (clamped to `HAL_MAX_DETECTIONS`, `:621`),
   `{"classifications"}`, `{"landmarks"}`, `{"ocr_lines"}` (`:561`).
+
+### S-5 · raster drawing: DSP blend leg — done 2026-09-07 (dsp-offload P1)
+
+`draw.py` was pure CPU raster. The hardware leg is now
+`render_overlay_rgba(frame_w, frame_h, boxes, labels, scores)` → a
+minimal-canvas straight-alpha RGBA overlay → `DspClient.blend_hw(nv12,
+[(rgba, x0, y0)])`, and the router's `draw_detections` op routes NV12
+frames through it (RGB input stays on the software raster). Verified on
+93.72 (19-check e2e: untouched-region byte-identity, hw==CPU-mirror
+luma ≤ 16, alpha=0/1 exact passthrough, sub-16 padding, router legs).
+
+Numbers and platform findings live in
+[dsp-offload.md](dsp-offload.md) (P1 record); the short version: DSP
+blend numerics are exact where they must be, but the firmware refuses
+USERPTR blend overlays (dma-heap staging inside the HAL fixes it), and
+at 1280×720 both legs measure ~180 ms wall-clock because the round
+trip is transport-bound — the value today is CPU offload, not latency.
 
 ## Phased rollout
 

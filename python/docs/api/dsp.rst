@@ -119,6 +119,35 @@ DspError
    # CPU 路径为宜。encoder 按 (宽,高,格式,quality) 复用，参数一变
    # 就重建（变更后首帧承担流水线启动开销）。
 
+标注合成（检测框画到 NV12 上，dsp-offload P1）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from neoruntime_ipc_sdk import render_overlay_rgba
+
+   # blend_hw 把 ARGB32 overlay 逐个 1:1 粘贴合成到 NV12 base 上
+   #（不缩放，后贴的盖先贴的）。合成发生在池拷贝上、原地写回——
+   # 返回已标注的 NV12 数组，输入数组绝不改动。
+   overlay = np.zeros((64, 96, 4), np.uint8)   # (h, w, 4) RGBA
+   overlay[..., :3] = (255, 0, 0)
+   overlay[..., 3] = 255                       # 直通 alpha
+   annotated = dsp.blend_hw(nv12, [(overlay, 40, 30)])
+
+   # 与 render_overlay_rgba 组合即为"检测画框走硬件"：
+   rgba, x0, y0 = render_overlay_rgba(w, h, boxes, labels, scores, colors)
+   annotated = dsp.blend_hw(nv12, [(rgba, x0, y0)])
+   # 更省事的入口是 accel 路由器：router.run("draw_detections", nv12, result)
+
+   # 契约要点：base 必须是 NV12 数组（vendor op 只写 NV12；keep-fd 帧
+   # 属于相机，原地合成会改写它——用 frame.to_array() 接受拷贝）；
+   # overlay 小于 16x16（daemon 下限）自动补全透明像素到 16；
+   # 硬件 ARGB32 内存字节序为 [A, R, G, B]，SDK 内部打包；
+   # quota 按 (base + 各 overlay) 像素量计费——最小画布（上面
+   # render_overlay_rgba 正是）才省。DSP 不可用/作业被拒时与其它
+   # *_hw 相同：默认告警回落 CPU（_cpu_blend 直通 alpha 数学一致），
+   # cpu_fallback=False 直接抛错。
+
 预分配缓冲池（高帧率重复任务）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

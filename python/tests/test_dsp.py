@@ -48,6 +48,8 @@ def make_pool(client, width, height, fmt, count, stride_pad=0, id_base=1000):
         rows = (height, height // 2)
     elif fmt == "rgb24":
         row_w, rows = (width * 3,), (height,)
+    elif fmt == "argb":
+        row_w, rows = (width * 4,), (height,)
     else:
         row_w, rows = (width,), (height,)
 
@@ -82,7 +84,7 @@ def patched_alloc(client):
 
     def recording(width, height, fmt_wire, count):
         calls.append((width, height, fmt_wire, count))
-        fmt = {0: "nv12", 4: "rgb24", 8: "gray8"}[fmt_wire]
+        fmt = {0: "nv12", 4: "rgb24", 6: "argb", 8: "gray8"}[fmt_wire]
         base = state["next"]
         state["next"] += count
         pool = make_pool(client, width, height, fmt, count, id_base=base)

@@ -33,6 +33,7 @@ Usage::
     tiles = client.multi_crop_hw(frame.image, rects, fmt="nv12")
     nv12 = client.convert_hw(frame.image, "nv12", fmt="rgb24")
     jpeg = client.encode_jpeg_hw(frame.image, quality=85, fmt="rgb24")
+    annotated = client.blend_hw(nv12, [(overlay_rgba, 64, 48)])
 
     # zero-copy: keep the frame's dma-bufs and hand them over directly
     frame = media.get_frame("main", keep_fd=True)
@@ -58,6 +59,7 @@ from .dsp_format import (  # noqa: F401 — re-exported for API compat
     _CV_INTERP,
     _FRAME_FMT_TO_DSP,
     _as_pixels,
+    _cpu_blend,
     _cpu_convert,
     _cpu_crop,
     _cpu_crop_resize,
@@ -82,6 +84,7 @@ from .dsp_wire import (  # noqa: F401 — re-exported for API compat
     _MAX_BATCH,
     _MAX_DIM,
     _MIN_DIM,
+    _OP_BLEND,
     _OP_CONVERT_FORMAT,
     _OP_CROP_AND_RESIZE,
     _OP_MULTI_CROP,
@@ -167,7 +170,7 @@ class DspBufferPool:
         """Copy a numpy array into buffer ``index`` (uint8, SDK layout).
 
         nv12: ``(h*3//2, w)`` (Y then interleaved UV); rgb24: ``(h, w, 3)``;
-        gray8: ``(h, w)``.
+        argb: ``(h, w, 4)`` (wire byte order [A, R, G, B]); gray8: ``(h, w)``.
         """
         if self._released:
             raise DspError("write on released pool")
@@ -180,6 +183,8 @@ class DspBufferPool:
             planes = [arr[:h], arr[h:]]
         elif self.fmt == "rgb24":
             planes = [np.ascontiguousarray(arr).reshape(h, w * 3)]
+        elif self.fmt == "argb":
+            planes = [np.ascontiguousarray(arr).reshape(h, w * 4)]
         else:
             planes = [arr]
 
@@ -212,6 +217,8 @@ class DspBufferPool:
             return np.vstack(planes)
         if self.fmt == "rgb24":
             return planes[0].reshape(h, w, 3)
+        if self.fmt == "argb":
+            return planes[0].reshape(h, w, 4)
         return planes[0]
 
     @staticmethod
@@ -242,6 +249,8 @@ class DspBufferPool:
             return (self.height * 3 // 2, self.width)
         if self.fmt == "rgb24":
             return (self.height, self.width, 3)
+        if self.fmt == "argb":
+            return (self.height, self.width, 4)
         return (self.height, self.width)
 
     def release(self) -> None:
@@ -518,10 +527,31 @@ class DspClient(GrpcClient):
             )
         strides = list(handle.strides[:3]) + [0] * (3 - len(handle.strides[:3]))
         sizes = list(handle.plane_sizes[:3]) + [0] * (3 - len(handle.plane_sizes[:3]))
+        return self._import_planes(
+            width, height, fmt, num_planes, strides, sizes, handle.fds, timeout_s
+        )
+
+    def _import_planes(
+        self,
+        width: int,
+        height: int,
+        fmt: str,
+        num_planes: int,
+        strides: Sequence[int],
+        sizes: Sequence[int],
+        fds: Sequence[int],
+        timeout_s: float = 5.0,
+    ) -> int:
+        """DSP_IMPORT wire core: geometry + fds out, import id back.
+
+        The daemon classifies the fds itself: real dma-bufs ride the
+        zero-copy fd plane path, anything mmap-able (memfds) is mapped
+        and rides USERPTR — see ``_import_memfd`` for the client side.
+        """
         payload = import_request_bytes(
             width, height, _HAL_PIXEL_FORMAT[fmt], num_planes, strides, sizes
         )
-        anc = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack(f"{num_planes}i", *handle.fds))]
+        anc = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack(f"{num_planes}i", *fds))]
         sock = self._ensure_sock()
         # scatter/gather form: some device python builds reject
         # sendmsg(bytes, ancdata) with a TypeError but accept a buffer list
@@ -545,7 +575,8 @@ class DspClient(GrpcClient):
                     code, import_id = parse_import_resp(msg)
                     if code != 0:
                         raise DspError(
-                            f"frame import rejected: {_ERROR_TEXT.get(code, 'error')}", code=code
+                            f"buffer import rejected: {_ERROR_TEXT.get(code, 'error')}",
+                            code=code,
                         )
                     return import_id
                 if mtype in (_FD_PUB_MSG_OK, _FD_PUB_MSG_ERROR):
@@ -559,6 +590,29 @@ class DspClient(GrpcClient):
         finally:
             sock.settimeout(None)
         raise DspError("too many control messages before import response")
+
+    def _import_memfd(
+        self, wire: bytes, width: int, height: int, fmt: str, stride: int, timeout_s: float = 5.0
+    ) -> int:
+        """Import client-owned plane bytes as a single-plane buffer.
+
+        The bytes are written to a memfd and imported; the daemon maps it
+        (USERPTR planes). This bypasses HAL buffer allocation entirely —
+        the transport for formats the device HAL refuses to pool-allocate
+        (ARGB32 on 93.72's deployed HAL) while the DSP itself accepts
+        them. The caller's pixels are copied exactly once into the memfd.
+        """
+        fd = os.memfd_create("dsp-import")
+        try:
+            os.ftruncate(fd, len(wire))
+            view = memoryview(wire)
+            while view:  # os.write may be partial on large buffers
+                view = view[os.write(fd, view) :]
+            return self._import_planes(
+                width, height, fmt, 1, [stride, 0, 0], [len(wire), 0, 0], [fd], timeout_s
+            )
+        finally:
+            os.close(fd)  # the daemon holds its own dup from SCM_RIGHTS
 
     # -- job submission --------------------------------------------------------
     def _submit_job(
@@ -968,6 +1022,140 @@ class DspClient(GrpcClient):
         )
         self.last_used_hw = False
         return _cpu_convert(_as_pixels(src), fmt, dst_fmt)
+
+    def blend_hw(
+        self,
+        base: JobSource,
+        overlays: Sequence[tuple[np.ndarray, int, int]],
+        fmt: str | None = None,
+        priority: str = "normal",
+        timeout_s: float = 5.0,
+        cpu_fallback: bool = True,
+    ) -> np.ndarray:
+        """Composite ARGB32 ``overlays`` onto an NV12 ``base`` on the DSP (P1).
+
+        ``overlays`` is a sequence of ``(rgba, x, y)`` — an ``(h, w, 4)``
+        uint8 array plus its position on the base; overlays paste 1:1 in
+        order (no scaling, later overlays draw over earlier ones). The
+        blend runs IN PLACE on a daemon pool copy and the annotated NV12
+        array is returned — the input array is never modified.
+
+        The base must be NV12 (the vendor op writes NV12 only) and an
+        array, not a keep-fd frame: in-place compositing would mutate the
+        camera's buffer, so frame handles raise — accept the copy with
+        ``frame.to_array()``. Use :func:`draw.render_overlay_rgba` to
+        turn detection boxes into a minimal overlay canvas, then blend it
+        here; that keeps the overlay small and the DSP footprint (quota
+        charges ``base + overlays`` megapixels) tight.
+
+        Overlays smaller than 16x16 (the daemon floor) are padded with
+        fully transparent pixels to 16 — a semantic no-op. Wire byte
+        order is ARGB32 ([A, R, G, B] per pixel); the RGBA->ARGB pack is
+        internal.
+        """
+        if fmt is not None and fmt != "nv12":
+            raise DspError(f"BLEND base must be nv12 (daemon contract), got {fmt!r}")
+        # fmt is nv12 by definition — never leave it to shape inference
+        # (a 2D nv12 array would ambiguously infer gray8)
+        bw, bh, handle, fmt = _resolve_source(base, "nv12")
+        if handle is not None:
+            raise DspError(
+                "blend composites the base in place — a keep-fd frame's "
+                "dma-bufs cannot be the base; use frame.to_array() to "
+                "accept the copy"
+            )
+        _validate_geometry(bw, bh, fmt, "base")
+        if not overlays:
+            raise DspError("BLEND needs at least one overlay")
+        if len(overlays) > _MAX_BATCH:
+            raise DspError(f"too many overlays ({len(overlays)}); max is {_MAX_BATCH}")
+
+        # validate + pad overlays to the daemon floor before any wire work
+        prepared: list[tuple[np.ndarray, int, int]] = []
+        for i, (rgba, x, y) in enumerate(overlays):
+            if rgba.ndim != 3 or rgba.shape[2] != 4 or rgba.dtype != np.uint8:
+                raise DspError(
+                    f"overlay {i} must be an (h, w, 4) uint8 rgba array, "
+                    f"got shape {getattr(rgba, 'shape', None)} dtype "
+                    f"{getattr(rgba, 'dtype', None)}"
+                )
+            oh, ow = rgba.shape[:2]
+            if x < 0 or y < 0 or x + ow > bw or y + oh > bh:
+                raise DspError(
+                    f"overlay {i} ({ow}x{oh} at ({x},{y})) exceeds the "
+                    f"{bw}x{bh} base — clamp or clip before blending"
+                )
+            if ow < _MIN_DIM or oh < _MIN_DIM:
+                # transparent padding composites as a no-op; the rect
+                # references the padded dims
+                canvas = np.zeros((max(oh, _MIN_DIM), max(ow, _MIN_DIM), 4), np.uint8)
+                canvas[:oh, :ow] = rgba
+                rgba = canvas
+                oh, ow = rgba.shape[:2]
+            _validate_geometry(ow, oh, "argb", f"overlay {i}")
+            prepared.append((rgba, x, y))
+
+        try:
+            own: list[object] = []
+            try:
+                base_pool = self.alloc_buffers(bw, bh, "nv12", 1)
+                own.append(base_pool)
+                base_pool.write(0, _as_pixels(base))
+                # Overlays travel as memfd imports, not pool allocs: the
+                # deployed HAL on some devices (93.72) rejects ARGB32 pool
+                # allocation (rc=-2809) while the DSP itself blends ARGB
+                # fine — the daemon maps the memfd as USERPTR planes.
+                ov_srcs: list[_ImportedSource] = []
+                for rgba, _x, _y in prepared:
+                    ow, oh = rgba.shape[1], rgba.shape[0]
+                    # hardware ARGB32 is [A, R, G, B] per pixel in memory
+                    wire = np.ascontiguousarray(rgba[:, :, [3, 0, 1, 2]]).tobytes()
+                    src = _ImportedSource(
+                        self, self._import_memfd(wire, ow, oh, "argb", ow * 4, timeout_s)
+                    )
+                    own.append(src)
+                    ov_srcs.append(src)
+                try:
+                    self._submit_job(
+                        _OP_BLEND,
+                        base_pool.buffer_id(0),
+                        [s.buffer_id(0) for s in ov_srcs],
+                        [  # placement rect: (x, y, w, h, dst repeats w, h)
+                            (x, y, rgba.shape[1], rgba.shape[0],
+                             rgba.shape[1], rgba.shape[0])
+                            for rgba, x, y in prepared
+                        ],
+                        "bilinear",
+                        "stretch",
+                        priority,
+                        timeout_s,
+                    )
+                except DspError as e:
+                    if not cpu_fallback:
+                        raise
+                    warnings.warn(
+                        f"DSP rejected the blend ({e}); CPU fallback engaged "
+                        "(client.last_used_hw records the path used)",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    self.last_used_hw = False
+                    return _cpu_blend(_as_pixels(base), fmt, prepared)
+                self.last_used_hw = True
+                return base_pool.read(0)  # blend ran in place on the copy
+            finally:
+                self._release_owned(own)
+        except _DspUnavailable as e:
+            if not cpu_fallback:
+                raise
+            warnings.warn(
+                f"DSP unavailable ({e}); CPU fallback engaged "
+                "(client.last_used_hw records the path used)",
+                UserWarning,
+                stacklevel=3,
+            )
+            self.last_used_hw = False
+            return _cpu_blend(_as_pixels(base), fmt, prepared)
 
     def encode_jpeg_hw(
         self,

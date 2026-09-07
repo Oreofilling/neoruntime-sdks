@@ -153,9 +153,11 @@ hence quota-first, open-by-opt-in.
    Acceptance gate: encoder-drop soak under app load (E2b proved
    coexistence safe but did not measure encoder drops). Itemized
    per-layer work: [hardware-first-roadmap.md](hardware-first-roadmap.md).
-2. **P1**: add `BLEND` + buffer allocation RPC; port SDK
-   `Frame.resize` fast path to it opportunistically (keep numpy
-   fallback).
+2. **P1 (done 2026-09-07)**: `BLEND` landed end-to-end — see
+   [P1 record](#p1-implementation-verified-on-device-2026-09-07).
+   Buffer allocation had already shipped inside P0 (`DSP_ALLOC`); the
+   `Frame.resize` fast path routes through `resize_hw` since
+   parking-lot 1.1.0.
 3. **P2**: async jobs (submit/wait by `job_id`), priority field wired
    to the real queue, quota configurable per app manifest.
 
@@ -302,3 +304,62 @@ of the 120 MPix/s budget); saturation cost lands on the load clients'
 latency (p50 4.8 → 11.1 ms), not on the encoder. Full table in
 [hardware-first-roadmap.md](hardware-first-roadmap.md#plat-6-measurement-2026-09-01-1921689372).
 **P0 is cleared to open to apps.**
+
+## P1 implementation verified on device (2026-09-07)
+
+`DSP_OP_BLEND` (op=4) is live end-to-end on 192.168.93.72: daemon
+`build_blend` validation chain (base NV12 composited **in place** — dst
+must be the imported base, BLEND alone is allowed an imported dst;
+srcs are the ARGB32 overlays, 1..64, rect w/h == overlay dims, 1:1
+paste, no scaling) + UDS import of base and overlays (memfd, read-only
+map) + HAL leg. SDK side: `DspClient.blend_hw`, the
+`render_overlay_rgba` minimal-canvas renderer, and the router's
+`draw_detections` hardware leg. The e2e (19 checks, run inside the
+parking-lot container against the live daemon) passes 19/19, with
+`journalctl` showing the `SubmitDspJob: op=4 src=… dsts=1 rects=1`
+traffic.
+
+Numerics — the DSP is exact where exactness is required:
+
+- outside every overlay footprint the output is **byte-identical** to
+  the input (solid and renderer overlays alike);
+- alpha=0 and alpha=1 regions inside a blended rect are exact
+  passthrough (Δ0 luma and chroma);
+- vs the numpy CPU mirror: luma max ≤ 16 across solid, gradient-alpha
+  and renderer overlays. Chroma against that mirror is coarse-only by
+  construction — the mirror round-trips the whole frame through
+  nv12→rgb→nv12 (|Δ| median ~8, p90 ~45 before any blend) and
+  re-subsamples thin strokes in RGB domain while the DSP blends in
+  YUV; stroke-region chroma p90 measured 67.
+
+### Vendor limitation: USERPTR blend overlays are refused
+
+The firmware that accepts xrp-bounced USERPTR **sources** for resize
+rejects them as blend **overlays**: `/dev/dsp_log0` shows
+`idma_lookup.c:72 Tried to map buffer (READ) to different
+base_address` → `map_planes(overlay) failed with 6` → vendor status 9
+(base and overlay idma banks collide when mapped concurrently). The
+HAL therefore stages every imported (`HAL_MEM_MALLOC`) overlay plane
+through `DmaMemoryAllocator::allocate_dma_buffer` — the same dma-heap
+class the vendor's own OSD blends from — syncs, memcpy, passes the fd
+as `DSP_MEMORY_TYPE_DMABUF`, and frees on completion. Cost is one
+memcpy per overlay per job; dma-buf-backed overlay planes skip
+staging.
+
+Two adjacent traps, recorded so nobody re-derives them:
+`MediaLibraryBufferPool` **ARGB32 dma-buf acquire fails on this stack**
+(`MEDIA_LIBRARY_BUFFER_ALLOCATION_ERROR` → `HAL_ERR_NO_MEM −2809`;
+init succeeds — a standalone probe with unbuffered stdout settled
+that), which is moot for blend (overlays import per call) but blocks
+any future ARGB pool consumer; and `dsp_utils::
+release_hailo_dsp_buffer` segfaults on a NULL device — use
+`DmaMemoryAllocator::free_dma_buffer` for that memory instead.
+
+### P1 timing: transport-bound, not DSP-bound
+
+1280×720 minimal canvas (706×476): hw **180.2 ms** vs cpu 191.6 ms
+per call. Both legs are dominated by the full-frame socket transport
+plus NV12 copy-in/copy-back, not DSP time (e4 measured the blend
+itself at 0.67-1.57 ms on dma-buf). Today's value is CPU offload and
+shared scheduling, not latency; a zero-copy camera-fd base with
+dma-buf overlays is the follow-up that would change the math.

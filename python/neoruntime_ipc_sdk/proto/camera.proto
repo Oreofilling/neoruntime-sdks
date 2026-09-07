@@ -678,6 +678,13 @@ service CameraControl {
   // (FD_PUB_MSG_DSP_ALLOC / FD_PUB_MSG_DSP_BUF_RELEASE, fds via SCM_RIGHTS)
   // and referenced here by buffer id. Synchronous single-job form first.
   rpc SubmitDspJob(DspJobRequest) returns (DspJobResponse);
+
+  // One-shot JPEG encode of a registered DSP buffer (S-3(a), SDK
+  // hardware-routing proposal). Input: any buffer id from the DSP registry
+  // (alloc or import); output: a complete JPEG frame in the response. The
+  // daemon keeps one encoder context per distinct (width, height, format,
+  // quality) and recreates it when that key changes.
+  rpc EncodeImage(EncodeImageRequest) returns (EncodeImageResponse);
 }
 
 // Device capabilities auto-detected from loaded HAL modules
@@ -777,6 +784,10 @@ enum DspOp {
   DSP_OP_CROP_AND_RESIZE = 1;
   DSP_OP_MULTI_CROP_AND_RESIZE = 2;
   DSP_OP_CONVERT_FORMAT = 3;
+    // P1: composite ARGB32 overlays onto an NV12 base in place (the src
+    // buffer IS the output). dst_buffer_ids are the overlays, rects[i]
+    // places overlay i on the base — see DspRect/DspJobRequest notes.
+  DSP_OP_BLEND = 4;
 }
 
 enum DspInterpolation {
@@ -801,7 +812,11 @@ enum DspPriority {
 }
 
 // One crop window + per-output target size (MULTI_CROP: one per dst buffer;
-// CROP_AND_RESIZE: exactly one; RESIZE/CONVERT: none).
+// CROP_AND_RESIZE: exactly one; BLEND: one per overlay buffer, placing it
+// on the base — x/y = position on the base, width/height = overlay
+// footprint (must equal that overlay buffer's dims; blend pastes 1:1, it
+// does not scale), dst_width/dst_height repeat the overlay dims;
+// RESIZE/CONVERT: none).
 message DspRect {
   uint32 x = 1;           // crop origin, pixels
   uint32 y = 2;
@@ -814,8 +829,9 @@ message DspRect {
 message DspJobRequest {
   DspOp op = 1;
   uint64 src_buffer_id = 2;          // id from FD_PUB_MSG_DSP_ALLOC_RESP
-  repeated uint64 dst_buffer_ids = 3; // 1 (RESIZE/CROP/CONVERT) .. 64 (MULTI)
-  repeated DspRect rects = 4;          // per dst for MULTI/CROP; empty else
+  repeated uint64 dst_buffer_ids = 3; // 1 (RESIZE/CROP/CONVERT) .. 64 (MULTI);
+                                      // BLEND: 1..64 overlay buffers (ARGB32)
+  repeated DspRect rects = 4;          // per dst for MULTI/CROP/BLEND; empty else
   DspInterpolation interpolation = 5;
   DspScalingMode scaling_mode = 6;     // per-request (P0: applies to all rects)
   DspPriority priority = 7;
@@ -826,4 +842,19 @@ message DspJobResponse {
   string message = 2;
   int32 error_code = 3;     // negative HAL error, -EINVAL style codes for validation
   uint32 elapsed_ms = 4;
+}
+
+// One-shot JPEG encode (S-3(a)). src_buffer_id must reference a buffer in
+// the DSP registry (id from FD_PUB_MSG_DSP_ALLOC_RESP or a DSP import).
+message EncodeImageRequest {
+  uint64 src_buffer_id = 1;
+  uint32 quality = 2;         // JPEG quality [1..100]; 0 = daemon default (85)
+}
+
+message EncodeImageResponse {
+  bool success = 1;
+  string message = 2;
+  int32 error_code = 3;       // negative HAL error or DspServiceError
+  uint32 elapsed_ms = 4;
+  bytes jpeg = 5;             // complete JPEG frame (empty on failure)
 }

@@ -86,6 +86,19 @@ JPEG 编码：daemon 一发 RPC，CPU 兜底
    # 软件腿 = cv2/Pillow。daemon 未暴露该 RPC 时自动降级并记账，
    # health()["ops"]["encode_jpeg"]["backend"] 如实反映当前后端。
 
+检测标注：NV12 走 DSP blend，RGB 走软件光栅
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   router = get_default_router()
+   annotated = router.run("draw_detections", nv12, result)
+   # 硬件腿把标注渲染成最小 RGBA 画布（draw.render_overlay_rgba），
+   # 一次 DspClient.blend_hw 合成回 NV12——输入 NV12 返回 NV12。
+   # RGB 数组留在软件腿（draw_detections 光栅）：把 RGB 折腾两次
+   # 色彩转换再合成，比省下的光栅还贵。空检测列表直接返回拷贝，
+   # 不碰 DSP。
+
 降级事件转发到事件总线
 ~~~~~~~~~~~~~~~~~~~~~~
 

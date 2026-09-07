@@ -131,6 +131,40 @@ One-shot JPEG encode (snapshot / thumbnail)
    # when that key changes (the first frame after a change pays the
    # pipeline start-up).
 
+Annotation blending (detection boxes onto NV12, dsp-offload P1)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from neoruntime_ipc_sdk import render_overlay_rgba
+
+   # blend_hw composites ARGB32 overlays onto an NV12 base, pasted 1:1
+   # in order (no scaling; later overlays cover earlier ones). The blend
+   # runs in place on the pool copy — it returns the annotated NV12
+   # array and never touches the input array.
+   overlay = np.zeros((64, 96, 4), np.uint8)   # (h, w, 4) RGBA
+   overlay[..., :3] = (255, 0, 0)
+   overlay[..., 3] = 255                       # straight alpha
+   annotated = dsp.blend_hw(nv12, [(overlay, 40, 30)])
+
+   # Pair it with render_overlay_rgba for "detection boxes on hardware":
+   rgba, x0, y0 = render_overlay_rgba(w, h, boxes, labels, scores, colors)
+   annotated = dsp.blend_hw(nv12, [(rgba, x0, y0)])
+   # The accel router is the one-call entry:
+   # router.run("draw_detections", nv12, result)
+
+   # Contract notes: the base must be an NV12 array (the vendor op
+   # writes NV12 only; a keep-fd frame belongs to the camera and in-place
+   # compositing would rewrite it — accept the copy via frame.to_array());
+   # overlays smaller than 16x16 (the daemon floor) are padded with fully
+   # transparent pixels to 16; the hardware ARGB32 memory byte order is
+   # [A, R, G, B] and the SDK packs it internally; quota is charged on
+   # (base + overlays) pixel area — keep the canvas minimal (exactly what
+   # render_overlay_rgba produces). When the DSP is unreachable or the
+   # job is rejected, behavior matches the other *_hw calls: default
+   # warns and falls back to CPU (_cpu_blend with identical straight-
+   # alpha math); cpu_fallback=False raises instead.
+
 Pre-allocated buffer pool (repeated jobs)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

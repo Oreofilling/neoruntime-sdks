@@ -78,6 +78,7 @@ from .draw import (
     draw_boxes,
     draw_detections,
     draw_text,
+    render_overlay_rgba,
 )
 from .dsp import (
     DspBufferPool,
@@ -172,6 +173,7 @@ __all__ = [
     "draw_boxes",
     "draw_text",
     "draw_detections",
+    "render_overlay_rgba",
     # App toolkit: color conversion / NMS / accel routing
     "nv12_to_rgb",
     "nv12_to_bgr",

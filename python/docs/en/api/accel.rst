@@ -89,6 +89,21 @@ JPEG encode: daemon one-shot RPC, CPU leg as fallback
    # expose the RPC it degrades automatically and honestly:
    # health()["ops"]["encode_jpeg"]["backend"] shows the live backend.
 
+Detection annotation: NV12 via DSP blend, RGB on the software raster
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   router = get_default_router()
+   annotated = router.run("draw_detections", nv12, result)
+   # The hardware leg renders the annotation as a minimal RGBA canvas
+   # (draw.render_overlay_rgba) and composites it back onto NV12 in one
+   # DspClient.blend_hw job — NV12 in, NV12 out. RGB arrays stay on the
+   # software leg (the draw_detections raster): round-tripping RGB
+   # through two color converts would cost more than the raster it
+   # offloads. An empty detection list returns a copy without touching
+   # the DSP.
+
 Forward degradations to the event bus
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -193,3 +193,26 @@ def _cpu_convert(src: np.ndarray, fmt: str, dst_fmt: str) -> np.ndarray:
         return np.repeat(src[..., None], 3, axis=2)
     uv = np.full((src.shape[0] // 2, src.shape[1]), 128, dtype=np.uint8)
     return np.vstack([src, uv])
+
+
+def _cpu_blend(base: np.ndarray, fmt: str, overlays) -> np.ndarray:
+    """Pure-numpy alpha composite — CPU fallback for BLEND.
+
+    Mirrors the daemon contract: straight alpha, out = a*C + (255-a)*B
+    over 255, overlays pasted 1:1 in order at their (x, y). The base is
+    converted to rgb24 for the math and back, so nv12 bases pay the same
+    BT.601 round trip both legs agree on (:mod:`color`). ``overlays`` is
+    a sequence of ``(rgba uint8 (h, w, 4), x, y)``; the caller has
+    validated placement. The input array is never modified.
+    """
+    work = base if fmt == "rgb24" else _cpu_convert(base, fmt, "rgb24")
+    work = work.copy()
+    for rgba, x, y in overlays:
+        h, w = rgba.shape[:2]
+        region = work[y : y + h, x : x + w]
+        ov = rgba[: region.shape[0], : region.shape[1]]  # clip overhang
+        a = ov[..., 3:].astype(np.uint32)
+        rgb = ov[..., :3].astype(np.uint32)
+        blended = (a * rgb + (255 - a) * region.astype(np.uint32)) // 255
+        work[y : y + region.shape[0], x : x + region.shape[1]] = blended.astype(np.uint8)
+    return work if fmt == "rgb24" else _cpu_convert(work, "rgb24", fmt)

@@ -171,6 +171,90 @@ def _encode_jpeg_hw(rgb: Any, quality: int = 85) -> bytes:
     )
 
 
+def _extract_annotations(result_or_objects: Any, color: tuple[int, int, int] | None):
+    """Split an InferenceResult / object list into draw.py conventions.
+
+    Returns ``(objects, boxes, labels, scores, colors)`` with the same
+    PALETTE-by-class_id default :func:`draw.draw_detections` uses.
+    """
+    from .draw import PALETTE as _palette
+    from .draw import _to_xyxy
+
+    objects = (
+        list(result_or_objects.objects)
+        if hasattr(result_or_objects, "objects")
+        else list(result_or_objects)
+    )
+    boxes, labels, scores, colors = [], [], [], []
+    for obj in objects:
+        boxes.append(_to_xyxy(obj.bbox if hasattr(obj, "bbox") else obj))
+        labels.append(getattr(obj, "label", None))
+        scores.append(getattr(obj, "score", None))
+        if color is not None:
+            colors.append(color)
+        else:
+            class_id = getattr(obj, "class_id", 0) or 0
+            colors.append(_palette[int(class_id) % len(_palette)])
+    return objects, boxes, labels, scores, colors
+
+
+def _draw_detections_hw(
+    nv12: Any, result_or_objects: Any, color: tuple[int, int, int] | None = None
+) -> Any:
+    """DSP blend with the same signature as the software leg (draw.py).
+
+    Renders the annotation once as a minimal RGBA overlay
+    (:func:`draw.render_overlay_rgba`) and composites it on the DSP in a
+    single blend job. NV12 input only — the vendor op writes NV12 in
+    place, so RGB arrays raise and the router serves them on the
+    software leg (round-tripping RGB through two color converts would
+    cost more than the raster it offloads).
+    """
+    import numpy as np  # noqa: PLC0415 — keep module import light
+
+    from .draw import render_overlay_rgba as _render_overlay_rgba
+
+    if getattr(nv12, "ndim", 0) != 2:
+        raise HardwareUnavailable(
+            f"draw_detections hardware leg is nv12-only (DSP blends onto NV12), "
+            f"got shape {getattr(nv12, 'shape', None)}"
+        )
+    width, height = nv12.shape[1], nv12.shape[0] * 2 // 3
+
+    objects, boxes, labels, scores, colors = _extract_annotations(result_or_objects, color)
+    if not objects:
+        return np.ascontiguousarray(nv12).copy()  # nothing to draw, like the sw leg
+
+    rgba, x0, y0 = _render_overlay_rgba(width, height, boxes, labels, scores, colors)
+    return _dsp_call(
+        "blend_hw", np.ascontiguousarray(nv12), [(rgba, x0, y0)],
+        fmt="nv12", cpu_fallback=False,
+    )
+
+
+def _draw_detections_sw(
+    image: Any, result_or_objects: Any, color: tuple[int, int, int] | None = None
+) -> Any:
+    """Software leg: draw.py raster on RGB arrays; on NV12 the numpy
+    mirror of the hardware path (render_overlay_rgba + straight-alpha
+    composite), so a degradation never changes the output format."""
+    import numpy as np  # noqa: PLC0415 — keep module import light
+
+    from .draw import draw_detections
+    from .draw import render_overlay_rgba as _render_overlay_rgba
+    from .dsp_format import _cpu_blend
+
+    if getattr(image, "ndim", 0) != 2:
+        return draw_detections(image, result_or_objects, color)
+
+    width, height = image.shape[1], image.shape[0] * 2 // 3
+    objects, boxes, labels, scores, colors = _extract_annotations(result_or_objects, color)
+    if not objects:
+        return np.ascontiguousarray(image).copy()
+    rgba, x0, y0 = _render_overlay_rgba(width, height, boxes, labels, scores, colors)
+    return _cpu_blend(np.ascontiguousarray(image), "nv12", [(rgba, x0, y0)])
+
+
 class AccelRouter:
     """Route-table dispatcher between hardware and software providers.
 
@@ -346,7 +430,9 @@ def get_default_router() -> AccelRouter:
     Operations served today: ``resize_nv12``, ``rgb_to_nv12`` and
     ``nv12_to_rgb`` (DSP when reachable, numpy otherwise), ``encode_jpeg``
     (camera-daemon EncodeImage when reachable, cv2/Pillow otherwise),
-    ``nms`` (software only — suppression already runs in the HEF's
+    ``draw_detections`` (DSP blend when reachable and the frame is NV12,
+    draw.py raster otherwise), ``nms`` (software only — suppression
+    already runs in the HEF's
     integrated hardware NMS before the app sees boxes, and its
     ``iou_threshold`` / ``max_boxes`` are compile-time there; the
     runtime-tunable ``detection_threshold`` lives in
@@ -391,6 +477,13 @@ def get_default_router() -> AccelRouter:
                 note="HEF-integrated hardware NMS already suppressed pre-app; "
                 "runtime detection_threshold via InferenceClient."
                 "update_postprocess_config (family functions only)",
+            )
+            router.register(
+                "draw_detections",
+                software=_draw_detections_sw,
+                hardware=_draw_detections_hw,
+                note="DSP blend via DspClient.blend_hw on a minimal RGBA canvas "
+                "(nv12 frames; RGB arrays stay on the software raster)",
             )
             router.add_probe("cv2", _probe_cv2)
             router.add_probe("dsp", _probe_dsp)
