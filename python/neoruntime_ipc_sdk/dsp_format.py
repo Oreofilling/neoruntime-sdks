@@ -16,7 +16,11 @@ try:  # cv2 accelerates the CPU fallback only; never required
 except ImportError:  # pragma: no cover
     _cv2 = None
 
-from .color import _Y_FROM_RGB, nv12_to_rgb, rgb_to_nv12
+# the private impls, not the routing public functions — this module runs
+# INSIDE the router's software legs; routing back through the router from
+# here would re-enter the dispatch (and couple one op's leg to another's
+# registration)
+from .color import _Y_FROM_RGB, _nv12_to_rgb_impl, _rgb_to_nv12_impl
 from .dsp_wire import _DSP_FORMATS, _MAX_DIM, _MIN_DIM, DspError
 from .frame import Frame
 
@@ -180,13 +184,13 @@ def _cpu_convert(src: np.ndarray, fmt: str, dst_fmt: str) -> np.ndarray:
         raise DspError("convert needs differing formats (dimensions stay equal)")
     if fmt == "rgb24":
         if dst_fmt == "nv12":
-            return rgb_to_nv12(src)
+            return _rgb_to_nv12_impl(src)
         y = (16.0 + (src.astype(np.float32) @ _Y_FROM_RGB) / 255.0).round()
         return np.clip(y, 0, 255).astype(np.uint8)
     if fmt == "nv12":
         h = src.shape[0] * 2 // 3
         if dst_fmt == "rgb24":
-            return nv12_to_rgb(src, src.shape[1], h)
+            return _nv12_to_rgb_impl(src, src.shape[1], h)
         return src[:h].copy()  # gray8: luma plane verbatim
     # gray8 source
     if dst_fmt == "rgb24":

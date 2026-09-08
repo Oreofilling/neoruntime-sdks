@@ -40,10 +40,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
 
+from .color import _nv12_to_rgb_impl as _nv12_to_rgb_sw
+from .color import _rgb_to_nv12_impl as _rgb_to_nv12_sw
 from .color import nv12_resize as _nv12_resize_sw
-from .color import nv12_to_rgb as _nv12_to_rgb_sw
-from .color import rgb_to_nv12 as _rgb_to_nv12_sw
-from .frame import _encode_jpeg as _encode_jpeg_sw
+from .frame import _encode_jpeg as _encode_jpeg_cpu
 from .postprocess import nms as _nms_sw
 
 __all__ = [
@@ -125,6 +125,11 @@ def _dsp_call(method: str, *args: Any, **kwargs: Any) -> Any:
         return getattr(client, method)(*args, **kwargs)
     except Exception as exc:
         raise HardwareUnavailable(f"DSP {method} failed: {exc}") from exc
+    finally:
+        try:
+            client.close()  # fresh client per call — never leak the socket
+        except Exception:  # noqa: S110 — cleanup must not mask result/error
+            pass
 
 
 def _frame_like(src: Any) -> bool:
@@ -149,11 +154,23 @@ def _resize_nv12_hw(nv12: Any, src_size: tuple[int, int], dst_size: tuple[int, i
 
 
 def _rgb_to_nv12_hw(rgb: Any) -> Any:
-    """DSP color convert with the same signature as :func:`color.rgb_to_nv12`."""
-    if not _frame_like(rgb):
-        import numpy as np  # noqa: PLC0415 — keep module import light
+    """DSP color convert with the same signature as :func:`color.rgb_to_nv12`.
 
+    Validates the impl's contract (3D HWC, even dims) before touching
+    the daemon — a caller error must raise the software leg's
+    ValueError, not ride a doomed submit into the degradation counters.
+    """
+    import numpy as np  # noqa: PLC0415 — keep module import light
+
+    from .color import _check_even
+
+    if not _frame_like(rgb):
         rgb = np.ascontiguousarray(rgb)
+        if rgb.ndim != 3:
+            raise ValueError(
+                f"rgb source must be 3D (h, w, 3), got shape {rgb.shape}"
+            )
+        _check_even(rgb.shape[0], rgb.shape[1], rgb)
     return _dsp_call("convert_hw", rgb, "nv12", fmt="rgb24", cpu_fallback=False)
 
 
@@ -167,25 +184,57 @@ def _nv12_to_rgb_hw(nv12: Any, width: int | None = None, height: int | None = No
         return _dsp_call("convert_hw", nv12, "rgb24", fmt="nv12", cpu_fallback=False)
     import numpy as np  # noqa: PLC0415 — keep module import light
 
+    from .color import _check_dims
+
     if nv12.ndim != 2:
         raise ValueError(f"nv12 source must be 2D, got shape {nv12.shape}")
     src_w, src_h = nv12.shape[1], nv12.shape[0] * 2 // 3
-    if (width, height) != (None, None) and (width, height) != (src_w, src_h):
-        raise ValueError(f"nv12 is {src_w}x{src_h}, got width/height {width}/{height}")
+    if width is not None and height is not None:
+        # unified contract, validated before anything touches the daemon:
+        # a well-formed buffer with a mismatched declaration raises the
+        # leg's message, a malformed buffer raises the software leg's
+        if (width, height) != (src_w, src_h):
+            if nv12.shape[0] == src_h * 3 // 2:
+                raise ValueError(
+                    f"nv12 is {src_w}x{src_h}, got width/height {width}/{height}"
+                )
+            _check_dims(width, height, nv12)
+        return _dsp_call(
+            "convert_hw", np.ascontiguousarray(nv12), "rgb24", fmt="nv12", cpu_fallback=False
+        )
     return _dsp_call(
         "convert_hw", np.ascontiguousarray(nv12), "rgb24", fmt="nv12", cpu_fallback=False
     )
 
 
+def _encode_jpeg_sw(src: Any, quality: int = 85) -> bytes:
+    """Software leg of ``encode_jpeg``: cv2/Pillow encode of an RGB array.
+
+    Frame-aware — accepts what the hardware leg accepts: a frame-like
+    source is materialized once via ``to_rgb()`` (keep-fd handles are
+    mmap'd read) before the CPU encode, so ``Frame.to_jpeg_bytes`` can
+    route both backends through this op.
+    """
+    if _frame_like(src):
+        src = src.to_rgb()
+    return _encode_jpeg_cpu(src, quality)
+
+
 def _encode_jpeg_hw(rgb: Any, quality: int = 85) -> bytes:
     """camera-daemon EncodeImage with the same signature as the software leg
-    (:func:`frame._encode_jpeg` — RGB uint8 array, quality 1..100 → bytes)."""
-    if not _frame_like(rgb):
-        import numpy as np  # noqa: PLC0415 — keep module import light
+    (:func:`_encode_jpeg_sw` — RGB uint8 array or frame, quality 1..100 → bytes)."""
+    if _frame_like(rgb):
+        # the handle carries geometry+format; an explicit fmt can only
+        # conflict with it (_resolve_source rejects the mismatch, e.g.
+        # fmt="rgb24" on an NV12 keep-fd frame)
+        return _dsp_call(
+            "encode_jpeg_hw", rgb, quality=quality, fmt=None,
+            cpu_fallback=False,
+        )
+    import numpy as np  # noqa: PLC0415 — keep module import light
 
-        rgb = np.ascontiguousarray(rgb)
     return _dsp_call(
-        "encode_jpeg_hw", rgb, quality=quality, fmt="rgb24",
+        "encode_jpeg_hw", np.ascontiguousarray(rgb), quality=quality, fmt="rgb24",
         cpu_fallback=False,
     )
 
@@ -270,12 +319,12 @@ def _draw_detections_sw(
     composite), so a degradation never changes the output format."""
     import numpy as np  # noqa: PLC0415 — keep module import light
 
-    from .draw import draw_detections
+    from .draw import _draw_detections_impl
     from .draw import render_overlay_rgba as _render_overlay_rgba
     from .dsp_format import _cpu_blend
 
     if getattr(image, "ndim", 0) != 2:
-        return draw_detections(image, result_or_objects, color)
+        return _draw_detections_impl(image, result_or_objects, color)
 
     width, height = image.shape[1], image.shape[0] * 2 // 3
     objects, boxes, labels, scores, colors = _extract_annotations(result_or_objects, color)
@@ -336,15 +385,25 @@ class AccelRouter:
 
     # -- routing -------------------------------------------------------
 
-    def route(self, op: str) -> RouteDecision:
-        """Decide which backend serves ``op`` under the current policy."""
+    @property
+    def policy(self) -> RoutePolicy:
+        """The active policy (fixed at construction)."""
+        return self._policy
+
+    def _snapshot(self, op: str) -> _Route:
+        """Copy a route's legs under the lock (``use_hardware`` may swap
+        them concurrently); the copy is what callers execute."""
         with self._lock:
             entry = self._routes.get(op)
             if entry is None:
                 raise KeyError(
                     f"operation {op!r} is not registered (known: {sorted(self._routes)})"
                 )
-            route = _Route(software=entry.software, hardware=entry.hardware, note=entry.note)
+            return _Route(software=entry.software, hardware=entry.hardware, note=entry.note)
+
+    def route(self, op: str) -> RouteDecision:
+        """Decide which backend serves ``op`` under the current policy."""
+        route = self._snapshot(op)
 
         if self._policy is RoutePolicy.SOFTWARE_ONLY:
             if route.software is None:
@@ -363,7 +422,7 @@ class AccelRouter:
         if decision.backend == "unavailable":
             raise HardwareUnavailable(f"{op}: {decision.reason}")
 
-        entry = self._routes[op]
+        entry = self._snapshot(op)
         if decision.backend == "software":
             with self._lock:
                 self._counters[op]["software_calls"] += 1
@@ -389,6 +448,23 @@ class AccelRouter:
 
     # -- health ----------------------------------------------------------
 
+    def note_degradation(self, op: str, reason: str) -> None:
+        """Record a fallback that happened outside :meth:`run`.
+
+        ``Frame.resize`` keeps its own direct DSP fast path (its geometry
+        contract is richer than the router op's NV12 signature); when that
+        attempt fails under PREFER_HARDWARE it reports here so ``health()``
+        and the fallback counters stay honest. Fires :attr:`on_degradation`
+        exactly like a ``run`` fallback does.
+        """
+        # an unregistered op still counts (dict.setdefault is atomic);
+        # the deque, counter bump and on_degradation hook live in
+        # _record_degradation, shared with the run() path
+        self._counters.setdefault(
+            op, {"hardware_calls": 0, "software_calls": 0, "fallbacks": 0}
+        )
+        self._record_degradation(op, reason)
+
     def _record_degradation(self, op: str, reason: str) -> None:
         record = DegradationRecord(op=op, reason=reason, timestamp=time.time())
         with self._lock:
@@ -407,8 +483,15 @@ class AccelRouter:
     def health(self) -> dict[str, Any]:
         """Snapshot of routing state, per-op counters and recent fallbacks."""
         ops = {}
-        for op in sorted(self._routes):
-            decision = self.route(op)
+        for op in sorted(set(self._routes) | set(self._counters)):
+            if op in self._routes:
+                decision = self.route(op)
+            else:
+                # counter-only row: an external fast path (e.g. Frame.resize)
+                # reported a fallback for an op this router never registered
+                decision = RouteDecision(
+                    op, "unavailable", "none", "op not registered (external fallback reporting)"
+                )
             counters = dict(self._counters.get(op, {}))
             counters["backend"] = decision.backend
             ops[op] = counters
@@ -456,6 +539,14 @@ _default_router_lock = threading.Lock()
 
 def get_default_router() -> AccelRouter:
     """Return the pre-registered router singleton.
+
+    The public convenience layer rides this singleton:
+    :func:`color.rgb_to_nv12` / :func:`color.nv12_to_rgb`,
+    :func:`draw.draw_detections` (NV12 arrays) and
+    :meth:`Frame.to_jpeg_bytes` route through ``run``;
+    :meth:`Frame.resize` keeps its direct DSP fast path but consults
+    ``route``/``policy`` and reports its fallbacks via
+    ``note_degradation`` so health stays honest.
 
     Operations served today: ``resize_nv12``, ``rgb_to_nv12`` and
     ``nv12_to_rgb`` (DSP when reachable, numpy otherwise), ``encode_jpeg``

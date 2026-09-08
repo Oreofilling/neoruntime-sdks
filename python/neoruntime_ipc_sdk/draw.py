@@ -167,7 +167,37 @@ def draw_detections(
 
     Each object gets a box plus a "label score" caption. When color is
     None, a per-class color from PALETTE is chosen via class_id.
+
+    Routing: NV12 2D arrays ride the accel router (DSP blend when the
+    daemon is reachable, the CPU mirror otherwise); RGB arrays go
+    straight to the software raster (no doomed hardware attempt, no
+    fake degradation row); keep-fd frames raise — the zero-copy blend
+    chain that would serve them is gated (state-dependent field wedge).
     """
+    if getattr(image, "ndim", 0) == 2:
+        from .accel import get_default_router  # noqa: PLC0415 — accel imports draw
+
+        return get_default_router().run(
+            "draw_detections", image, result_or_objects, color
+        )
+    if hasattr(image, "handle") or hasattr(image, "fds"):
+        from .accel import HardwareUnavailable  # noqa: PLC0415
+
+        raise HardwareUnavailable(
+            "draw_detections takes NV12 arrays, not keep-fd frames: the "
+            "zero-copy frame blend chain has wedged the DSP device-wide "
+            "in the field (state-dependent; DspClient.blend_hw refuses "
+            "it). Call frame.to_array() and route the array."
+        )
+    return _draw_detections_impl(image, result_or_objects, color)
+
+
+def _draw_detections_impl(
+    image: np.ndarray,
+    result_or_objects,
+    color: tuple[int, int, int] | None = None,
+) -> np.ndarray:
+    """CPU raster leg of ``draw_detections`` (boxes + captions on an RGB copy)."""
     if hasattr(result_or_objects, "objects"):
         objects = list(result_or_objects.objects)
     else:

@@ -58,7 +58,22 @@ def _check_even(height: int, width: int, image: np.ndarray) -> None:
 
 
 def nv12_to_rgb(nv12: np.ndarray, width: int, height: int) -> np.ndarray:
-    """Convert an NV12 buffer to an RGB ``(height, width, 3)`` uint8 array."""
+    """Convert an NV12 buffer to an RGB ``(height, width, 3)`` uint8 array.
+
+    Hardware-first: rides the accel router (DSP convert when the daemon
+    is reachable, :func:`_nv12_to_rgb_impl` otherwise).
+    """
+    from .accel import get_default_router  # noqa: PLC0415 — accel imports color
+
+    return get_default_router().run("nv12_to_rgb", nv12, width, height)
+
+
+def _nv12_to_rgb_impl(nv12: np.ndarray, width: int, height: int) -> np.ndarray:
+    """CPU leg of ``nv12_to_rgb`` (cv2, else the BT.601 numpy path)."""
+    if nv12.ndim != 2:
+        # same contract as the hardware leg — a 3D NV12-shaped array is a
+        # caller error, not something cv2 should fail on deep inside
+        raise ValueError(f"nv12 source must be 2D, got shape {nv12.shape}")
     _check_dims(width, height, nv12)
     try:
         import cv2  # noqa: PLC0415 — optional accelerator, like draw.py
@@ -98,7 +113,18 @@ def _nv12_to_packed(nv12: np.ndarray, width: int, height: int, order: str) -> np
 
 
 def rgb_to_nv12(rgb: np.ndarray) -> np.ndarray:
-    """Convert an RGB ``(h, w, 3)`` array to an NV12 ``(h*3/2, w)`` buffer."""
+    """Convert an RGB ``(h, w, 3)`` array to an NV12 ``(h*3/2, w)`` buffer.
+
+    Hardware-first: rides the accel router (DSP convert when the daemon
+    is reachable, :func:`_rgb_to_nv12_impl` otherwise).
+    """
+    from .accel import get_default_router  # noqa: PLC0415 — accel imports color
+
+    return get_default_router().run("rgb_to_nv12", rgb)
+
+
+def _rgb_to_nv12_impl(rgb: np.ndarray) -> np.ndarray:
+    """CPU leg of ``rgb_to_nv12`` (cv2, else the BT.601 numpy path)."""
     return _packed_to_nv12(rgb, "rgb")
 
 

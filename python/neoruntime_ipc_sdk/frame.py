@@ -318,8 +318,13 @@ class Frame:
         NV12/NV21 require even target dimensions. Frames received with
         keep_fd=True are scaled on the DSP without materializing their
         dma-bufs first (falling back to the CPU path when the DSP
-        service is unavailable). cv2 accelerates the CPU path when
-        available; a pure-numpy nearest-neighbour path is the fallback.
+        service is unavailable). The fast path respects the accel
+        router's policy: ``SOFTWARE_ONLY`` skips the DSP attempt,
+        ``HARDWARE_ONLY`` raises on a failed attempt instead of
+        silently degrading, and the default ``PREFER_HARDWARE`` records
+        the fallback in the router's health counters. cv2 accelerates
+        the CPU path when available; a pure-numpy nearest-neighbour
+        path is the fallback.
         """
         if width <= 0 or height <= 0:
             raise ValueError("resize width/height must be positive")
@@ -398,13 +403,36 @@ class Frame:
             if yuv:
                 rw, rh = _even(rw), _even(rh)
             ox, oy = (rw - dw) // 2, (rh - dh) // 2
-        try:
-            from .dsp import DspClient, DspError  # lazy: dsp imports media
+        from .accel import (  # lazy: accel imports frame
+            HardwareUnavailable,
+            RoutePolicy,
+            get_default_router,
+        )
+        from .dsp import DspClient, DspError  # lazy: dsp imports media
 
+        router = get_default_router()
+        try:
+            wants_hw = router.route("resize_nv12").backend == "hardware"
+        except KeyError:
+            wants_hw = True  # unregistered op: keep the historical attempt
+        if not wants_hw:
+            return None
+
+        try:
             with DspClient() as dsp:
                 content = dsp.resize_hw(self, rw, rh, scaling="stretch")
         except DspError as exc:
             logger.debug("DSP resize fast path unavailable (%s); CPU path", exc)
+            if router.policy is RoutePolicy.HARDWARE_ONLY:
+                raise HardwareUnavailable(
+                    f"resize: DSP fast path failed ({exc}) and the policy "
+                    "is hardware-only — refusing the silent CPU fallback"
+                ) from exc
+            # PREFER_HARDWARE degrades, but honestly: the router's
+            # health()/counters must see the fast path it did not take
+            router.note_degradation(
+                "resize_nv12", f"DSP resize fast path unavailable: {exc}"
+            )
             return None
         if mode == "stretch":
             return content
@@ -512,8 +540,23 @@ class Frame:
         )
 
     def to_jpeg_bytes(self, quality: int = 85) -> bytes:
-        """Encode the frame as JPEG bytes (RGB conversion first)."""
-        return _encode_jpeg(self.to_rgb(), quality)
+        """Encode the frame as JPEG bytes, hardware-first for keep-fd frames.
+
+        Frames with a live dma-buf handle ride the accel router's
+        zero-copy EncodeImage leg (the daemon imports the buffer — no
+        RGB materialization, no read-back) and degrade to the CPU
+        cv2/Pillow encode when the daemon cannot serve them. In-memory
+        frames stay on the CPU encode outright: the daemon encoder is
+        N-threaded libjpeg behind an RPC, so its win is the zero-copy
+        import, not raw speed — tight loops (e.g. MjpegStream.push_frame)
+        must not pay pool-alloc + copy + RPC per frame (S-3 record).
+        """
+        handle = self.handle
+        if handle is None or handle.closed:
+            return _encode_jpeg(self.to_rgb(), quality)
+        from .accel import get_default_router  # lazy: accel imports frame
+
+        return get_default_router().run("encode_jpeg", self, quality)
 
     def save(self, path: str) -> None:
         if path.lower().endswith((".jpg", ".jpeg")):
