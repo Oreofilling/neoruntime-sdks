@@ -4,26 +4,29 @@
 概述
 ----
 
-本指南介绍如何在开发环境中制作应用 Docker 镜像，并将镜像导入到 NeoRuntime 设备上运行。
+本指南介绍如何在开发环境中制作应用 Docker 镜像，打包为 ``.neoapp`` 应用包，
+并导入到 NeoRuntime 设备上运行。
 
 完整流程包括：
 
-#. 准备应用文件（Dockerfile、app.py）
+#. 准备应用文件（Dockerfile、app.yaml、app.py）
 #. 构建 Docker 镜像
-#. 导出镜像为 tar 文件
+#. 导出镜像并打包为 ``.neoapp`` 应用包
 #. 通过 Web Console 应用安装向导导入，或使用命令行导入
 
 .. tip::
 
-   Web Console 提供了图形化的 **应用安装向导**，支持上传镜像文件并逐步配置应用参数，
-   无需手动编辑 app.yaml 或使用 SCP 传输文件。推荐优先使用 Web Console 方式。
+   交付产物是单文件 ``.neoapp`` 应用包（tar.gz，内含 ``app.yaml`` 与
+   ``image.tar``）。在 Web Console 上传一个 ``.neoapp`` 即可完成安装，
+   服务端自动解出配置与镜像；也可以只上传裸镜像 tar，由向导表单生成配置。
 
 .. _app_image_step1:
 
 步骤 1: 准备应用文件
 --------------------
 
-创建应用目录并准备以下两个核心文件。应用配置（元数据、权限、资源等）将在 Web Console 安装向导中填写。
+创建应用目录并准备以下核心文件。``app.yaml`` 会随镜像一起打进 ``.neoapp``
+应用包，上载后仍可在安装向导中微调；只上传裸镜像时才完全依赖向导表单生成配置。
 
 创建应用目录
 ~~~~~~~~~~~~
@@ -114,6 +117,36 @@ Dockerfile
 
    CMD ["python3", "app.py"]
 
+应用清单（app.yaml）
+~~~~~~~~~~~~~~~~~~~~
+
+最小可用的 ``app.yaml`` 如下（字段详解见 `app_yaml_reference`_）：
+
+.. code-block:: yaml
+
+   apiVersion: v1
+   kind: Application
+
+   metadata:
+     id: my_app
+     name: My Application
+     version: 1.0.0
+     description: Person detection demo
+
+   spec:
+     image: my-app:1.0.0
+     permissions:
+       video:
+         - cam0_main.raw
+       inference:
+         models: ["person_v1"]
+
+.. note::
+
+   官方应用仓库 `neoruntime-apps <https://github.com/camthink-ai/neoruntime-apps>`_
+   的 ``templates/basic/`` 提供完整 manifest 模板，各 example/showcase 目录
+   也可作为参考。
+
 .. _app_image_step2:
 
 步骤 2: 构建 Docker 镜像
@@ -146,125 +179,108 @@ Dockerfile
 
 .. _app_image_step3:
 
-步骤 3: 导出镜像
-----------------
+步骤 3: 导出镜像并打包 .neoapp
+-------------------------------
 
-将构建好的镜像导出为 tar 文件：
-
-.. code-block:: bash
-
-   docker save my-app:1.0.0 -o my-app.tar
-
-推荐使用 gzip 压缩以减小传输大小：
+将构建好的镜像导出为 tar 文件（打包时统一命名为 ``image.tar``）：
 
 .. code-block:: bash
 
-   docker save my-app:1.0.0 | gzip > my-app.tar.gz
+   docker save my-app:1.0.0 -o image.tar
 
-压缩效果参考：
+然后将 ``app.yaml`` 与 ``image.tar`` 组装为 ``.neoapp`` 应用包：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 25 30 30
+.. code-block:: bash
 
-   * - 格式
-     - 大小
-     - 压缩率
-   * - tar
-     - ~500MB
-     - —
-   * - tar.gz
-     - ~150MB
-     - ~70%
-   * - tar.xz
-     - ~100MB
-     - ~80%
+   PKG=my-app-1.0.0-arm64
+   mkdir -p "$PKG"
+   cp app.yaml "$PKG/"
+   mv image.tar "$PKG/"
+   (cd "$PKG" && sha256sum app.yaml image.tar > SHA256SUMS)
+   tar -czf "$PKG.neoapp" "$PKG"
+
+``.neoapp`` 本质是 tar.gz：包内需含 ``app.yaml`` 与 ``image.tar``（放在根下
+或唯一子目录中均可），``SHA256SUMS`` 等其余文件会被安装端忽略。gzip 同时承担
+传输压缩，无需再单独压缩。
+
+.. note::
+
+   官方应用仓库 `neoruntime-apps <https://github.com/camthink-ai/neoruntime-apps>`_
+   的 ``scripts/build_app.sh <应用目录>`` 一键完成 docker build → save →
+   ``.neoapp`` 打包；其 Releases 还提供预构建的 showcase 应用包
+   （``*-arm64.neoapp``）可直接下载导入。
 
 .. _app_image_step4:
 
 步骤 4: Web Console 导入（推荐）
 ---------------------------------
 
-Web Console 提供了 **6 步应用安装向导**，支持上传镜像文件并逐步配置应用参数。
+Web Console 的 **导入应用** 对话框共三屏：选择来源 → 配置应用 → 安装进度。
 
 .. note::
 
-   镜像文件支持格式：``.tar``、``.tar.gz``、``.tgz``，最大 2GB。
+   单一上传槽支持的文件：``.neoapp`` 应用包（推荐，服务端自动解出
+   ``app.yaml`` 与镜像），或裸镜像 ``.tar`` / ``.tar.gz`` / ``.tgz``，
+   最大 2GB。
 
-打开安装向导
-~~~~~~~~~~~~
+打开导入对话框
+~~~~~~~~~~~~~~
 
 #. 打开浏览器，访问设备 Web Console：``http://<device-ip>:8080``
 #. 导航到 **应用管理** 页面
-#. 点击 **导入应用** 卡片，打开安装向导
+#. 点击 **导入应用** 卡片，打开导入对话框
 
-向导步骤
-~~~~~~~~
+第 1 屏 — 选择来源
+~~~~~~~~~~~~~~~~~~
 
-**第 1 步 — 选择镜像来源**
+- **本地上传** （默认，离线设备推荐）：拖入或选择一个 ``.neoapp`` 应用包
+  （或裸镜像 tar），上传过程显示进度条
+- **镜像仓库**：输入 Docker 镜像地址（如 ``docker.io/library/nginx:latest``），
+  设备需可访问网络
 
-选择以下任一方式：
+上传 ``.neoapp`` 后，服务端自动解出包内 ``app.yaml`` 与镜像，后续表单以包内
+``app.yaml`` 为准，可在下一屏微调；仅上传裸镜像时，配置完全由表单生成。
 
-- **镜像仓库**：输入 Docker 镜像地址（如 ``docker.io/library/nginx:latest``）
-- **上传镜像**：拖拽或选择本地镜像文件（``.tar`` / ``.tar.gz`` / ``.tgz``），上传过程显示进度条
+第 2 屏 — 配置应用
+~~~~~~~~~~~~~~~~~~
 
-**第 2 步 — 基本信息**
+单页表单按分区组织（侧栏分区导航，支持 **表单/YAML** 双视图切换）：
 
-填写应用元数据：
+- **基本信息**：应用 ID、名称、版本、描述
+- **资源**：CPU / 内存限制、共享内存（零拷贝视频流需要）、开机自启、重启策略
+- **模型**：设备上可用的推理模型与最大 QPS
+- **权限**：视频流、事件主题（支持通配符）、网络模式、设备控制
+- **高级** （可选）：环境变量、卷挂载
 
-- **应用 ID**：唯一标识符（小写字母、数字、连字符）
-- **应用名称**：显示名称
-- **版本**：语义化版本号（默认 ``1.0.0``）
-- **描述**：应用功能说明
+第 3 屏 — 安装进度
+~~~~~~~~~~~~~~~~~~
 
-**第 3 步 — 资源配置**
-
-设置容器资源限制和运行选项：
-
-- **CPU 限制**：如 ``50%``
-- **内存限制**：从下拉菜单选择（128Mi / 256Mi / 512Mi / 1Gi / 2Gi）
-- **共享内存**：启用后可使用零拷贝视频流
-- **开机自启**：设备启动时自动运行
-- **重启策略**：不重启 / 失败时重启 / 总是重启
-
-**第 4 步 — 权限配置**
-
-配置应用可使用的平台能力：
-
-- **AI 模型**：勾选设备上可用的推理模型，设置最大 QPS
-- **视频流**：勾选可访问的视频流（如主码流、子码流）
-- **事件权限**：设置可发布和订阅的事件主题（逗号分隔，支持通配符）
-- **网络模式**：隔离模式（无网络）或主机模式（共享主机网络）
-- **设备控制**：勾选需要的硬件控制权限（补光灯、红外滤光片、云台）
-
-**第 5 步 - 高级配置** （可选）
-
-- **环境变量**：添加键值对，注入到容器环境
-- **卷挂载**：配置主机与容器之间的目录映射
-
-**第 6 步 — 确认安装**
-
-检查所有配置信息，确认无误后点击 **安装** 按钮。安装完成后应用将出现在应用列表中。
+提交后显示安装任务进度；安装完成后应用出现在应用列表中。
 
 .. _app_image_step5:
 
 步骤 5: 命令行导入（备选方案）
 -------------------------------
 
-如果无法使用 Web Console，可先将镜像通过 SCP 传输到设备，再通过命令行导入。
+如果无法使用 Web Console，可先将 ``.neoapp`` 应用包通过 SCP 传输到设备，
+解包后用 aipc-cli 安装。
 
-传输镜像到设备：
-
-.. code-block:: bash
-
-   scp my-app.tar.gz root@<device-ip>:/tmp/
-
-然后 SSH 登录设备使用 aipc-cli：
+传输应用包到设备：
 
 .. code-block:: bash
 
-   # 安装应用
-   aipc-cli app install --manifest /tmp/app.yaml --image /tmp/my-app.tar
+   scp my-app-1.0.0-arm64.neoapp root@<device-ip>:/tmp/
+
+然后 SSH 登录设备：
+
+.. code-block:: bash
+
+   # 解包 .neoapp（得到 app.yaml 与 image.tar）
+   tar xzf /tmp/my-app-1.0.0-arm64.neoapp -C /tmp/
+
+   # 安装应用（位置参数：manifest 在前，镜像 tar 在后）
+   aipc-cli app install /tmp/my-app-1.0.0-arm64/app.yaml \
+                        /tmp/my-app-1.0.0-arm64/image.tar
 
    # 启动应用
    aipc-cli app start my_app
@@ -280,7 +296,8 @@ Web Console 提供了 **6 步应用安装向导**，支持上传镜像文件并�
 .. code-block:: bash
 
    grpcurl -plaintext \
-     -d '{"manifest_path": "/tmp/app.yaml", "image_path": "/tmp/my-app.tar"}' \
+     -d '{"manifest_path": "/tmp/my-app-1.0.0-arm64/app.yaml",
+          "image_path": "/tmp/my-app-1.0.0-arm64/image.tar"}' \
      unix:///run/aipc/app-manager.sock \
      appmanager.AppManager/InstallApp
 
@@ -470,14 +487,16 @@ Web Console 提供了 **6 步应用安装向导**，支持上传镜像文件并�
                 --build-arg HTTPS_PROXY=http://proxy:port \
                 -t my-app:1.0.0 .
 
-镜像文件过大
-~~~~~~~~~~~~
+应用包过大
+~~~~~~~~~~
 
-使用 gzip 压缩可减少约 70% 的文件大小：
+``.neoapp`` 本身已是 gzip 压缩。若仍然过大，检查镜像是否带入了不必要的
+层或缓存（Dockerfile 使用 ``--no-cache-dir`` 安装依赖、多阶段构建等）：
 
 .. code-block:: bash
 
-   docker save my-app:1.0.0 | gzip > my-app.tar.gz
+   # 查看各层体积，定位大层
+   docker history my-app:1.0.0
 
 导入失败
 ~~~~~~~~
@@ -490,7 +509,7 @@ Web Console 提供了 **6 步应用安装向导**，支持上传镜像文件并�
    systemctl status containerd
 
    # 手动导入测试
-   ctr -n aipc images import my-app.tar
+   ctr -n aipc images import /tmp/my-app-1.0.0-arm64/image.tar
 
 权限错误
 ~~~~~~~~
@@ -499,4 +518,4 @@ Web Console 提供了 **6 步应用安装向导**，支持上传镜像文件并�
 
 .. code-block:: bash
 
-   chmod 644 /tmp/app.yaml /tmp/my-app.tar
+   chmod 644 /tmp/my-app-1.0.0-arm64/app.yaml /tmp/my-app-1.0.0-arm64/image.tar
