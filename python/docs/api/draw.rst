@@ -73,12 +73,14 @@ render_overlay_rgba
 
    infer = InferenceClient()
    result = infer.infer("yolov5m_vehicles", frame)
+   rgb = frame.to_rgb()  # Frame 先物化（keep-fd 帧不能直接画）
 
    # 接受 InferenceResult 或 list[DetectedObject]，自动画框 + 标签 + 置信度
-   annotated = draw_detections(frame, result)
+   # SDK 0.7.4 起：NV12 2D 数组本身即走 DSP blend 路由，RGB 数组走软件光栅
+   annotated = draw_detections(rgb, result)
 
 多边形与轨迹（区域/轨迹可视化，dsp-offload P2）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 

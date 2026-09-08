@@ -95,7 +95,7 @@ JPEG encode: daemon one-shot RPC, CPU leg as fallback
    # health()["ops"]["encode_jpeg"]["backend"] shows the live backend.
 
 Detection annotation: NV12 via DSP blend, RGB on the software raster
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 

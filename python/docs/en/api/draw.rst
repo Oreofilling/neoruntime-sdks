@@ -74,10 +74,12 @@ Render inference results directly
 
    infer = InferenceClient()
    result = infer.infer("yolov5m_vehicles", frame)
+   rgb = frame.to_rgb()  # materialize the Frame (keep-fd frames cannot draw)
 
    # Accepts an InferenceResult or list[DetectedObject]; draws boxes +
-   # labels + confidence automatically
-   annotated = draw_detections(frame, result)
+   # labels + confidence automatically. Since SDK 0.7.4 an NV12 2D array
+   # itself rides the DSP blend route; RGB arrays take the software raster
+   annotated = draw_detections(rgb, result)
 
 Polygons and tracks (zones / trajectory overlays, dsp-offload P2)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -154,6 +154,8 @@ PendingDspJob
    rgba, x0, y0 = render_overlay_rgba(w, h, boxes, labels, scores, colors)
    annotated = dsp.blend_hw(nv12, [(rgba, x0, y0)])
    # 更省事的入口是 accel 路由器：router.run("draw_detections", nv12, result)
+   # SDK 0.7.4 起 draw_detections(nv12, result) 本身就走这条路由
+   #（RGB 输入仍走软件光栅，keep-fd 帧如实抛错）。
 
    # 契约要点：base 必须是 NV12（vendor op 只写 NV12）。数组走池拷贝
    # 原地合成、返回已标注的 NV12 数组；keep-fd 帧默认**直接拒绝**
@@ -167,7 +169,7 @@ PendingDspJob
    # 不可用时必抛）。
 
 异步作业（submit 后择机 wait，dsp-offload P2）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 

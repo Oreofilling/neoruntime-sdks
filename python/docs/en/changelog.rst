@@ -16,6 +16,52 @@ Documentation
 - Fixed missing and misleading imports in the application examples: added ``import time`` to the multi-model example, ``import json`` to the GenAI example; dropped ``from grpc import RpcError`` from the error-handling example (the SDK raises ``RuntimeError``); removed unused ``numpy`` / ``sys`` imports
 - Synced the Chinese inference page with the English one: translated the seven Usage sections that had been English-only since v0.3.0 (segmentation, OCR, CLIP image embeddings, CLIP text encoding, depth estimation, runtime postprocess-config update, GenAI) and added the ``SegmentationMask`` / ``OcrLine`` / ``Embedding`` / ``DepthMap`` data-type entries
 
+v0.7.4 (2026-09-08)
+-------------------
+
+New Features
+~~~~~~~~~~~~
+
+- **Convenience-layer hardware routing** (sdk-hardware-routing P5): ``color.rgb_to_nv12`` / ``color.nv12_to_rgb`` and ``draw.draw_detections`` (NV12 arrays) ride the accel router's DSP legs by default, degrading to the software impls with accounting when unavailable; ``Frame.to_jpeg_bytes`` is hardware-first for keep-fd frames (zero-copy camera-daemon ``EncodeImage`` import) while in-memory frames keep the direct CPU encode so streaming hot loops pay no extra copy or RPC; software legs bind private impls only — the routing public functions cannot re-enter the router
+- ``Frame.resize``'s DSP fast path now respects the router policy: ``SOFTWARE_ONLY`` skips the attempt, ``HARDWARE_ONLY`` raises on failure (refusing the silent CPU fallback), ``PREFER_HARDWARE`` reports via the new ``AccelRouter.note_degradation()`` (plus a typed ``policy`` property; externally reported fallbacks on unregistered ops stay visible in ``health()`` and fire ``on_degradation``)
+
+Bug Fixes
+~~~~~~~~~
+
+- ``_encode_jpeg_hw`` hardcoded ``fmt="rgb24"``, so every NV12 keep-fd frame submit was rejected by ``_resolve_source`` as a format mismatch; frame-like sources now carry their handle's format
+- ``dsp_format``'s software leg re-entered the router through the routing public functions (cross-op coupling); it now binds the color impls directly
+- unified the color legs' ``ValueError`` contract (ndim / declared dims / even-size checks run before any daemon submit — caller errors no longer land in the degradation counters)
+
+v0.7.3 (2026-09-07)
+-------------------
+
+New Features
+~~~~~~~~~~~~
+
+- **Hardware-first accel router** (``accel`` module): ``AccelRouter`` / ``RoutePolicy`` / ``health()`` degradation accounting + ``on_degradation`` hook / ``get_default_router()``; the default router registers DSP legs for ``resize_nv12`` / ``rgb_to_nv12`` / ``nv12_to_rgb`` / ``encode_jpeg`` / ``draw_detections`` plus the ``nms`` software leg
+- **DSP annotation compositing** (dsp-offload P1): ``DspClient.blend_hw`` composites ARGB32 overlays onto NV12 in place on the DSP; ``draw.render_overlay_rgba`` renders boxes+captions as a minimal straight-alpha canvas reproducing the software raster's output
+- **Async DSP jobs** (dsp-offload P2): every ``*_hw`` op takes ``wait=False`` with ``PendingDspJob`` exposing ``wait()`` / ``done()`` / ``release()``; ``blend_hw`` zero-copy keep-fd chain (refused by default — a state-dependent fatal path on current firmware); ``encode_jpeg_hw`` ``src_buffer_id`` passthrough skips the pixel read-back; keep-fd frame sources skip the ``ascontiguousarray`` pre-copy in the resize/convert legs; polygon and track shapes
+- **Overlay annotation**: ``annotate()`` / ``annotate_result()`` push detections straight to camera-daemon's renderer over the event bus
+- **Color conversion and NMS**: BT.601 limited-range RGB↔NV12 (numpy path when cv2 is missing); cross-class-aware ``postprocess.nms``
+
+Bug Fixes
+~~~~~~~~~
+
+- Finished the inference codec refactor: stray ``self`` in ``_tensor_to_numpy`` / ``_parse_post_result`` broke the respective parse paths; removed the four full method implementations the thin codec delegates silently shadowed; added AST structural meta-tests to catch this class of drift
+
+v0.7.2 (2026-09-03)
+-------------------
+
+Bug Fixes
+~~~~~~~~~
+
+- Stray ``self`` in the ``_parse_infer_response`` codec signature: after the 0.7.0 refactor every ``infer()`` / ``infer_batch()`` call raised ``TypeError``; added a regression test driving a real ``InferResponse``
+
+v0.7.1 (2026-09-03)
+-------------------
+
+- Version aligned with ``setup.py``; no API changes
+
 v0.7.0 (2026-09-02)
 -------------------
 

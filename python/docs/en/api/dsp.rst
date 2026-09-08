@@ -152,7 +152,7 @@ One-shot JPEG encode (snapshot / thumbnail)
    # pipeline start-up).
 
 Annotation blending (detection boxes onto NV12, dsp-offload P1)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
@@ -172,6 +172,9 @@ Annotation blending (detection boxes onto NV12, dsp-offload P1)
    annotated = dsp.blend_hw(nv12, [(rgba, x0, y0)])
    # The accel router is the one-call entry:
    # router.run("draw_detections", nv12, result)
+   # Since SDK 0.7.4 draw_detections(nv12, result) rides that route
+   # itself (RGB input stays on the software raster, keep-fd frames
+   # raise honestly).
 
    # Contract notes: the base must be NV12 (the vendor op writes NV12
    # only). Arrays blend in place on the pool copy — the annotated NV12
@@ -189,7 +192,7 @@ Annotation blending (detection boxes onto NV12, dsp-offload P1)
    # pixels to fall back on — unavailability always raises there).
 
 Async jobs (submit now, wait later — dsp-offload P2)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 

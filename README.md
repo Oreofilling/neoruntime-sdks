@@ -10,6 +10,8 @@ definitions for NeoRuntime applications.
 - `proto/` - source protocol definitions copied from the platform repository
 - `python/` - Python SDK package, examples, tests, and Sphinx documentation
 - `cpp/` - C++ SDK package, examples, tests, CMake config, and Doxygen docs
+- `docs/sdk-module-framework.md` - current cross-language SDK module map and
+  extension rules
 - `.github/workflows/pages.yml` - GitHub Pages documentation publishing
 - `.github/workflows/sync-platform-protos.yml` - platform proto synchronization
 - `.github/workflows/wheel.yml` - SDK release artifact publishing

@@ -91,7 +91,7 @@ JPEG 编码：daemon 一发 RPC，CPU 兜底
    # health()["ops"]["encode_jpeg"]["backend"] 如实反映当前后端。
 
 检测标注：NV12 走 DSP blend，RGB 走软件光栅
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 

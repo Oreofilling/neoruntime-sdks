@@ -27,10 +27,11 @@ The SDK's value proposition is loose components ("散件") an app
 assembles into its own pipeline, not a fixed pipeline object. Every
 per-frame component the SDK ships should therefore answer one question
 uniformly: *is there hardware on this device that already does this?*
-Today that answer is scattered — `Frame.resize` knows about DSP,
-`draw.py` knows about nothing — and apps hard-code whichever path they
-discovered first, so the same app is slow on one device and idle-hardware
-on another.
+Before the router that answer was scattered — `Frame.resize` knew about
+DSP, `draw.py` knew about nothing — and apps hard-coded whichever path
+they discovered first, so the same app was slow on one device and
+idle-hardware on another. Since P5 the convenience layer answers it
+uniformly too: the public entries route themselves.
 
 The router makes the preference declarative and per-device:
 hardware-first with automatic degradation to numpy/cv2, one `health()`
@@ -43,7 +44,8 @@ as the platform exposes them.
 |---|---|---|
 | `AccelRouter` / `RoutePolicy` / `get_default_router()` | `neoruntime_ipc_sdk/accel.py` | register/route/run + degradation counters + `probe()` + `health()`; `HARDWARE_ONLY` policy for strict callers |
 | `OverlayClient.annotate(stream_id, objects)` / `annotate_result()` | `overlay.py` | pushes detections over the event bus into camera-daemon's overlay renderer — zero frame copies in the app |
-| `rgb_to_nv12` / `nv12_to_rgb` (+ BT.601 limited-range, cv2-free numpy path) | `color.py` | software leg for the color-convert op |
+| `rgb_to_nv12` / `nv12_to_rgb` (+ BT.601 limited-range, cv2-free numpy path) | `color.py` | routing public entries since P5; bodies live in `_rgb_to_nv12_impl`/`_nv12_to_rgb_impl`, the software legs the router binds |
+| `draw_detections(image, objects)` | `draw.py` | routing public entry since P5 (NV12 arrays via the router, RGB on `_draw_detections_impl`, keep-fd frames raise the gated-chain error); raster body in `_draw_detections_impl` |
 | `nms(boxes, scores, ...)` | `postprocess.py` | software leg for suppression, cross-class aware |
 | Registered ops | `get_default_router()` | `resize_nv12`, `rgb_to_nv12`, `nv12_to_rgb` (all with live DSP legs via `DspClient`), `nms` (software-only today) |
 | `DspClient.convert_hw(src, dst_fmt, ...)` | `dsp.py` | DSP `CONVERT_FORMAT` leg: equal dims, differing formats, no rects, one dst; `cpu_fallback=False` switch so the router's degradation accounting stays honest (a daemon without the DSP surface raises instead of silently computing on CPU) |
@@ -337,3 +339,24 @@ makes blend/encoder availability boot-dependent:
   chaining included), router dma-buf fast paths, polygon/track shapes,
   gray8 warning cleanup. `resize_nv12`'s dma-buf fast path promised in
   P1 is delivered here. Frame injection remains per its own proposal.
+- **P5 (done 2026-09-08, SDK 0.7.4)** — the convenience layer rides the
+  router: `color.rgb_to_nv12`/`nv12_to_rgb` and `draw.draw_detections`
+  (NV12 arrays) route via `run`; `Frame.to_jpeg_bytes` is
+  hardware-first **only for keep-fd frames** (zero-copy `EncodeImage`
+  leg; frame-aware software leg materializes on fallback) — in-memory
+  frames stay on the direct CPU encode outright, per the S-3 record:
+  the daemon encoder wins on zero-copy import, not raw encode speed,
+  and tight loops (`MjpegStream.push_frame`) must not pay
+  pool-alloc + copy + RPC per frame; `Frame.resize` keeps its direct
+  DSP fast path but now consults `route()`/`policy` — `SOFTWARE_ONLY`
+  skips the attempt, `HARDWARE_ONLY` raises instead of silently
+  degrading, `PREFER_HARDWARE` reports via the new
+  `AccelRouter.note_degradation()` (plus a typed `policy` property;
+  externally reported fallbacks on unregistered ops stay visible in
+  `health()` and fire `on_degradation` like run-path ones). Recursion
+  safety: every software leg binds a private impl (`color._*_impl`,
+  `draw._draw_detections_impl`, frame-aware `_encode_jpeg_sw`,
+  `dsp_format` on the color impls) — no leg can re-enter a routing
+  public function. One leg bug fixed en route: `_encode_jpeg_hw` used
+  to hardcode `fmt="rgb24"`, which `_resolve_source` rejects for NV12
+  keep-fd frames.
