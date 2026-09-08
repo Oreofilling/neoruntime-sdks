@@ -177,8 +177,8 @@ hence quota-first, open-by-opt-in.
 
 Question that had to be settled before any rollout: should the daemon
 hand each app client its own HAL DSP context (per-client `init`), or
-keep one context and multiplex every job through it? Executed on device
-192.168.93.72 with all daemons running (realistic contention). Probe
+keep one context and multiplex every job through it? Executed on the deployed device
+with all daemons running (realistic contention). Probe
 source is archived next to this doc (`dsp_p0_probe.cpp`; poky
 cross-compile command in its header). Buffers were malloc'd USERPTR
 NV12; op under test is `resize` 1920x1080 -> 640x360 bilinear.
@@ -265,7 +265,7 @@ Conclusions folded into
 
 PLAT-1..5 of the [roadmap](hardware-first-roadmap.md) were implemented
 in the platform repo (branch `feat/dsp-service-p0`) and verified on
-192.168.93.72 with all daemons live: a purpose-built client probe
+the deployed device with all daemons live: a purpose-built client probe
 (gRPC `SubmitDspJob` on the control UDS + flat `DSP_ALLOC` /
 `DSP_BUF_RELEASE` fd-passing on the media UDS, both cross-compiled
 against the daemon's own proto) passed **21/21** checks — connects,
@@ -312,7 +312,7 @@ latency (p50 4.8 → 11.1 ms), not on the encoder. Full table in
 
 ## P1 implementation verified on device (2026-09-07)
 
-`DSP_OP_BLEND` (op=4) is live end-to-end on 192.168.93.72: daemon
+`DSP_OP_BLEND` (op=4) is live end-to-end on the deployed device: daemon
 `build_blend` validation chain (base NV12 composited **in place** — dst
 must be the imported base, BLEND alone is allowed an imported dst;
 srcs are the ARGB32 overlays, 1..64, rect w/h == overlay dims, 1:1
@@ -411,7 +411,7 @@ per-connection today: an app holding two connections gets two
 buckets. Recording that honestly rather than pretending otherwise;
 manifest identity is future work alongside a platform-side registry.
 
-### Verified on the live daemon (93.72, 2026-09-07)
+### Verified on the live daemon (2026-09-07)
 
 Async contract (checks 1-3 of the e2e, run inside the parking-lot
 container; every item below observed across multiple runs and two
@@ -472,7 +472,7 @@ Blend, quota, and encode checks:
   composition remain covered by SDK unit tests and the 2026-09-04
   S-3 on-device record.
 
-### Operational finding: the zero-copy blend chain is firmware-fatal
+### Operational finding: the zero-copy blend chain has wedged the DSP (state-dependent)
 
 Three e2e attempts, two device wedges, and one overturned theory —
 recorded in full because the trap is subtle and the failure is
@@ -506,22 +506,60 @@ fresh boot with ~700 MB general CMA free and the media pipeline live.
   blend time while hundreds of MB of general CMA stand free. Reading
   CmaFree to judge media-buffer headroom is a measurement trap.
 
-**Conclusion**: `dsp_blend` on a pool whose contents were produced by
-a RESIZE from an imported (camera dma-buf) source does not return on
-this firmware. The trigger is inside the firmware/idma domain; no
-daemon- or SDK-side fix can make it safe. SDK contract since the
-finding: `blend_hw` **refuses keep-fd bases by default**
+**Conclusion (2026-09-07; revised 2026-09-08 — see the re-test
+below)**: `dsp_blend` on a pool whose contents were produced by
+a RESIZE from an imported (camera dma-buf) source did not return on
+the firmware builds running that day, and wedged the device twice.
+The trigger is inside the firmware/idma domain. SDK contract since
+the finding: `blend_hw` **refuses keep-fd bases by default**
 (`zero_copy=True` forces the chain for post-fix experiments; the
 router's `draw_detections` hardware leg likewise raises for frames
 and stays arrays-only). Array bases — `frame.to_array()` — are the
 proven path (P1 19/19). Vendor engagement on the firmware behavior
-is the prerequisite for ever flipping the default.
+is the prerequisite for ever flipping the default; identifying the
+heap/build state that triggers the wedge (below) is the
+prerequisite for the vendor engagement.
 
 What remains true and verified regardless: keep-fd **RESIZE** on
 imported camera dma-bufs is safe and lossless (the chain's resize leg
 completed in both incidents; a separate 4K 1:1 check measured max
 delta 0), so the router's frame passthrough for resize/convert/
 encode legs keeps its value.
+
+### 2026-09-08 controlled re-test: wedge NOT reproduced
+
+A controlled reproduction attempt on the same device class — fresh
+boot, media heap ~50% free, and a newer deployed HAL build — **failed
+to reproduce the wedge**. Baseline array blend OK (4K NV12, 0.30 s);
+then the forced zero-copy chain (`zero_copy=True`,
+`cpu_fallback=False`) **11/11 passes** at 0.12–0.33 s each, with the
+journal confirming the full op=0 RESIZE → op=4 BLEND chain traffic,
+zero `xrp_wait_for_cmd_completion` lines, zero fatal latches,
+camera-daemon healthy throughout (NRestarts=0), no reboot needed.
+Transient `hailo_media_buf,cma alloc failed` (-12) bursts at
+2025/1013 pages did occur during the runs and self-recovered on
+retry — the chain pressures the media heap but did not wedge it.
+
+What differs from the 2026-09-07 incidents:
+
+- **the deployed HAL build had changed** (the disk library had been
+  swapped again between the incidents and the re-test — the 9/7
+  wedges ran a different build);
+- **the media heap was ~50% free** — both 9/7 incidents were
+  ceiling days per the section below, and the media-pool state was
+  never measured at incident time; the "~700 MB general CMA free"
+  note above is exactly the measurement trap this record documents.
+
+**Revised conclusion**: the wedge is state-dependent — correlated
+with media-heap/idma pressure and/or the deployed HAL build — not an
+unconditional firmware-fatal property of the chain. The SDK default
+(refuse keep-fd bases) stays until the root cause is identified.
+Discriminating experiments left: the same chain under artificial
+`hailo_media_buf` pressure, and the same chain on the 9/7-era HAL
+build. Firmware fingerprint captured for vendor engagement:
+`dsp-fw.elf`, Xtensa ELF with symtab, RI-2023.11 dsp_mercury2 build,
+runtime banner `DSP-FW [5d2a57a7-release]`, md5
+`46782dbb8b4bd4d61be7bd0b41d4f8eb`.
 
 ### Operational finding: media-heap ceiling days vs clean days
 

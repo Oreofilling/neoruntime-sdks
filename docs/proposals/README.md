@@ -3,7 +3,7 @@
 Design proposals for daemon-side capabilities the SDK cannot add on its
 own. None of these are implemented; each captures the app-developer
 need, a proto draft, hardware/code evidence from the platform repo and
-device 192.168.93.72, and a phased rollout so the daemon team can size
+device, and a phased rollout so the daemon team can size
 the work.
 
 | Proposal | Adds | Depends on | Cost |

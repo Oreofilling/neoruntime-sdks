@@ -111,7 +111,7 @@ Format conversion (RGB <-> NV12 / grayscale)
    # the router uses that for honest degradation accounting.
 
    # The firmware pair matrix is device-dependent: measured on hailo15
-   # (93.72) only rgb24 <-> nv12 runs on the DSP — every gray8 pair is
+   # only rgb24 <-> nv12 runs on the DSP — every gray8 pair is
    # refused by the firmware (HAL rc=-2801). With the default
    # cpu_fallback=True such job rejections also fall back to CPU with a
    # warning; last_used_hw=False records the backend actually used.
@@ -227,12 +227,13 @@ Zero-copy blend chain (firmware-defect record: refused by default)
 .. code-block:: python
 
    # blend_hw with a keep-fd frame raises by default — not a missing
-   # capability but a firmware defect: on current hailo15 silicon this
-   # chain **wedged the DSP device-wide** (2/2 on 93.72: 720p, media
-   # pipeline live, 700 MB general CMA free — the blend command simply
-   # never returned; only a reboot recovers; the xrp driver latches
-   # "fatal error, reboot required"). Array bases via frame.to_array()
-   # are the proven, safe path.
+   # capability but a safety gate: this chain **has wedged the DSP
+   # device-wide in the field** (the blend command never returned;
+   # only a reboot recovers; the xrp driver latches "fatal error,
+   # reboot required"). The wedge is state-dependent — 2/2 under
+   # media-heap pressure, 11/11 pass on a healthy heap in a
+   # controlled re-test; root cause open. Array bases via
+   # frame.to_array() are the proven, safe path.
    try:
        annotated = dsp.blend_hw(frame, [(rgba, x0, y0)])
    except DspError:

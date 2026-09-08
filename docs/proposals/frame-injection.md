@@ -31,7 +31,7 @@ to the encoder*.
 The SoC media graph already has a memory-consumer/memory-producer
 injection node wired for exactly this, and it is idle:
 
-- Device 192.168.93.72, probed 2026-08-31 (read-only):
+- Deployed device, probed 2026-08-31 (read-only):
   - `/dev/video10` exists.
   - `media-ctl -d /dev/media0 -p` lists `entity 75:
     hailo-vid-out-mcm-in (1 pad, 1 link)` with its upstream link

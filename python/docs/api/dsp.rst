@@ -104,7 +104,7 @@ PendingDspJob
    # DSP 不可用时默认回落 CPU（UserWarning 提示）；传 cpu_fallback=False
    # 则直接抛 DspError——路由器用它在降级计数里如实记账。
 
-   # 固件支持矩阵与设备相关：hailo15 实测（93.72）仅 rgb24 <-> nv12
+   # 固件支持矩阵与设备相关：hailo15 实测仅 rgb24 <-> nv12
    # 走 DSP，gray8 各组合被固件拒绝（HAL rc=-2801）。默认
    # cpu_fallback=True 下这类"作业被拒"同样回落 CPU 并告警，
    # last_used_hw=False 如实记录实际后端。首次被拒后 SDK 会记住该
@@ -197,10 +197,11 @@ PendingDspJob
 
 .. code-block:: python
 
-   # keep-fd 帧直入 blend_hw 默认抛错——不是能力缺失，而是当前
-   # hailo15 固件上这条链**会挂死整个 DSP**（93.72 两度复现：720p
-   # 主管道在跑、常规 CMA 尚余 700MB，blend 命令提交后固件永不
-   # 返回，设备级卡死，仅重启可恢复；xrp 驱动自判 fatal error）。
+   # keep-fd 帧直入 blend_hw 默认抛错——不是能力缺失，而是安全
+   # 门：这条链在现场**曾两度挂死整个 DSP**（blend 命令提交后
+   # 固件永不返回，设备级卡死，仅重启可恢复；xrp 驱动自判
+   # fatal error。状态依赖：media 堆高压时 2/2 复现，堆健康的
+   # 受控复测 11/11 通过，根因待查）。
    # 数组 base（frame.to_array()）是已验证的安全路径。
    try:
        dsp.blend_hw(frame, [(rgba, x0, y0)])

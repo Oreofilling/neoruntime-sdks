@@ -4,12 +4,12 @@ Status: SDK skeleton **landed 2026-09-04** (`accel.py` router,
 `OverlayClient.annotate`, `color.py` / `postprocess.py` software legs,
 338 tests green); **P1 `DspClient.convert_hw` landed same day** (both
 convert directions registered as DSP hardware legs; verified on-device
-on 93.72 — RGB↔NV12 run on the DSP, the gray8 pairs are firmware-
+on-device — RGB↔NV12 run on the DSP, the gray8 pairs are firmware-
 refused and degrade to CPU; 362 tests green); **P2 S-2 verified
 2026-09-04** — the runtime NMS-tuning chain ships today:
 `detection_threshold` is runtime-tunable for family-function
 postprocess models, `iou_threshold`/`max_boxes` are HEF compile-time
-(verified on 93.72, probes v4-v6); **dsp-offload P2 landed 2026-09-07**
+(verified on-device, probes v4-v6); **dsp-offload P2 landed 2026-09-07**
 — `wait=False` async jobs (`PendingDspJob`), the keep-fd zero-copy
 blend chain, router dma-buf fast paths, and `draw_polygons`/
 `render_overlay_rgba(polygons=, tracks=)` (S-6 record below);
@@ -123,7 +123,7 @@ The `cpu_fallback=False` kwarg (also retrofitted onto
 `resize_hw`/`crop_hw`/`multi_crop_hw`) is what keeps the router's
 degradation counters honest.
 
-On-device verification (93.72, parking_lot 1.2.0 container, 1280×720):
+On-device verification (parking_lot 1.2.0 container, 1280×720):
 `rgb24→nv12` 134 ms and `nv12→rgb24` 74 ms run on the DSP (job charged,
 `last_used_hw=True`); **every gray8 pair is refused by the firmware**
 — `dsp_convert_format` returns a vendor failure that the HAL collapses
@@ -152,7 +152,7 @@ machinery that ships today. The full chain exists end-to-end:
   (`init_post_process`, `model_manager.cpp:313-378`) — a full blob lands
   in the plugin's config verbatim.
 
-On-device ground truth (93.72, hailo15, probes v4-v6 on a fixed test
+On-device ground truth (hailo15, probes v4-v6 on a fixed test
 image with two `vehicle` detections at scores 0.886 / 0.771):
 
 - **`detection_threshold` is runtime-tunable — for family functions
@@ -196,7 +196,7 @@ frames, pool-copied for arrays), complete JPEG bytes in the response, no
 destination buffer, no read-back. `camera.proto` +
 `camera_control_service.cpp` (platform repo) and
 `DspClient.encode_jpeg_hw` + router op `encode_jpeg` (SDK) both verified
-on 93.72.
+on-device.
 
 **Premise correction**: this doc earlier assumed "the platform's own
 thumbnails use the SoC encoder" — hailo15 has **no dedicated JPEG encode
@@ -268,8 +268,8 @@ contract the SDK now depends on, for the record:
 `render_overlay_rgba(frame_w, frame_h, boxes, labels, scores)` → a
 minimal-canvas straight-alpha RGBA overlay → `DspClient.blend_hw(nv12,
 [(rgba, x0, y0)])`, and the router's `draw_detections` op routes NV12
-frames through it (RGB input stays on the software raster). Verified on
-93.72 (19-check e2e: untouched-region byte-identity, hw==CPU-mirror
+frames through it (RGB input stays on the software raster). Verified
+on-device (19-check e2e: untouched-region byte-identity, hw==CPU-mirror
 luma ≤ 16, alpha=0/1 exact passthrough, sub-16 padding, router legs).
 
 Numbers and platform findings live in
@@ -294,9 +294,10 @@ Three additions on the same routing surface:
   1:1 RESIZE onto a fresh pool → in-place BLEND → one `pool.read(0)`;
   with `wait=False` + `encode_jpeg_hw(src_buffer_id=job.buffer_id)`
   the pixels never cross the socket. **Refused by default**: the
-  chain is firmware-fatal on current hailo15 (blend never returns,
-  DSP wedged device-wide 2/2 — see the dsp-offload P2 record), so
-  the default contract is array bases. Router legs pass keep-fd
+  chain has wedged the DSP device-wide in the field (state-dependent
+  — 2/2 under media-heap pressure, 11/11 pass on a healthy heap in
+  the 2026-09-08 controlled re-test; see the dsp-offload P2 record),
+  so the default contract is array bases. Router legs pass keep-fd
   sources through verbatim for resize/convert/encode (no
   `ascontiguousarray` pre-copy) — those are safe and verified; the
   `draw_detections` hardware leg is arrays-only.
@@ -310,7 +311,7 @@ Three additions on the same routing surface:
 Full contract, the `dsp:` daemon config table, verified-on-device
 evidence (async jobs bit-exact, quota enforcement, blend correctness
 + 222 ms timing, keep-fd refusal), and the two operational records —
-the firmware-fatal zero-copy chain and the media-heap ceiling that
+the state-dependent zero-copy chain wedge and the media-heap ceiling that
 makes blend/encoder availability boot-dependent:
 [dsp-offload.md](dsp-offload.md) P2 record.
 
@@ -326,8 +327,8 @@ makes blend/encoder availability boot-dependent:
   family functions; `iou_threshold`/`max_boxes` are HEF compile-time);
   SDK docs/tests landed.
 - **P3 (S-3 done 2026-09-04)** — `EncodeImage` unary RPC on
-  camera-daemon + `encode_jpeg_hw`/router op landed and e2e-verified on
-  93.72 (all legs incl. keep-fd 4K); platform constraints and the
+  camera-daemon + `encode_jpeg_hw`/router op landed and e2e-verified
+  on-device (all legs incl. keep-fd 4K); platform constraints and the
   vendor destroy hazard recorded in the S-3 section. Remaining:
   `draw.py` CPU raster → DSP blend follows dsp-offload P1, frame
   injection per its own proposal.
