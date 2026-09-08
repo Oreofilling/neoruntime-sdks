@@ -148,7 +148,7 @@ class TestInferenceClient:
     def test_parse_infer_response_outputs(self):
         # Regression: _tensor_to_numpy kept a stray `self` after the 0.7.0
         # refactor, so infer() on models returning raw output tensors failed
-        # (seen live on device 93.72 with SDK 0.7.2).
+        # (seen live on a deployed device with SDK 0.7.2).
         from neoruntime_ipc_sdk.proto import inference_pb2
 
         client = InferenceClient()

@@ -264,7 +264,7 @@ class TestRouterLegs:
 class TestJobRejection:
     """The daemon accepted the job but the hardware refused the pair.
 
-    On-device ground truth (93.72, hailo15 firmware): rgb24<->nv12 run on
+    On-device ground truth (hailo15 firmware): rgb24<->nv12 run on
     the DSP; every gray8 pair comes back as a failed job with
     ``HAL rc=-2801``. The client must degrade like any other
     unavailability — and never lie about the backend used.

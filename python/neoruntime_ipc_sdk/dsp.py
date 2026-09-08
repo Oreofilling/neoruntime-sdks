@@ -755,7 +755,7 @@ class DspClient(GrpcClient):
         The bytes are written to a memfd and imported; the daemon maps it
         (USERPTR planes). This bypasses HAL buffer allocation entirely —
         the transport for formats the device HAL refuses to pool-allocate
-        (ARGB32 on 93.72's deployed HAL) while the DSP itself accepts
+        (ARGB32 on some deployed HALs) while the DSP itself accepts
         them. The caller's pixels are copied exactly once into the memfd.
         """
         fd = os.memfd_create("dsp-import")
@@ -1294,12 +1294,12 @@ class DspClient(GrpcClient):
 
         The base must be NV12 (the vendor op writes NV12 only). Arrays
         are copied in. Keep-fd Frame/FrameHandle bases are **refused
-        by default** (``zero_copy=False``): on the current hailo15
-        firmware the import->1:1 RESIZE->BLEND chain is
-        firmware-fatal — the resize completes but the blend command
-        never returns, wedging the DSP device-wide until a reboot
-        (reproduced 2/2 on 93.72 at 720p with the media pipeline
-        live; see docs/proposals/dsp-offload.md P2 record). Pass
+        by default** (``zero_copy=False``): the import->1:1
+        RESIZE->BLEND chain has wedged the DSP device-wide until a
+        reboot in the field — twice, under media-heap pressure; a
+        controlled re-test on a healthy heap passed 11/11, so the
+        wedge is state-dependent and the root cause is still open
+        (see docs/proposals/dsp-offload.md P2 record). Pass
         ``frame.to_array()`` — the array path is the proven one.
         ``zero_copy=True`` forces the chain for experiments on
         future firmware; nothing about it is guaranteed today.
@@ -1323,11 +1323,11 @@ class DspClient(GrpcClient):
         if handle is not None and not zero_copy:
             raise DspError(
                 "blend_hw refuses keep-fd (frame/handle) bases by default: "
-                "on the current hailo15 firmware the import->resize->blend "
-                "chain wedges the DSP device-wide until reboot (reproduced "
-                "2/2 on 93.72). Pass frame.to_array() — the array path is "
-                "the proven one — or zero_copy=True to force the chain at "
-                "your own risk."
+                "the import->resize->blend chain has wedged the DSP "
+                "device-wide until reboot in the field (state-dependent, "
+                "root cause open). Pass frame.to_array() — the array path "
+                "is the proven one — or zero_copy=True to force the chain "
+                "at your own risk."
             )
         _validate_geometry(bw, bh, fmt, "base")
         if not overlays:
@@ -1394,9 +1394,9 @@ class DspClient(GrpcClient):
                     )
                 else:
                     base_pool.write(0, _as_pixels(base))
-                # Overlays travel as memfd imports, not pool allocs: the
-                # deployed HAL on some devices (93.72) rejects ARGB32 pool
-                # allocation (rc=-2809) while the DSP itself blends ARGB
+                # Overlays travel as memfd imports, not pool allocs:
+                # some deployed HALs reject ARGB32 pool allocation
+                # (rc=-2809) while the DSP itself blends ARGB
                 # fine — the daemon maps the memfd as USERPTR planes.
                 ov_srcs: list[_ImportedSource] = []
                 for rgba, _x, _y in prepared:

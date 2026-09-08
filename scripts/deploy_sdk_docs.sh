@@ -57,7 +57,7 @@ Examples:
   ./scripts/deploy_sdk_docs.sh -b
 
   # 部署到远程设备
-  ./scripts/deploy_sdk_docs.sh -t root@192.168.1.100
+  ./scripts/deploy_sdk_docs.sh -t root@device
 
   # 清理后重新构建并部署
   ./scripts/deploy_sdk_docs.sh -c -t root@device

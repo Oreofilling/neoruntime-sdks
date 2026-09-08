@@ -228,9 +228,9 @@ def _draw_detections_hw(
     RGB arrays raise and the router serves them on the software leg
     (round-tripping RGB through two color converts would cost more than
     the raster it offloads). Keep-fd frames raise too: the zero-copy
-    frame blend chain is firmware-fatal on current hailo15 (see
-    ``DspClient.blend_hw``), so the honest router contract is
-    arrays only — call ``frame.to_array()`` first.
+    frame blend chain has wedged the DSP device-wide in the field
+    (state-dependent; see ``DspClient.blend_hw``), so the honest
+    router contract is arrays only — call ``frame.to_array()`` first.
     """
     import numpy as np  # noqa: PLC0415 — keep module import light
 
@@ -239,8 +239,9 @@ def _draw_detections_hw(
     if _frame_like(nv12):
         raise HardwareUnavailable(
             "draw_detections hardware leg takes NV12 arrays, not keep-fd "
-            "frames: the zero-copy frame blend chain is firmware-fatal on "
-            "current hailo15 (DspClient.blend_hw refuses it). Call "
+            "frames: the zero-copy frame blend chain has wedged the DSP "
+            "device-wide in the field (state-dependent; "
+            "DspClient.blend_hw refuses it). Call "
             "frame.to_array() and route the array."
         )
     if nv12.ndim != 2:

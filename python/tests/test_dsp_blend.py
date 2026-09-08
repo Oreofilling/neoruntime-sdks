@@ -3,8 +3,8 @@ draw.render_overlay_rgba and the draw_detections router legs.
 
 Covers: request shape (op, in-place base id, one dst id + placement rect
 per overlay), the hardware ARGB32 wire byte order ([A, R, G, B] per
-pixel), the memfd-import overlay transport (the deployed HAL on 93.72
-refuses ARGB32 pool allocs — overlays ride DSP_IMPORT/USERPTR instead),
+pixel), the memfd-import overlay transport (some deployed HALs
+refuse ARGB32 pool allocs — overlays ride DSP_IMPORT/USERPTR instead),
 the daemon floor (sub-16 overlays padded transparent), copy semantics
 (blend runs on the pool copy — input untouched, result read back from
 the base buffer), the keep-fd base zero-copy chain (import + 1:1 RESIZE
@@ -367,9 +367,10 @@ class TestValidation:
             bw.assert_not_called()
 
     def test_handle_base_refused_by_default(self):
-        # the zero-copy chain is firmware-fatal on current hailo15 (the
-        # blend command never returns; DSP wedged device-wide 2/2 on
-        # 93.72) — the default contract must refuse before any wire work
+        # the zero-copy chain has wedged the DSP device-wide in the
+        # field (state-dependent: 2/2 under media-heap pressure, 11/11
+        # pass on a healthy heap; root cause open) — the default
+        # contract must refuse before any wire work
         from neoruntime_ipc_sdk.frame import FrameHandle
 
         client = DspClient()
@@ -749,8 +750,9 @@ class TestFastPaths:
         accel._rgb_to_nv12_hw(frame)
         accel._nv12_to_rgb_hw(frame)
         accel._encode_jpeg_hw(frame)
-        # frames no longer take the blend leg at all (firmware-fatal
-        # zero-copy chain — DspClient.blend_hw refuses them)
+        # frames no longer take the blend leg at all (the zero-copy
+        # chain has wedged the DSP in the field, state-dependent —
+        # DspClient.blend_hw refuses them)
         with pytest.raises(HardwareUnavailable, match="keep-fd"):
             accel._draw_detections_hw(frame, one_object())
 
