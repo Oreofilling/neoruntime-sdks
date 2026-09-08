@@ -146,7 +146,7 @@ ModelInfo
 
    # 订阅视频流推理结果
    for frame_seq, result in inf.subscribe(
-       stream="cam0_main",
+       stream="main",
        model="person_v1",
        fps=15
    ):
