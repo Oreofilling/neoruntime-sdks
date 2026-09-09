@@ -62,7 +62,7 @@
        def run(self):
            try:
                for frame, result in self.inference.subscribe(
-                   stream="cam0_main", model="person_v1", fps=10
+                   stream="main", model="person_v1", fps=10
                ):
                    if not self.running:
                        break
@@ -91,13 +91,10 @@ Dockerfile
 
    LABEL maintainer="your@email.com"
 
-   # 从公开源码仓库安装 NeoRuntime Python SDK。
-   # SDK 暂未发布到 PyPI。
-   RUN apt-get update \
-       && apt-get install -y --no-install-recommends git \
-       && rm -rf /var/lib/apt/lists/*
+   # 安装 NeoRuntime Python SDK（已发布到 PyPI；锁定版本保证可重复构建，
+   # 升级 SDK 时同步修改此处版本号）
    RUN python -m pip install --no-cache-dir \
-       "git+https://github.com/camthink-ai/neoruntime-sdks.git#subdirectory=python"
+       "neoruntime-ipc-sdk==0.7.4"
 
    WORKDIR /app
    COPY app.py app.yaml /app/
@@ -143,7 +140,9 @@ Dockerfile
 
    如果应用需要额外依赖，可在目录中添加 ``requirements.txt`` 并在 Dockerfile 中加入
    ``RUN pip install -r requirements.txt``。如果需要离线或可重复构建，建议先构建 SDK
-   wheel，将 ``neoruntime_ipc_sdk-*.whl`` 复制进镜像，再安装这个本地 wheel。
+   wheel，将 ``neoruntime_ipc_sdk-*.whl`` 复制进镜像，再安装这个本地 wheel；亦可从
+   源码安装并钉住发布 tag：
+   ``git+https://github.com/camthink-ai/neoruntime-sdks.git@v0.7.4#subdirectory=python``。
 
 .. _app_image_step3:
 
@@ -351,6 +350,13 @@ Web Console 提供了 **6 步应用安装向导**，支持上传镜像文件并�
 - ``cam0_main.raw`` — 原始视频流（通过 SHM 零拷贝）
 - ``cam0_sub.raw`` — 子码流原始视频
 - ``cam0_main`` — 编码视频流（通过 Unix socket）
+
+.. note::
+
+   权限层与 SDK 客户端的流命名不同层：manifest 权限按平台侧命名（如
+   ``cam0_main.raw``）申请；SDK 调用（``FdMediaClient.subscribe`` /
+   ``InferenceClient.subscribe``）按设备实际暴露的流 ID ``main`` / ``sub``
+   订阅。
 
 **AI 推理权限（inference）**
 

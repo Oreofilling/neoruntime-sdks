@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDK 0.7.4 真机测试报告</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --ground: #F5F6F8;
+  --surface: #FFFFFF;
+  --surface-2: #EEF0F4;
+  --ink: #1A1D24;
+  --ink-2: #4C5361;
+  --line: #E1E4EA;
+  --line-strong: #C9CDD6;
+  --accent: #2F4D8F;
+  --accent-ink: #FFFFFF;
+  --pass: #177A48;
+  --pass-soft: #E3F1E9;
+  --ki: #96660A;
+  --ki-soft: #F6EDDA;
+  --err: #B3261E;
+  --err-soft: #F9E7E5;
+  --na: #6E7683;
+  --na-soft: #E9EBEF;
+  --code-bg: #F1F3F6;
+  --shadow: 0 1px 2px rgba(26,29,36,.06), 0 4px 14px rgba(26,29,36,.07);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #14161B;
+    --surface: #1B1E26;
+    --surface-2: #22262F;
+    --ink: #E9EBEF;
+    --ink-2: #98A0AE;
+    --line: #2B303A;
+    --line-strong: #3B4150;
+    --accent: #8AA8E0;
+    --accent-ink: #14161B;
+    --pass: #53C08B;
+    --pass-soft: #1D2E26;
+    --ki: #D6A154;
+    --ki-soft: #2F2718;
+    --err: #E5776B;
+    --err-soft: #33211F;
+    --na: #8A92A0;
+    --na-soft: #23262E;
+    --code-bg: #22262F;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 18px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #14161B;
+  --surface: #1B1E26;
+  --surface-2: #22262F;
+  --ink: #E9EBEF;
+  --ink-2: #98A0AE;
+  --line: #2B303A;
+  --line-strong: #3B4150;
+  --accent: #8AA8E0;
+  --accent-ink: #14161B;
+  --pass: #53C08B;
+  --pass-soft: #1D2E26;
+  --ki: #D6A154;
+  --ki-soft: #2F2718;
+  --err: #E5776B;
+  --err-soft: #33211F;
+  --na: #8A92A0;
+  --na-soft: #23262E;
+  --code-bg: #22262F;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 18px rgba(0,0,0,.35);
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 14px/1.62 "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.mono { font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace; font-variant-numeric: tabular-nums; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 28px 72px; }
+
+/* ---------- header ---------- */
+header.masthead { padding: 42px 0 22px; border-bottom: 2px solid var(--ink); }
+.eyebrow {
+  font: 600 11px/1 "IBM Plex Mono", monospace;
+  letter-spacing: .14em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 14px;
+}
+h1 { font-size: 27px; line-height: 1.25; font-weight: 700; margin: 0 0 6px; letter-spacing: -.01em; text-wrap: balance; }
+.meta { color: var(--ink-2); font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 22px; margin-top: 12px; }
+.meta b { color: var(--ink); font-weight: 600; }
+
+/* ---------- section scaffolding ---------- */
+section { margin-top: 46px; }
+h2 {
+  font-size: 18px; font-weight: 700; margin: 0 0 4px;
+  display: flex; align-items: baseline; gap: 10px;
+}
+h2 .n { font: 600 11px/1 "IBM Plex Mono", monospace; color: var(--accent); letter-spacing: .1em; }
+.sec-note { color: var(--ink-2); font-size: 12.5px; margin: 0 0 16px; }
+
+/* ---------- verdict band ---------- */
+.band { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 4fr); gap: 36px; align-items: start; }
+@media (max-width: 900px) { .band { grid-template-columns: 1fr; } }
+.vbar { display: flex; height: 30px; border-radius: 4px; overflow: hidden; border: 1px solid var(--line-strong); }
+.vbar .seg-pass { background: var(--pass); }
+.vbar .seg-ki  { background: var(--ki); }
+.vbar .seg-na  { background: var(--na); }
+.vbar .seg-err { background: var(--err); min-width: 5px; }
+.vstats { display: flex; flex-wrap: wrap; margin-top: 14px; border-top: 1px solid var(--line); }
+.vstat { padding: 12px 26px 2px 0; }
+.vstat + .vstat { padding-left: 26px; border-left: 1px solid var(--line); }
+.vstat .num { font: 600 30px/1 "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+.vstat .lbl { font-size: 12px; color: var(--ink-2); margin-top: 4px; display: flex; align-items: center; gap: 6px; }
+.vstat.err .num { color: var(--err); }
+.vstat.ki .num { color: var(--ki); }
+.vstat.na .num { color: var(--na); }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.pass { background: var(--pass); } .dot.ki { background: var(--ki); }
+.dot.na { background: var(--na); } .dot.err { background: var(--err); }
+
+/* area distribution — one shared scale */
+.area-chart { border-top: 1px solid var(--line); }
+.area-row { display: grid; grid-template-columns: 128px 1fr 208px; gap: 12px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.area-row .name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.area-row .name small { display: block; font: 400 10.5px/1.3 "IBM Plex Mono", monospace; color: var(--ink-2); font-weight: 400; }
+.track { height: 13px; display: flex; border-radius: 2px; overflow: hidden; background: var(--surface-2); }
+.track i { display: block; height: 100%; }
+.track .s-pass { background: var(--pass); } .track .s-ki { background: var(--ki); }
+.track .s-na { background: var(--na); } .track .s-err { background: var(--err); min-width: 3px; }
+.area-row .nums { font: 500 11.5px/1.5 "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; color: var(--ink-2); text-align: right; white-space: nowrap; }
+.area-row .nums b { color: var(--ink); font-weight: 600; }
+
+/* ---------- findings ---------- */
+.err-card {
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-left: 4px solid var(--err); border-radius: 6px;
+  padding: 20px 22px; box-shadow: var(--shadow);
+}
+.err-card .head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.err-card .head .t { font: 600 15px/1.3 "IBM Plex Mono", monospace; }
+.err-card .why { margin: 12px 0 0; font-size: 13.5px; }
+.err-card pre {
+  margin: 14px 0 0; padding: 12px 14px; background: var(--code-bg);
+  border-radius: 4px; overflow-x: auto;
+  font: 400 11.5px/1.6 "IBM Plex Mono", monospace; color: var(--ink-2);
+  white-space: pre-wrap; word-break: break-all;
+}
+.ev-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.ev-chips span { font: 500 11px/1 "IBM Plex Mono", monospace; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; padding: 5px 8px; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 600 10.5px/1 "IBM Plex Mono", monospace; letter-spacing: .06em;
+  border-radius: 3px; padding: 4px 8px;
+}
+.chip.pass { color: var(--pass); background: var(--pass-soft); }
+.chip.ki   { color: var(--ki);   background: var(--ki-soft); }
+.chip.na   { color: var(--na);   background: var(--na-soft); }
+.chip.err  { color: var(--err);  background: var(--err-soft); }
+
+/* known issues */
+.ki-list { display: grid; gap: 14px; }
+.ki-item { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 16px 18px; }
+.ki-item .reason { font-size: 13.5px; font-weight: 600; line-height: 1.55; }
+.ki-item .cases { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.ki-item .cases li { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 400 12px/1.6 "IBM Plex Mono", monospace; color: var(--ink-2); }
+.ki-item .cases li b { color: var(--ink); font-weight: 500; }
+
+/* ---------- matrix ---------- */
+.controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 14px; }
+.fchips { display: flex; gap: 6px; }
+.fchip {
+  font: 600 11px/1 "IBM Plex Mono", monospace; letter-spacing: .04em;
+  border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--ink-2); border-radius: 999px; padding: 7px 12px;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+}
+.fchip .dot { width: 7px; height: 7px; }
+.fchip[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.fchip:focus-visible, .area-sel:focus-visible, .search:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.area-sel, .search {
+  font: 400 12.5px/1 "IBM Plex Sans", sans-serif; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: 5px; padding: 8px 10px;
+}
+.search { flex: 1; min-width: 170px; max-width: 330px; }
+.count { font: 500 11.5px/1 "IBM Plex Mono", monospace; color: var(--ink-2); margin-left: auto; white-space: nowrap; }
+
+.matrix-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table.matrix { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.matrix th {
+  position: sticky; top: 0; text-align: left; z-index: 1;
+  font: 600 10.5px/1 "IBM Plex Mono", monospace; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink-2); background: var(--surface-2);
+  padding: 9px 12px; border-bottom: 1px solid var(--line-strong);
+}
+table.matrix td { padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.matrix tr:last-child td { border-bottom: 0; }
+td.c-id { font: 500 11.5px/1.5 "IBM Plex Mono", monospace; white-space: nowrap; }
+td.c-id small { display: block; color: var(--ink-2); font-weight: 400; font-size: 10.5px; }
+td.c-if { font: 400 11.5px/1.5 "IBM Plex Mono", monospace; color: var(--ink-2); word-break: break-all; max-width: 330px; }
+td.c-ms { font: 500 11.5px/1.5 "IBM Plex Mono", monospace; text-align: right; white-space: nowrap; color: var(--ink-2); }
+td.c-note { color: var(--ink-2); max-width: 360px; }
+td.c-note .m { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+tr.is-err td { background: var(--err-soft); }
+tr.is-ki td.c-id, tr.is-ki td.c-if { color: var(--ink); }
+
+/* ---------- timeline ---------- */
+.timeline { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--line-strong); }
+.timeline li { position: relative; padding: 0 0 22px 26px; }
+.timeline li:last-child { padding-bottom: 2px; }
+.timeline li::before {
+  content: ""; position: absolute; left: -6px; top: 5px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--ground);
+}
+.timeline .t { font: 600 11.5px/1 "IBM Plex Mono", monospace; color: var(--accent); display: block; margin-bottom: 6px; }
+.timeline p { margin: 0; font-size: 13.5px; }
+
+/* ---------- coverage + env ---------- */
+.duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 36px; align-items: start; }
+@media (max-width: 900px) { .duo { grid-template-columns: 1fr; } }
+.cov-headline { font-size: 13.5px; margin: 0 0 12px; }
+.cov-headline b { font: 600 20px/1 "IBM Plex Mono", monospace; }
+table.cov { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.cov td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); }
+table.cov td:last-child { text-align: right; font: 500 11.5px/1.4 "IBM Plex Mono", monospace; white-space: nowrap; color: var(--ink-2); }
+table.cov .covbar { height: 5px; border-radius: 2px; background: var(--surface-2); position: relative; min-width: 64px; }
+table.cov .covbar i { position: absolute; inset: 0 auto 0 0; background: var(--pass); border-radius: 2px; }
+table.cov tr.zero .covbar i { background: var(--na); }
+dl.env { display: grid; grid-template-columns: max-content 1fr; gap: 7px 18px; margin: 0; font-size: 12.5px; }
+dl.env dt { color: var(--ink-2); white-space: nowrap; }
+dl.env dd { margin: 0; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; word-break: break-all; }
+.sock-list { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 2px; }
+.sock-list span { font: 400 10.5px/1 "IBM Plex Mono", monospace; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; padding: 4px 7px; }
+
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line-strong); color: var(--ink-2); font-size: 12.5px; }
+footer code { font: 400 11px/1.5 "IBM Plex Mono", monospace; background: var(--code-bg); border-radius: 3px; padding: 2px 6px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  table.matrix tbody tr:hover td { background: var(--surface-2); }
+  table.matrix tbody tr.is-err:hover td { background: var(--err-soft); }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div class="eyebrow">NEORUNTIME IPC SDK · DEVICE RUN</div>
+  <h1>SDK 0.7.4 真机接口测试报告</h1>
+  <div class="meta">
+    <span>目标设备 <b class="mono">aarch64 · hailo15</b></span>
+    <span>Python <b class="mono" id="m-python"></b></span>
+    <span>执行 <b class="mono" id="m-date"></b>(设备时间 GMT)</span>
+    <span>14 个模块 · 每模块独立进程 + 看门狗</span>
+  </div>
+</header>
+
+<section id="sec-overview">
+  <h2>总览</h2>
+  <p class="sec-note">192 个用例覆盖 14 个区域;唯一 ERROR 的归因见下一节,已知问题按根因归组为 6 项。</p>
+  <div class="band">
+    <div>
+      <div class="vbar" id="vbar"></div>
+      <div class="vstats" id="vstats"></div>
+    </div>
+    <div class="area-chart" id="area-chart"></div>
+  </div>
+</section>
+
+<section id="sec-findings">
+  <h2>需要跟进的结论</h2>
+  <p class="sec-note">先看要动手的,再看全量矩阵。</p>
+  <div id="err-cards"></div>
+  <div class="ki-list" id="ki-list" style="margin-top:18px"></div>
+</section>
+
+<section id="sec-matrix">
+  <h2>接口 × 结论矩阵</h2>
+  <p class="sec-note">全量 192 行,按结论 / 区域 / 关键词过滤;备注列为现场证据摘要。</p>
+  <div class="controls">
+    <div class="fchips" id="fchips"></div>
+    <select class="area-sel" id="area-sel" aria-label="按区域过滤"></select>
+    <input class="search" id="search" type="search" placeholder="搜索用例 / 接口 / 备注…" aria-label="搜索矩阵">
+    <span class="count" id="count"></span>
+  </div>
+  <div class="matrix-scroll">
+    <table class="matrix">
+      <thead><tr><th>用例</th><th>接口</th><th>结论</th><th style="text-align:right">耗时</th><th>备注</th></tr></thead>
+      <tbody id="matrix-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="sec-ops">
+  <h2>环境事件与恢复记录</h2>
+  <p class="sec-note">本轮执行期间目标设备上发生的 daemon 级事件与恢复动作,时间为设备时钟(GMT)。</p>
+  <ol class="timeline" id="timeline"></ol>
+</section>
+
+<section id="sec-cov">
+  <h2>覆盖率与环境</h2>
+  <div class="duo" style="margin-top:14px">
+    <div>
+      <p class="cov-headline" id="cov-headline"></p>
+      <table class="cov"><tbody id="cov-body"></tbody></table>
+    </div>
+    <div>
+      <dl class="env" id="env-dl"></dl>
+    </div>
+  </div>
+</section>
+
+<footer id="footer"></footer>
+</div>
+
+<script>
+const D = {"generated":"2026-09-09T00:57:43+00:00","sdk":{"version":"0.7.4","module_path":"/data/venv-sdk/lib/python3.10/site-packages/neoruntime_ipc_sdk"},"node":{"uname":"Linux hailo15 5.15.32-yocto-standard-g7919a266e480 #1 SMP PREEMPT Thu Jun 18 14:27:53 UTC 2026 aarch64 aarch64","machine":"aarch64","python":"3.10.15","os_release":""},"sockets":{"/run/aipc/ai-runtime.sock":{"size":0},"/run/aipc/app-manager.sock":{"size":0},"/run/aipc/camera-control.sock":{"size":0},"/run/aipc/camera.sock":{"size":0},"/run/aipc/device-control.sock":{"size":0},"/run/aipc/device-discovery.sock":{"size":0},"/run/aipc/encoded/audio_capture.sock":{"size":0},"/run/aipc/encoded/main.sock":{"size":0},"/run/aipc/encoded/sub.sock":{"size":0},"/run/aipc/encoded/third.sock":{"size":0},"/run/aipc/event-bus.sock":{"size":0},"/run/aipc/platform-api.sock":{"size":0}},"models":[{"path":"/data/aipc-data/models/blobs","size_bytes":4096},{"path":"/data/aipc-data/models/classification","size_bytes":4096},{"path":"/data/aipc-data/models/clip","size_bytes":4096},{"path":"/data/aipc-data/models/depth","size_bytes":4096},{"path":"/data/aipc-data/models/detection","size_bytes":4096},{"path":"/data/aipc-data/models/genai","size_bytes":4096},{"path":"/data/aipc-data/models/hailort.log","size_bytes":0},{"path":"/data/aipc-data/models/keypoint","size_bytes":4096},{"path":"/data/aipc-data/models/ocr","size_bytes":4096},{"path":"/data/aipc-data/models/runtime","size_bytes":4096},{"path":"/data/aipc-data/models/segmentation","size_bytes":4096},{"path":"/data/aipc-data/models/yolo_world_v2s.hef","size_bytes":27607040},{"path":"/data/aipc-data/models/yolo_world_v2s_540.hef","size_bytes":25092096},{"path":"/data/aipc-data/models/yolo_world_v2s_540.json","size_bytes":1013}],"summary":{"total":192,"verdicts":{"PASS":159,"KNOWN-ISSUE":12,"SKIP-NA":20,"ERROR":1},"wallS":96.3,"modules":14},"areas":[{"key":"env","title":"环境勘探","counts":{"PASS":8,"KNOWN-ISSUE":0,"SKIP-NA":0,"ERROR":0}},{"key":"inference","title":"推理","counts":{"PASS":9,"KNOWN-ISSUE":5,"SKIP-NA":1,"ERROR":0}},{"key":"genai","title":"推理 GenAI","counts":{"PASS":1,"KNOWN-ISSUE":0,"SKIP-NA":3,"ERROR":0}},{"key":"media","title":"媒体 fd","counts":{"PASS":14,"KNOWN-ISSUE":0,"SKIP-NA":0,"ERROR":0}},{"key":"events","title":"事件","counts":{"PASS":10,"KNOWN-ISSUE":0,"SKIP-NA":0,"ERROR":0}},{"key":"device","title":"设备控制","counts":{"PASS":23,"KNOWN-ISSUE":1,"SKIP-NA":8,"ERROR":0}},{"key":"camera","title":"相机","counts":{"PASS":28,"KNOWN-ISSUE":0,"SKIP-NA":5,"ERROR":0}},{"key":"dsp","title":"DSP","counts":{"PASS":9,"KNOWN-ISSUE":0,"SKIP-NA":0,"ERROR":1}},{"key":"audio","title":"音频","counts":{"PASS":8,"KNOWN-ISSUE":1,"SKIP-NA":1,"ERROR":0}},{"key":"overlay","title":"叠加","counts":{"PASS":6,"KNOWN-ISSUE":0,"SKIP-NA":0,"ERROR":0}},{"key":"app","title":"应用","counts":{"PASS":0,"KNOWN-ISSUE":5,"SKIP-NA":2,"ERROR":0}},{"key":"plugin","title":"插件","counts":{"PASS":8,"KNOWN-ISSUE":0,"SKIP-NA":0,"ERROR":0}},{"key":"toolkit","title":"工具箱","counts":{"PASS":21,"KNOWN-ISSUE":0,"SKIP-NA":0,"ERROR":0}},{"key":"recording_web","title":"录制/Web","counts":{"PASS":14,"KNOWN-ISSUE":0,"SKIP-NA":0,"ERROR":0}}],"coverage":{"rows":[{"cls":"Frame","hit":7,"total":7},{"cls":"HlsWriter","hit":2,"total":2},{"cls":"MjpegStream","hit":5,"total":5},{"cls":"PluginEndpoint","hit":1,"total":1},{"cls":"PluginServer","hit":4,"total":4},{"cls":"PrerollBuffer","hit":2,"total":2},{"cls":"InferenceClient","hit":19,"total":21},{"cls":"AccelRouter","hit":7,"total":8},{"cls":"FdMediaClient","hit":7,"total":8},{"cls":"CameraClient","hit":44,"total":51},{"cls":"PluginDiscovery","hit":6,"total":7},{"cls":"DeviceClient","hit":41,"total":48},{"cls":"AppClient","hit":11,"total":13},{"cls":"AudioClient","hit":10,"total":12},{"cls":"EventClient","hit":9,"total":11},{"cls":"DspClient","hit":7,"total":9},{"cls":"OverlayClient","hit":6,"total":8},{"cls":"InferenceResult","hit":2,"total":3},{"cls":"AudioStreamClient","hit":2,"total":4},{"cls":"TsWriter","hit":1,"total":2},{"cls":"Config","hit":3,"total":12},{"cls":"EncodedStreamClient","hit":1,"total":4},{"cls":"DspBufferPool","hit":0,"total":4}],"covered":197,"total":246},"knownIssues":[{"reason":"update_postprocess_config: daemon answers -2 for documented keys (detection_threshold/iou_threshold) — the same call worked against the 2026-08-28 patched daemon, so this is a daemon-deployment regression, not an SDK contract change","cases":[{"id":"test_06_update_postprocess_config","iface":"InferenceClient.update_postprocess_config","ms":5.47,"error":"RuntimeError: UpdatePostprocessConfig failed: Failed to update config: -2"}]},{"reason":"infer family: daemon-side failure -2799 on every call (both models probed 2026-09-09, registration fine, frames fine — ai-runtime deployment regression)","cases":[{"id":"test_01_infer","iface":"InferenceClient.infer","ms":370.91,"error":"RuntimeError: Inference failed: Inference failed: -2799"},{"id":"test_02_infer_async","iface":"InferenceClient.infer_async","ms":343.89,"error":"RuntimeError: Inference failed: Inference failed: -2799"}]},{"reason":"subscribe: frames arrive but every inference fails -2814 (HAL_ERR_INVALID_ARG) against the ai-runtime build deployed 2026-09-08; SDK raises RuntimeError after 10 consecutive failed frames","cases":[{"id":"test_01_subscribe","iface":"InferenceClient.subscribe","ms":1821.38,"error":"RuntimeError: Stream inference failed 10 consecutive times (stream='main', model='sdk-test-yolo', last frame=4258215): 'Inference failed: -2814'"},{"id":"test_02_subscribe_result_helpers","iface":"InferenceResult.count_by_label/get_objects_by_label","ms":1824.01,"error":"RuntimeError: Stream inference failed 10 consecutive times (stream='main', model='sdk-test-yolo', last frame=4258353): 'Inference failed: -2814'"}]},{"reason":"SDK 0.7.4 defect: no bundled device_pb2 message carries ir_led_on, and device.py reads response.ir_led_on unconditionally when building DeviceStatus — the call raises AttributeError even against a healthy daemon (verified locally against the wheel's proto descriptors; SDK-side, fix = guard the field)","cases":[{"id":"test_01_get_device_status","iface":"DeviceClient.get_device_status","ms":77.59,"error":"AttributeError: ir_led_on"}]},{"reason":"daemon writes the video EncHeader layout on audio_capture.sock (rate=0/ch=0, video dts in the tail) — SDK decode_audio_format compensates, so audio params arrive unknown","cases":[{"id":"test_03_frame_carries_audio_layout","iface":"AudioStreamClient frame audio-layout fields","ms":12.71,"error":"AssertionError: 0 not greater than 0 : audio frames carry no sample_rate — video-layout defect still present daemon-side"}]},{"reason":"SDK 0.7.4: app_pb2 lacks Empty, AppClient RPCs raise AttributeError client-side (app.py app_pb2.Empty())","cases":[{"id":"test_01_list_apps","iface":"AppClient.list_apps","ms":33.59,"error":"AttributeError: module 'neoruntime_ipc_sdk.proto.app_pb2' has no attribute 'Empty'"},{"id":"test_03_get_app","iface":"AppClient.get_app","ms":0.8,"error":"AttributeError: module 'neoruntime_ipc_sdk.proto.app_pb2' has no attribute 'Empty'"},{"id":"test_04_get_app_stats","iface":"AppClient.get_app_stats","ms":0.87,"error":"AttributeError: module 'neoruntime_ipc_sdk.proto.app_pb2' has no attribute 'Empty'"},{"id":"test_05_get_logs","iface":"AppClient.get_logs","ms":0.84,"error":"AttributeError: module 'neoruntime_ipc_sdk.proto.app_pb2' has no attribute 'Empty'"},{"id":"test_06_get_logs_text","iface":"AppClient.get_logs_text","ms":0.88,"error":"AttributeError: module 'neoruntime_ipc_sdk.proto.app_pb2' has no attribute 'Empty'"}]}],"opsNotes":["2026-09-09 00:57–01:39(设备时间 GMT,下同):首轮全套件执行;camera-daemon 在 test_41 的 pipeline 重配置路径进入级联死锁(本次触发点 set_transform):该 RPC 60s 挂死,后续管线 RPC 挂死或快速失败,GetStreamStatus 报 0 编码流;非管线 RPC(LED/IRCUT/风扇/告警)保持应答。","级联死锁后 systemctl restart 卡 final-sigkill(残留 D 状态线程对 SIGKILL 免疫,主进程僵尸化),只能整机重启恢复;第一次重启后 daemon 以持久化 rotation=1 启动(竖屏 2160x3840,与载荷不匹配),手工将 transform_config.json 改回 rotation=0 并重启 camera-daemon 恢复 3840x2160。","02:05 复测轮再次级联(触发点变为 reconfigure_encoder 挂死 60s;随后 add_stream/privacy_mask/backup_profile 超时、set_osd 快速失败);restart rc=124 → 第二次整机重启(~02:21)后干净恢复(rotation=0,无需手工修),帧流验证 3840x2160。","级联余波期间编码器退化:240 帧仅 45,496 B(约 190 B/帧,健康基线约 33 KB/帧)且零关键帧标志 —— HlsWriter 用例当时因此 ERROR;第二次重启后编码器恢复(301 帧含 10 关键帧),复测 PASS。","02:36 干净状态下再次执行 test_41 未触发级联:28 PASS/5 NA、12.3s 完成 —— 级联为状态/竞态依赖(当日 4 次执行 3 次触发);set_osd 两次在级联余波中快速失败、干净状态下通过,同为状态依赖,非确定性缺陷。","switch_profile 被 daemon 策略拒绝(PERMISSION_DENIED: profile not in switch allowlist),backup_profile 本身成功 —— 记 SKIP-NA(策略门,非缺陷)。","本轮全部 14 模块报告取自 2026-09-09 同一设备、同一 SDK 0.7.4 安装;test_41/50/51 为最终复测版,其余为首轮版(两轮结论一致的模块未复测)。"],"cases":[{"id":"test_01_version","cls":"T01SdkIdentity","area":"env","iface":"__version__","verdict":"PASS","ms":0.99,"note":""},{"id":"test_02_module_path","cls":"T01SdkIdentity","area":"env","iface":"package import","verdict":"PASS","ms":0.95,"note":""},{"id":"test_01_endpoint_getters","cls":"T02ConfigEndpoints","area":"env","iface":"Config.get_*_endpoint","verdict":"PASS","ms":1.17,"note":""},{"id":"test_02_path_helpers","cls":"T02ConfigEndpoints","area":"env","iface":"Config.get_host_prefix/translate_path_to_host","verdict":"PASS","ms":1.28,"note":""},{"id":"test_03_app_id","cls":"T02ConfigEndpoints","area":"env","iface":"Config.get_app_id","verdict":"PASS","ms":1.05,"note":""},{"id":"test_01_required_sockets","cls":"T03DaemonsAndSockets","area":"env","iface":"/run/aipc sockets","verdict":"PASS","ms":2.54,"note":""},{"id":"test_02_model_inventory","cls":"T03DaemonsAndSockets","area":"env","iface":"model inventory","verdict":"PASS","ms":1.06,"note":""},{"id":"test_03_scratch_dir","cls":"T03DaemonsAndSockets","area":"env","iface":"scratch dir","verdict":"PASS","ms":1.0,"note":""},{"id":"test_01_connect_close","cls":"T01Lifecycle","area":"inference","iface":"InferenceClient.connect/connected","verdict":"PASS","ms":9.49,"note":""},{"id":"test_02_register_model","cls":"T01Lifecycle","area":"inference","iface":"InferenceClient.register_model","verdict":"PASS","ms":8.41,"note":""},{"id":"test_03_list_models","cls":"T01Lifecycle","area":"inference","iface":"InferenceClient.list_models","verdict":"PASS","ms":6.88,"note":""},{"id":"test_04_get_model_info","cls":"T01Lifecycle","area":"inference","iface":"InferenceClient.get_model_info","verdict":"PASS","ms":5.37,"note":""},{"id":"test_05_get_stats","cls":"T01Lifecycle","area":"inference","iface":"InferenceClient.get_stats","verdict":"PASS","ms":550.12,"note":""},{"id":"test_06_update_postprocess_config","cls":"T01Lifecycle","area":"inference","iface":"InferenceClient.update_postprocess_config","verdict":"KNOWN-ISSUE","ms":5.47,"note":"update_postprocess_config: daemon answers -2 for documented keys (detection_threshold/iou_threshold) — the same call worked against the 2026-08-28 patched daemon, so this is a daemon-deployment regression, not an SDK con","error":"RuntimeError: UpdatePostprocessConfig failed: Failed to update config: -2"},{"id":"test_07_unregister_model","cls":"T01Lifecycle","area":"inference","iface":"InferenceClient.unregister_model","verdict":"PASS","ms":16.47,"note":""},{"id":"test_01_infer","cls":"T02Infer","area":"inference","iface":"InferenceClient.infer","verdict":"KNOWN-ISSUE","ms":370.91,"note":"infer family: daemon-side failure -2799 on every call (both models probed 2026-09-09, registration fine, frames fine — ai-runtime deployment regression)","error":"RuntimeError: Inference failed: Inference failed: -2799"},{"id":"test_02_infer_async","cls":"T02Infer","area":"inference","iface":"InferenceClient.infer_async","verdict":"KNOWN-ISSUE","ms":343.89,"note":"infer family: daemon-side failure -2799 on every call (both models probed 2026-09-09, registration fine, frames fine — ai-runtime deployment regression)","error":"RuntimeError: Inference failed: Inference failed: -2799"},{"id":"test_03_infer_batch","cls":"T02Infer","area":"inference","iface":"InferenceClient.infer_batch","verdict":"PASS","ms":723.93,"note":""},{"id":"test_04_infer_batch_async","cls":"T02Infer","area":"inference","iface":"InferenceClient.infer_batch_async","verdict":"PASS","ms":350.74,"note":""},{"id":"test_05_infer_with_tensors","cls":"T02Infer","area":"inference","iface":"InferenceClient.infer_with_tensors","verdict":"SKIP-NA","ms":78.58,"note":"model info exposes no input metadata to build tensors","error":""},{"id":"test_01_subscribe","cls":"T03Subscribe","area":"inference","iface":"InferenceClient.subscribe","verdict":"KNOWN-ISSUE","ms":1821.38,"note":"subscribe: frames arrive but every inference fails -2814 (HAL_ERR_INVALID_ARG) against the ai-runtime build deployed 2026-09-08; SDK raises RuntimeError after 10 consecutive failed frames","error":"RuntimeError: Stream inference failed 10 consecutive times (stream='main', model='sdk-test-yolo', last frame=4258215): 'Inference failed: -2814'"},{"id":"test_02_subscribe_result_helpers","cls":"T03Subscribe","area":"inference","iface":"InferenceResult.count_by_label/get_objects_by_label","verdict":"KNOWN-ISSUE","ms":1824.01,"note":"subscribe: frames arrive but every inference fails -2814 (HAL_ERR_INVALID_ARG) against the ai-runtime build deployed 2026-09-08; SDK raises RuntimeError after 10 consecutive failed frames","error":"RuntimeError: Stream inference failed 10 consecutive times (stream='main', model='sdk-test-yolo', last frame=4258353): 'Inference failed: -2814'"},{"id":"test_01_create_destroy_session","cls":"T04Sessions","area":"inference","iface":"InferenceClient.create_session/destroy_session","verdict":"PASS","ms":15.0,"note":""},{"id":"test_01_encode_text","cls":"T01GenAI","area":"genai","iface":"InferenceClient.encode_text","verdict":"PASS","ms":1916.63,"note":""},{"id":"test_02_session_create","cls":"T01GenAI","area":"genai","iface":"InferenceClient.genai_create_session","verdict":"SKIP-NA","ms":0.9,"note":"no GenAI model found in /data/aipc-data/models","error":""},{"id":"test_03_generate","cls":"T01GenAI","area":"genai","iface":"InferenceClient.genai_generate","verdict":"SKIP-NA","ms":1.47,"note":"no GenAI model found in /data/aipc-data/models","error":""},{"id":"test_04_abort","cls":"T01GenAI","area":"genai","iface":"InferenceClient.genai_abort","verdict":"SKIP-NA","ms":1.21,"note":"no GenAI model found in /data/aipc-data/models","error":""},{"id":"test_01_list_streams","cls":"T01Streams","area":"media","iface":"FdMediaClient.list_streams","verdict":"PASS","ms":1.27,"note":""},{"id":"test_02_get_rtsp_url","cls":"T01Streams","area":"media","iface":"FdMediaClient.get_rtsp_url","verdict":"PASS","ms":0.91,"note":""},{"id":"test_01_get_frame","cls":"T02Frame","area":"media","iface":"FdMediaClient.get_frame","verdict":"PASS","ms":69.41,"note":""},{"id":"test_02_frame_data_to_array","cls":"T02Frame","area":"media","iface":"Frame.data/to_array","verdict":"PASS","ms":38.64,"note":""},{"id":"test_03_to_rgb","cls":"T02Frame","area":"media","iface":"Frame.to_rgb","verdict":"PASS","ms":68.89,"note":""},{"id":"test_04_crop","cls":"T02Frame","area":"media","iface":"Frame.crop","verdict":"PASS","ms":24.87,"note":""},{"id":"test_05_resize","cls":"T02Frame","area":"media","iface":"Frame.resize","verdict":"PASS","ms":54.46,"note":""},{"id":"test_06_to_jpeg_bytes_and_save","cls":"T02Frame","area":"media","iface":"Frame.to_jpeg_bytes/save","verdict":"PASS","ms":1437.19,"note":""},{"id":"test_07_get_frame_keep_fd","cls":"T02Frame","area":"media","iface":"FdMediaClient.get_frame(keep_fd=True)/FrameHandle","verdict":"PASS","ms":45.87,"note":""},{"id":"test_08_frame_release","cls":"T02Frame","area":"media","iface":"Frame.release","verdict":"PASS","ms":19.4,"note":""},{"id":"test_01_subscribe_raw","cls":"T03Subscribe","area":"media","iface":"FdMediaClient.subscribe_raw/subscribe","verdict":"PASS","ms":179.2,"note":""},{"id":"test_02_on_frame_thread","cls":"T03Subscribe","area":"media","iface":"FdMediaClient.on_frame","verdict":"PASS","ms":98.72,"note":""},{"id":"test_01_get_encoded_stream_frames","cls":"T04Encoded","area":"media","iface":"FdMediaClient.get_encoded_stream/EncodedStreamClient","verdict":"PASS","ms":40.73,"note":""},{"id":"test_02_encoded_subscribe","cls":"T04Encoded","area":"media","iface":"EncodedStreamClient.subscribe","verdict":"PASS","ms":158.93,"note":""},{"id":"test_01_publish_subscribe_roundtrip","cls":"T01PubSub","area":"events","iface":"EventClient.publish/subscribe roundtrip","verdict":"PASS","ms":516.57,"note":""},{"id":"test_02_event_fields","cls":"T01PubSub","area":"events","iface":"Event dataclass fields","verdict":"PASS","ms":511.51,"note":""},{"id":"test_03_subscribe_generator","cls":"T01PubSub","area":"events","iface":"EventClient.subscribe (iterator)","verdict":"PASS","ms":10015.57,"note":""},{"id":"test_04_publish_batch","cls":"T01PubSub","area":"events","iface":"EventClient.publish_batch","verdict":"PASS","ms":515.26,"note":""},{"id":"test_05_subscribe_filters","cls":"T01PubSub","area":"events","iface":"EventClient.subscribe/on_event filters","verdict":"PASS","ms":1025.98,"note":""},{"id":"test_06_list_topics","cls":"T01PubSub","area":"events","iface":"EventClient.list_topics","verdict":"PASS","ms":4.45,"note":""},{"id":"test_07_get_topic_info","cls":"T01PubSub","area":"events","iface":"EventClient.get_topic_info","verdict":"PASS","ms":4.71,"note":""},{"id":"test_08_get_stats","cls":"T01PubSub","area":"events","iface":"EventClient.get_stats","verdict":"PASS","ms":3.66,"note":""},{"id":"test_09_get_topic_stats","cls":"T01PubSub","area":"events","iface":"EventClient.get_topic_stats","verdict":"PASS","ms":3.67,"note":""},{"id":"test_10_unsubscribe","cls":"T01PubSub","area":"events","iface":"EventClient.unsubscribe","verdict":"PASS","ms":5.04,"note":""},{"id":"test_01_get_device_status","cls":"T01Readonly","area":"device","iface":"DeviceClient.get_device_status","verdict":"KNOWN-ISSUE","ms":77.59,"note":"SDK 0.7.4 defect: no bundled device_pb2 message carries ir_led_on, and device.py reads response.ir_led_on unconditionally when building DeviceStatus — the call raises AttributeError even against a healthy daemon (verifie","error":"AttributeError: ir_led_on"},{"id":"test_02_get_lens_status","cls":"T01Readonly","area":"device","iface":"DeviceClient.get_lens_status","verdict":"PASS","ms":10.27,"note":""},{"id":"test_03_get_autofocus_status","cls":"T01Readonly","area":"device","iface":"DeviceClient.get_autofocus_status","verdict":"PASS","ms":7.93,"note":""},{"id":"test_04_get_af_measurement","cls":"T01Readonly","area":"device","iface":"DeviceClient.get_af_measurement","verdict":"SKIP-NA","ms":3.72,"note":"lens HAL bridge: <_InactiveRpcError of RPC that terminated with:\n\tstatus = StatusCode.UNKNOWN\n\tdetails = \"GetAfMeasurement: not yet supported by lens HAL bridge\"\n\tdebug_error_string = \"UNKNOWN:GetAfMeasurement: not yet s","error":""},{"id":"test_05_gpio_get","cls":"T01Readonly","area":"device","iface":"DeviceClient.gpio_get","verdict":"SKIP-NA","ms":11.81,"note":"no readable GPIO pins: {'pin0': '_InactiveRpcError: <_InactiveRpcError of RPC that terminated with:\\n\\tstatus = StatusCode.NOT_FOUND\\n\\tdetails = \"pin 0 is not in the GPIO catalog\"\\n\\tdebug_error_string = \"NOT_FOUND:pin ","error":""},{"id":"test_06_get_wiegand_out","cls":"T01Readonly","area":"device","iface":"DeviceClient.get_wiegand_out","verdict":"PASS","ms":8.25,"note":""},{"id":"test_07_subscribe_events","cls":"T01Readonly","area":"device","iface":"DeviceClient.subscribe_events","verdict":"PASS","ms":5002.68,"note":""},{"id":"test_01_set_white_light","cls":"T02Lights","area":"device","iface":"DeviceClient.set_white_light","verdict":"PASS","ms":37.55,"note":""},{"id":"test_02_set_ir_led","cls":"T02Lights","area":"device","iface":"DeviceClient.set_ir_led","verdict":"PASS","ms":16.75,"note":""},{"id":"test_03_set_ircut","cls":"T02Lights","area":"device","iface":"DeviceClient.set_ircut","verdict":"PASS","ms":924.8,"note":""},{"id":"test_01_pan","cls":"T03PTZ","area":"device","iface":"DeviceClient.pan_left/pan_right/pan_stop","verdict":"SKIP-NA","ms":426.82,"note":"no pan motor: RuntimeError: Pan failed: PTZ not enabled","error":""},{"id":"test_02_tilt","cls":"T03PTZ","area":"device","iface":"DeviceClient.tilt_up/tilt_down/tilt_stop","verdict":"SKIP-NA","ms":411.51,"note":"no tilt motor: RuntimeError: Tilt failed: PTZ not enabled","error":""},{"id":"test_03_presets","cls":"T03PTZ","area":"device","iface":"DeviceClient.save_preset/call_preset","verdict":"SKIP-NA","ms":7.54,"note":"no PTZ preset support: RuntimeError: SavePreset failed: PTZ not enabled","error":""},{"id":"test_01_zoom_continuous","cls":"T04ZoomFocus","area":"device","iface":"DeviceClient.zoom_in/zoom_out/zoom_stop","verdict":"PASS","ms":1713.43,"note":""},{"id":"test_02_set_zoom_level","cls":"T04ZoomFocus","area":"device","iface":"DeviceClient.set_zoom_level","verdict":"PASS","ms":6260.63,"note":""},{"id":"test_03_focus_continuous","cls":"T04ZoomFocus","area":"device","iface":"DeviceClient.focus_in/focus_out/focus_stop","verdict":"PASS","ms":1701.51,"note":""},{"id":"test_04_set_focus_level","cls":"T04ZoomFocus","area":"device","iface":"DeviceClient.set_focus_level","verdict":"PASS","ms":187.84,"note":""},{"id":"test_05_focus_auto","cls":"T04ZoomFocus","area":"device","iface":"DeviceClient.focus_auto","verdict":"PASS","ms":5.47,"note":""},{"id":"test_01_lens_init","cls":"T05Lens","area":"device","iface":"DeviceClient.lens_init","verdict":"PASS","ms":16.7,"note":""},{"id":"test_02_set_lens_limits_roundtrip","cls":"T05Lens","area":"device","iface":"DeviceClient.set_lens_limits","verdict":"PASS","ms":20.81,"note":""},{"id":"test_03_lens_goto_ratio_distance","cls":"T05Lens","area":"device","iface":"DeviceClient.lens_goto_ratio_distance","verdict":"PASS","ms":4475.04,"note":""},{"id":"test_04_iris","cls":"T05Lens","area":"device","iface":"DeviceClient.control_iris/set_iris_target","verdict":"PASS","ms":7.97,"note":""},{"id":"test_01_set_af_windows","cls":"T06Autofocus","area":"device","iface":"DeviceClient.set_af_windows","verdict":"SKIP-NA","ms":12.61,"note":"set_af_windows rejected: RuntimeError: SetAfWindows failed: SetAfWindows: not yet supported by lens HAL bridge","error":""},{"id":"test_02_start_oneshot_af","cls":"T06Autofocus","area":"device","iface":"DeviceClient.start_oneshot_af","verdict":"SKIP-NA","ms":4.63,"note":"start_oneshot_af unavailable: RuntimeError: StartOneShotAf rejected: autofocus operation already active","error":""},{"id":"test_03_cancel_autofocus","cls":"T06Autofocus","area":"device","iface":"DeviceClient.cancel_autofocus","verdict":"PASS","ms":12.45,"note":""},{"id":"test_04_start_zoom_follow","cls":"T06Autofocus","area":"device","iface":"DeviceClient.start_zoom_follow","verdict":"PASS","ms":517.91,"note":""},{"id":"test_05_oneshot_autofocus_blocking","cls":"T06Autofocus","area":"device","iface":"DeviceClient.oneshot_autofocus","verdict":"PASS","ms":1541.82,"note":""},{"id":"test_01_lens_reset_zero_and_verify","cls":"T07Reset","area":"device","iface":"DeviceClient.lens_reset_zero (verified reset)","verdict":"PASS","ms":4351.63,"note":""},{"id":"test_02_restore_af_mode","cls":"T07Reset","area":"device","iface":"DeviceClient.focus_auto (restore)","verdict":"PASS","ms":5.48,"note":""},{"id":"test_01_set_wiegand_out_roundtrip","cls":"T08Misc","area":"device","iface":"DeviceClient.set_wiegand_out","verdict":"PASS","ms":37.65,"note":""},{"id":"test_02_rs485","cls":"T08Misc","area":"device","iface":"DeviceClient.rs485_init/tx/deinit","verdict":"PASS","ms":23.97,"note":""},{"id":"test_03_gpio_roundtrip","cls":"T08Misc","area":"device","iface":"DeviceClient.gpio_set/gpio_get roundtrip","verdict":"SKIP-NA","ms":4.12,"note":"gpio pin 0 unreadable: _InactiveRpcError: <_InactiveRpcError of RPC that terminated with:\n\tstatus = StatusCode.NOT_FOUND\n\tdetails = \"pin 0 is not in the GPIO catalog\"\n\tdebug_error_string = \"NOT_FOUND:pin 0 is not in the ","error":""},{"id":"test_01_get_isp","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_isp","verdict":"PASS","ms":46.7,"note":""},{"id":"test_02_get_transform","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_transform","verdict":"PASS","ms":3.81,"note":""},{"id":"test_03_get_osd","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_osd","verdict":"PASS","ms":4.14,"note":""},{"id":"test_04_get_stream_status","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_stream_status","verdict":"PASS","ms":6.36,"note":""},{"id":"test_05_profiles_read","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_profile/list_profiles","verdict":"PASS","ms":6.17,"note":""},{"id":"test_06_get_sensor_info","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_sensor_info","verdict":"PASS","ms":10.95,"note":""},{"id":"test_07_get_capabilities","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_capabilities","verdict":"PASS","ms":4.09,"note":""},{"id":"test_08_get_hardware_status","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_hardware_status","verdict":"PASS","ms":18.18,"note":""},{"id":"test_09_get_led_duty","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_led_duty","verdict":"PASS","ms":5.82,"note":""},{"id":"test_10_get_ircut","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_ircut","verdict":"PASS","ms":9.51,"note":""},{"id":"test_11_env_read","cls":"T01Readonly","area":"camera","iface":"CameraClient.get_fan/get_heat/get_radar/get_alarm_outputs","verdict":"PASS","ms":26.14,"note":""},{"id":"test_12_list_ir_presets","cls":"T01Readonly","area":"camera","iface":"CameraClient.list_ir_presets","verdict":"PASS","ms":3.84,"note":""},{"id":"test_13_mcu_raw_request_skipped","cls":"T01Readonly","area":"camera","iface":"CameraClient.mcu_raw_request","verdict":"SKIP-NA","ms":1.06,"note":"raw MCU protocol semantics unverifiable — skipped for device safety (write-only opcode space)","error":""},{"id":"test_01_set_isp_roundtrip","cls":"T02IspTransform","area":"camera","iface":"CameraClient.set_isp","verdict":"PASS","ms":2031.68,"note":""},{"id":"test_02_set_transform_roundtrip","cls":"T02IspTransform","area":"camera","iface":"CameraClient.set_transform","verdict":"PASS","ms":3153.99,"note":""},{"id":"test_03_config_field","cls":"T02IspTransform","area":"camera","iface":"CameraClient.get_config_field/set_config_field","verdict":"SKIP-NA","ms":14.88,"note":"config field 'isp.brightness' unreadable: RuntimeError: GetConfigField failed: HAL get_config_field failed: -2814 (field-path schema is device-specific)","error":""},{"id":"test_01_set_encoder_noop","cls":"T03EncoderStreams","area":"camera","iface":"CameraClient.set_encoder","verdict":"PASS","ms":127.3,"note":""},{"id":"test_02_reconfigure_encoder_noop","cls":"T03EncoderStreams","area":"camera","iface":"CameraClient.reconfigure_encoder","verdict":"PASS","ms":1080.59,"note":""},{"id":"test_03_set_rtsp_enabled","cls":"T03EncoderStreams","area":"camera","iface":"CameraClient.set_rtsp_enabled","verdict":"PASS","ms":3.63,"note":""},{"id":"test_04_add_remove_stream","cls":"T03EncoderStreams","area":"camera","iface":"CameraClient.add_stream/remove_stream","verdict":"PASS","ms":4066.77,"note":""},{"id":"test_05_reconfigure_pipeline_noop","cls":"T03EncoderStreams","area":"camera","iface":"CameraClient.reconfigure_pipeline","verdict":"PASS","ms":251.13,"note":""},{"id":"test_01_set_osd_roundtrip","cls":"T04Imaging","area":"camera","iface":"CameraClient.set_osd","verdict":"PASS","ms":28.84,"note":""},{"id":"test_02_set_ai_overlay","cls":"T04Imaging","area":"camera","iface":"CameraClient.set_ai_overlay","verdict":"PASS","ms":8.22,"note":""},{"id":"test_03_imaging_mode","cls":"T04Imaging","area":"camera","iface":"CameraClient.set_imaging_mode/get_infrared_status","verdict":"PASS","ms":15.64,"note":""},{"id":"test_04_infrared_settings","cls":"T04Imaging","area":"camera","iface":"CameraClient.set_infrared_settings/clear_infrared_manual","verdict":"PASS","ms":5.83,"note":""},{"id":"test_05_set_ircut_roundtrip","cls":"T04Imaging","area":"camera","iface":"CameraClient.set_ircut/get_ircut","verdict":"PASS","ms":26.51,"note":""},{"id":"test_06_privacy_mask_roundtrip","cls":"T04Imaging","area":"camera","iface":"CameraClient.get_privacy_mask/set_privacy_mask","verdict":"PASS","ms":96.32,"note":""},{"id":"test_01_backup_and_switch","cls":"T05Profiles","area":"camera","iface":"CameraClient.backup_profile/switch_profile","verdict":"SKIP-NA","ms":840.7,"note":"switch_profile denied by daemon policy: <_InactiveRpcError of RPC that terminated with:\n\tstatus = StatusCode.PERMISSION_DENIED\n\tdetails = \"profile not in switch allowlist\"\n\tdebug_error_string = \"PERMISSION_DENIED:profile","error":""},{"id":"test_01_led_duty_roundtrip","cls":"T06Env","area":"camera","iface":"CameraClient.set_led_duty/get_led_duty","verdict":"PASS","ms":30.46,"note":""},{"id":"test_02_fan_roundtrip","cls":"T06Env","area":"camera","iface":"CameraClient.set_fan/get_fan","verdict":"PASS","ms":15.3,"note":""},{"id":"test_03_heat","cls":"T06Env","area":"camera","iface":"CameraClient.set_heat/get_heat","verdict":"SKIP-NA","ms":5.45,"note":"heater off in production state — not switching it on from a test","error":""},{"id":"test_04_radar","cls":"T06Env","area":"camera","iface":"CameraClient.set_radar/get_radar","verdict":"SKIP-NA","ms":4.46,"note":"radar off in production state — not switching it on from a test","error":""},{"id":"test_05_alarm_out_roundtrip","cls":"T06Env","area":"camera","iface":"CameraClient.set_alarm_out/get_alarm_out","verdict":"PASS","ms":22.65,"note":""},{"id":"test_01_alloc_write_read_release","cls":"T01Buffers","area":"dsp","iface":"DspClient.alloc_buffers/DspBufferPool","verdict":"PASS","ms":50.77,"note":""},{"id":"test_01_resize_hw","cls":"T02Resize","area":"dsp","iface":"DspClient.resize_hw","verdict":"PASS","ms":154.89,"note":""},{"id":"test_02_resize_hw_async","cls":"T02Resize","area":"dsp","iface":"DspClient.resize_hw(wait=False)/PendingDspJob","verdict":"PASS","ms":55.81,"note":""},{"id":"test_01_crop_hw","cls":"T03Crop","area":"dsp","iface":"DspClient.crop_hw","verdict":"PASS","ms":102.8,"note":""},{"id":"test_02_crop_hw_scaled","cls":"T03Crop","area":"dsp","iface":"DspClient.crop_hw (crop+scale)","verdict":"PASS","ms":69.22,"note":""},{"id":"test_01_multi_crop_hw","cls":"T04MultiCrop","area":"dsp","iface":"DspClient.multi_crop_hw","verdict":"PASS","ms":126.3,"note":""},{"id":"test_02_multi_crop_hw_async","cls":"T04MultiCrop","area":"dsp","iface":"DspClient.multi_crop_hw(wait=False)","verdict":"PASS","ms":90.46,"note":""},{"id":"test_01_convert_hw_nv12_to_rgb","cls":"T05Convert","area":"dsp","iface":"DspClient.convert_hw","verdict":"PASS","ms":115.44,"note":""},{"id":"test_01_blend_hw","cls":"T06Blend","area":"dsp","iface":"DspClient.blend_hw","verdict":"ERROR","ms":66.3,"note":"SDK 侧缺陷(已定位,不在测试中途修复):dsp_wire.py 的 _IMPORT_RESP_FMT 用带符号 q 解析 daemon 返回的 uint64 import_id,高位为 1 时被解析成负数(本次 id 16053137586893052802 → -2393606486816498814),构造 camera_pb2.DspJobRequest 时触发 ValueError: Value out of range;a","error":"  File \"/data/sdk-test/test_42_dsp.py\", line 182, in test_01_blend_hw\n    out = self._run(self.client.blend_hw, base, [(rgba, 4, 4)],\n  File \"/data/sdk-test/test_42_dsp.py\", line 67, in _run\n    result = self.timed(fn, *args, label=label, **kwargs)\n  File \"/data/sdk-test/common.py\", line 184, in timed\n    return fn(*args, **kwargs)\n  File \"/data/venv-sdk/lib/python3.10/site-packages/neoruntime_ipc_sdk/dsp.py\", line 1412, in blend_hw\n    job_id = self._submit_job(\n  File \"/data/venv-sdk/lib/python3.10/site-packages/neoruntime_ipc_sdk/dsp.py\", line 801, in _submit_job\n    req = camera_pb2.DspJobRequest(\nValueError: Value out of range: -2393606486816498814\n"},{"id":"test_01_encode_jpeg_hw","cls":"T07EncodeJpeg","area":"dsp","iface":"DspClient.encode_jpeg_hw","verdict":"PASS","ms":781.65,"note":""},{"id":"test_01_list_capture_devices","cls":"T01Control","area":"audio","iface":"AudioClient.list_capture_devices","verdict":"PASS","ms":79.51,"note":""},{"id":"test_02_list_playback_devices","cls":"T01Control","area":"audio","iface":"AudioClient.list_playback_devices","verdict":"PASS","ms":31.44,"note":""},{"id":"test_03_get_status","cls":"T01Control","area":"audio","iface":"AudioClient.get_status","verdict":"PASS","ms":4.43,"note":""},{"id":"test_01_capture_lifecycle","cls":"T02CaptureState","area":"audio","iface":"AudioClient.start_capture/stop_capture","verdict":"PASS","ms":69.03,"note":""},{"id":"test_02_playback_lifecycle","cls":"T02CaptureState","area":"audio","iface":"AudioClient.start_playback/stop_playback","verdict":"PASS","ms":37.32,"note":""},{"id":"test_03_set_config_volume_roundtrip","cls":"T02CaptureState","area":"audio","iface":"AudioClient.set_config","verdict":"PASS","ms":10.93,"note":""},{"id":"test_04_stream_pcm_silent","cls":"T02CaptureState","area":"audio","iface":"AudioClient.stream_pcm/stream_pcm_file","verdict":"SKIP-NA","ms":8.39,"note":"stream_pcm rejected: RuntimeError: StreamAudioPcm failed: PCM write failed (two-way talk pipeline absent)","error":""},{"id":"test_01_get_frame","cls":"T03Stream","area":"audio","iface":"AudioStreamClient.get_frame","verdict":"PASS","ms":27.32,"note":""},{"id":"test_02_subscribe","cls":"T03Stream","area":"audio","iface":"AudioStreamClient.subscribe","verdict":"PASS","ms":59.46,"note":""},{"id":"test_03_frame_carries_audio_layout","cls":"T03Stream","area":"audio","iface":"AudioStreamClient frame audio-layout fields","verdict":"KNOWN-ISSUE","ms":12.71,"note":"daemon writes the video EncHeader layout on audio_capture.sock (rate=0/ch=0, video dts in the tail) — SDK decode_audio_format compensates, so audio params arrive unknown","error":"AssertionError: 0 not greater than 0 : audio frames carry no sample_rate — video-layout defect still present daemon-side"},{"id":"test_01_enable_disable","cls":"T01Config","area":"overlay","iface":"OverlayClient.enable/disable","verdict":"PASS","ms":59.68,"note":""},{"id":"test_02_configure","cls":"T01Config","area":"overlay","iface":"OverlayClient.configure","verdict":"PASS","ms":13.46,"note":""},{"id":"test_03_apply","cls":"T01Config","area":"overlay","iface":"OverlayClient.apply/OverlayConfig","verdict":"PASS","ms":8.57,"note":""},{"id":"test_01_annotate_detected_objects","cls":"T02Annotate","area":"overlay","iface":"OverlayClient.annotate","verdict":"PASS","ms":518.2,"note":""},{"id":"test_02_annotate_result","cls":"T02Annotate","area":"overlay","iface":"OverlayClient.annotate_result","verdict":"PASS","ms":516.48,"note":""},{"id":"test_03_annotate_clears","cls":"T02Annotate","area":"overlay","iface":"OverlayClient.annotate (clear)","verdict":"PASS","ms":513.64,"note":""},{"id":"test_01_list_apps","cls":"T01AppQuery","area":"app","iface":"AppClient.list_apps","verdict":"KNOWN-ISSUE","ms":33.59,"note":"SDK 0.7.4: app_pb2 lacks Empty, AppClient RPCs raise AttributeError client-side (app.py app_pb2.Empty())","error":"AttributeError: module 'neoruntime_ipc_sdk.proto.app_pb2' has no attribute 'Empty'"},{"id":"test_02_register_web_url","cls":"T01AppQuery","area":"app","iface":"AppClient.register_web_url","verdict":"SKIP-NA","ms":0.94,"note":"register_web_url rejected: RuntimeError: APP_ID env var not set — this method must be called inside an app container (web route registration may need an app context)","error":""},{"id":"test_03_get_app","cls":"T01AppQuery","area":"app","iface":"AppClient.get_app","verdict":"KNOWN-ISSUE","ms":0.8,"note":"SDK 0.7.4: app_pb2 lacks Empty, AppClient RPCs raise AttributeError client-side (app.py app_pb2.Empty())","error":"AttributeError: module 'neoruntime_ipc_sdk.proto.app_pb2' has no attribute 'Empty'"},{"id":"test_04_get_app_stats","cls":"T01AppQuery","area":"app","iface":"AppClient.get_app_stats","verdict":"KNOWN-ISSUE","ms":0.87,"note":"SDK 0.7.4: app_pb2 lacks Empty, AppClient RPCs raise AttributeError client-side (app.py app_pb2.Empty())","error":"AttributeError: module 'neoruntime_ipc_sdk.proto.app_pb2' has no attribute 'Empty'"},{"id":"test_05_get_logs","cls":"T01AppQuery","area":"app","iface":"AppClient.get_logs","verdict":"KNOWN-ISSUE","ms":0.84,"note":"SDK 0.7.4: app_pb2 lacks Empty, AppClient RPCs raise AttributeError client-side (app.py app_pb2.Empty())","error":"AttributeError: module 'neoruntime_ipc_sdk.proto.app_pb2' has no attribute 'Empty'"},{"id":"test_06_get_logs_text","cls":"T01AppQuery","area":"app","iface":"AppClient.get_logs_text","verdict":"KNOWN-ISSUE","ms":0.88,"note":"SDK 0.7.4: app_pb2 lacks Empty, AppClient RPCs raise AttributeError client-side (app.py app_pb2.Empty())","error":"AttributeError: module 'neoruntime_ipc_sdk.proto.app_pb2' has no attribute 'Empty'"},{"id":"test_01_lifecycle_without_bundle","cls":"T02AppLifecycle","area":"app","iface":"AppClient.install_app/start_app/stop_app/restart_app/uninstall_app","verdict":"SKIP-NA","ms":0.92,"note":"no app bundle (manifest+image) provisioned for the test, and mutating a production app is out of scope — lifecycle ops unexercised","error":""},{"id":"test_01_deprecation_warning","cls":"T01ServerLifecycle","area":"plugin","iface":"plugin module deprecation contract","verdict":"PASS","ms":1.0,"note":""},{"id":"test_02_create_start_stop","cls":"T01ServerLifecycle","area":"plugin","iface":"PluginServer.create_server/start/wait/stop","verdict":"PASS","ms":9.15,"note":""},{"id":"test_01_list_plugins_and_capabilities","cls":"T02Discovery","area":"plugin","iface":"PluginDiscovery.reload/list_plugins/list_capabilities","verdict":"PASS","ms":1.29,"note":""},{"id":"test_02_get","cls":"T02Discovery","area":"plugin","iface":"PluginDiscovery.get/PluginEndpoint.is_available","verdict":"PASS","ms":0.95,"note":""},{"id":"test_03_connect","cls":"T02Discovery","area":"plugin","iface":"PluginEndpoint.connect","verdict":"PASS","ms":30.62,"note":""},{"id":"test_04_require","cls":"T02Discovery","area":"plugin","iface":"PluginDiscovery.require","verdict":"PASS","ms":3.09,"note":""},{"id":"test_05_require_timeout","cls":"T02Discovery","area":"plugin","iface":"PluginDiscovery.require (timeout path)","verdict":"PASS","ms":1002.51,"note":""},{"id":"test_06_watch","cls":"T02Discovery","area":"plugin","iface":"PluginDiscovery.watch","verdict":"PASS","ms":2.95,"note":""},{"id":"test_01_nv12_to_rgb","cls":"T01Color","area":"toolkit","iface":"color.nv12_to_rgb","verdict":"PASS","ms":234.39,"note":""},{"id":"test_02_nv12_to_bgr","cls":"T01Color","area":"toolkit","iface":"color.nv12_to_bgr","verdict":"PASS","ms":1998.54,"note":""},{"id":"test_03_rgb_to_nv12_roundtrip","cls":"T01Color","area":"toolkit","iface":"color.rgb_to_nv12","verdict":"PASS","ms":1264.1,"note":""},{"id":"test_04_bgr_to_nv12","cls":"T01Color","area":"toolkit","iface":"color.bgr_to_nv12","verdict":"PASS","ms":101.12,"note":""},{"id":"test_05_nv12_resize","cls":"T01Color","area":"toolkit","iface":"color.nv12_resize","verdict":"PASS","ms":22.46,"note":""},{"id":"test_01_draw_boxes","cls":"T02Draw","area":"toolkit","iface":"draw.draw_boxes","verdict":"PASS","ms":262.29,"note":""},{"id":"test_02_draw_text","cls":"T02Draw","area":"toolkit","iface":"draw.draw_text","verdict":"PASS","ms":110.51,"note":""},{"id":"test_03_draw_detections_rgb","cls":"T02Draw","area":"toolkit","iface":"draw.draw_detections (RGB input)","verdict":"PASS","ms":128.7,"note":""},{"id":"test_04_draw_detections_nv12_routed","cls":"T02Draw","area":"toolkit","iface":"draw.draw_detections (NV12, accel-routed)","verdict":"PASS","ms":758.67,"note":""},{"id":"test_05_render_overlay_rgba","cls":"T02Draw","area":"toolkit","iface":"draw.render_overlay_rgba","verdict":"PASS","ms":342.88,"note":""},{"id":"test_06_draw_polygons","cls":"T02Draw","area":"toolkit","iface":"draw.draw_polygons","verdict":"PASS","ms":126.06,"note":""},{"id":"test_01_suppresses_overlaps","cls":"T03Nms","area":"toolkit","iface":"postprocess.nms","verdict":"PASS","ms":2.18,"note":""},{"id":"test_02_class_aware","cls":"T03Nms","area":"toolkit","iface":"postprocess.nms (class_ids)","verdict":"PASS","ms":2.47,"note":""},{"id":"test_03_empty","cls":"T03Nms","area":"toolkit","iface":"postprocess.nms (empty input)","verdict":"PASS","ms":1.15,"note":""},{"id":"test_01_default_router_singleton","cls":"T04AccelRouter","area":"toolkit","iface":"accel.get_default_router","verdict":"PASS","ms":1.59,"note":""},{"id":"test_02_route_and_probe_health","cls":"T04AccelRouter","area":"toolkit","iface":"AccelRouter.route/probe/health","verdict":"PASS","ms":1.94,"note":""},{"id":"test_03_run_resize_via_router","cls":"T04AccelRouter","area":"toolkit","iface":"AccelRouter.run","verdict":"PASS","ms":125.17,"note":""},{"id":"test_04_private_router_fallback","cls":"T04AccelRouter","area":"toolkit","iface":"AccelRouter.register/use_hardware/note_degradation/run","verdict":"PASS","ms":2.42,"note":""},{"id":"test_01_endpoint_family","cls":"T05Config","area":"toolkit","iface":"Config endpoint/env getters","verdict":"PASS","ms":1.51,"note":""},{"id":"test_02_env_override","cls":"T05Config","area":"toolkit","iface":"Config env override","verdict":"PASS","ms":1.41,"note":""},{"id":"test_03_translate_path_to_host","cls":"T05Config","area":"toolkit","iface":"Config.translate_path_to_host","verdict":"PASS","ms":1.54,"note":""},{"id":"test_01_write_real_frames","cls":"T01TsWriter","area":"recording_web","iface":"recording.TsWriter.write","verdict":"PASS","ms":1246.66,"note":""},{"id":"test_02_context_manager_and_closed_write","cls":"T01TsWriter","area":"recording_web","iface":"recording.TsWriter context manager/close contract","verdict":"PASS","ms":7.37,"note":""},{"id":"test_03_rejects_unknown_codec","cls":"T01TsWriter","area":"recording_web","iface":"recording.TsWriter codec validation","verdict":"PASS","ms":1.19,"note":""},{"id":"test_01_segments_and_playlist","cls":"T02HlsWriter","area":"recording_web","iface":"recording.HlsWriter.write/close","verdict":"PASS","ms":1188.25,"note":""},{"id":"test_02_rejects_bad_args","cls":"T02HlsWriter","area":"recording_web","iface":"recording.HlsWriter argument validation","verdict":"PASS","ms":1.06,"note":""},{"id":"test_01_ring_window","cls":"T03Preroll","area":"recording_web","iface":"recording.PrerollBuffer.push/frames/__len__","verdict":"PASS","ms":3.34,"note":""},{"id":"test_02_dump_returns_live_writer","cls":"T03Preroll","area":"recording_web","iface":"recording.PrerollBuffer.dump","verdict":"PASS","ms":1228.71,"note":""},{"id":"test_03_dump_empty_raises","cls":"T03Preroll","area":"recording_web","iface":"recording.PrerollBuffer.dump (empty)","verdict":"PASS","ms":1.29,"note":""},{"id":"test_04_rejects_nonpositive_window","cls":"T03Preroll","area":"recording_web","iface":"recording.PrerollBuffer validation","verdict":"PASS","ms":1.09,"note":""},{"id":"test_01_push_jpeg_latest_wait_new","cls":"T04MjpegStream","area":"recording_web","iface":"web.MjpegStream.push_jpeg/latest/latest_seq/wait_new","verdict":"PASS","ms":203.75,"note":""},{"id":"test_02_push_frame_real","cls":"T04MjpegStream","area":"recording_web","iface":"web.MjpegStream.push_frame","verdict":"PASS","ms":765.05,"note":""},{"id":"test_01_http_stream_round_trip","cls":"T05MjpegServing","area":"recording_web","iface":"web.MjpegServer HTTP round-trip","verdict":"PASS","ms":12.64,"note":""},{"id":"test_02_http_404_other_path","cls":"T05MjpegServing","area":"recording_web","iface":"web.MjpegServer path routing (404)","verdict":"PASS","ms":7.09,"note":""},{"id":"test_03_wsgi_app_callable","cls":"T05MjpegServing","area":"recording_web","iface":"web.mjpeg_wsgi_app","verdict":"PASS","ms":45.69,"note":""}],"errorCases":[{"id":"test_01_blend_hw","iface":"DspClient.blend_hw","ms":66.3,"note":"SDK 侧缺陷(已定位,不在测试中途修复):dsp_wire.py 的 _IMPORT_RESP_FMT 用带符号 q 解析 daemon 返回的 uint64 import_id,高位为 1 时被解析成负数(本次 id 16053137586893052802 → -2393606486816498814),构造 camera_pb2.DspJobRequest 时触发 ValueError: Value out of range;alloc 路径用无符号 \"<64Q\" 不受影响,daemon 侧实际返回 code=0 正常。修复只需该格式串改 Q。","error":"  File \"/data/sdk-test/test_42_dsp.py\", line 182, in test_01_blend_hw\n    out = self._run(self.client.blend_hw, base, [(rgba, 4, 4)],\n  File \"/data/sdk-test/test_42_dsp.py\", line 67, in _run\n    result = self.timed(fn, *args, label=label, **kwargs)\n  File \"/data/sdk-test/common.py\", line 184, in timed\n    return fn(*args, **kwargs)\n  File \"/data/venv-sdk/lib/python3.10/site-packages/neoruntime_ipc_sdk/dsp.py\", line 1412, in blend_hw\n    job_id = self._submit_job(\n  File \"/data/venv-sdk/lib/python3.10/site-packages/neoruntime_ipc_sdk/dsp.py\", line 801, in _submit_job\n    req = camera_pb2.DspJobRequest(\nValueError: Value out of range: -2393606486816498814\n","evidence":{"blend_hw_ms":"49.85"}}]};
+const V_ORDER = ["PASS", "KNOWN-ISSUE", "SKIP-NA", "ERROR"];
+const V_TOKEN = { "PASS": "pass", "KNOWN-ISSUE": "ki", "SKIP-NA": "na", "SKIP": "na", "ERROR": "err" };
+const V_LABEL = { "PASS": "通过 PASS", "KNOWN-ISSUE": "已知问题 KNOWN-ISSUE", "SKIP-NA": "不适用 SKIP-NA", "SKIP": "跳过", "ERROR": "错误 ERROR" };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtMs = (ms) => ms == null ? "—" : (ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : Math.round(ms) + "ms");
+
+/* ---- header meta ---- */
+$("m-python").textContent = D.node.python || "—";
+$("m-date").textContent = (D.generated || "").slice(0, 10);
+
+/* ---- 01 overview ---- */
+(function overview() {
+  const total = D.summary.total;
+  const counts = D.summary.verdicts;
+  $("vbar").innerHTML = V_ORDER.map((v) => {
+    const w = ((counts[v] || 0) / total) * 100;
+    return `<i class="seg-${V_TOKEN[v]}" style="width:${w}%" title="${esc(V_LABEL[v])} × ${counts[v] || 0}"></i>`;
+  }).join("");
+  $("vstats").innerHTML = V_ORDER.map((v) => `
+    <div class="vstat ${V_TOKEN[v]}">
+      <div class="num">${counts[v] || 0}</div>
+      <div class="lbl"><span class="dot ${V_TOKEN[v]}"></span>${esc(V_LABEL[v])}</div>
+    </div>`).join("") + `
+    <div class="vstat"><div class="num">${total}</div><div class="lbl">用例总数</div></div>
+    <div class="vstat"><div class="num">${D.summary.wallS}s</div><div class="lbl">模块端到端</div></div>`;
+
+  const maxN = Math.max(...D.areas.map((a) => Object.values(a.counts).reduce((x, y) => x + y, 0)));
+  $("area-chart").innerHTML = D.areas.map((a) => {
+    const n = Object.values(a.counts).reduce((x, y) => x + y, 0);
+    const scale = (n / maxN) * 100;
+    const segs = V_ORDER.map((v) => {
+      const c = a.counts[v] || 0;
+      if (!c) return "";
+      return `<i class="s-${V_TOKEN[v]}" style="width:${(c / n) * 100}%" title="${esc(v)} × ${c}"></i>`;
+    }).join("");
+    const nums = V_ORDER.filter((v) => a.counts[v]).map((v) => `${a.counts[v]}${v === "PASS" ? "" : v === "ERROR" ? "E" : v === "KNOWN-ISSUE" ? "K" : "N"}`).join(" · ");
+    return `<div class="area-row">
+      <div class="name">${esc(a.title)}<small>${esc(a.key)}</small></div>
+      <div class="track" style="width:${scale}%" title="${n} 用例">${segs}</div>
+      <div class="nums"><b>${n}</b> 用例 · ${esc(nums)}</div>
+    </div>`;
+  }).join("");
+})();
+
+/* ---- 02 findings ---- */
+(function findings() {
+  $("err-cards").innerHTML = D.errorCases.length ? D.errorCases.map((c) => `
+    <div class="err-card">
+      <div class="head">
+        <span class="chip err">ERROR</span>
+        <span class="t">${esc(c.id)}</span>
+        <span class="mono" style="color:var(--ink-2);font-size:11.5px">${esc(c.iface)} · ${fmtMs(c.ms)}</span>
+      </div>
+      ${c.note ? `<p class="why">${esc(c.note)}</p>` : ""}
+      ${Object.keys(c.evidence || {}).length ? `<div class="ev-chips">${Object.entries(c.evidence).map(([k, v]) => `<span>${esc(k)}: ${esc(v)}</span>`).join("")}</div>` : ""}
+      ${c.error ? `<pre>${esc(c.error)}</pre>` : ""}
+    </div>`).join("") : "";
+  $("ki-list").innerHTML = D.knownIssues.map((g) => `
+    <div class="ki-item">
+      <div class="reason"><span class="chip ki" style="margin-right:8px">KI · ${g.cases.length} 例</span>${esc(g.reason)}</div>
+      <ul class="cases">${g.cases.map((c) => `<li><b>${esc(c.id)}</b><span>${esc(c.iface)}</span><span>${fmtMs(c.ms)}</span></li>`).join("")}</ul>
+    </div>`).join("");
+})();
+
+/* ---- 03 matrix ---- */
+const state = { verdicts: new Set(), area: "", q: "" };
+try {
+  const saved = JSON.parse(localStorage.getItem("sdk-report-filter") || "null");
+  if (saved) { state.verdicts = new Set(saved.verdicts || []); state.area = saved.area || ""; state.q = saved.q || ""; }
+} catch (e) { /* private mode etc. */ }
+function persist() { try { localStorage.setItem("sdk-report-filter", JSON.stringify({ verdicts: [...state.verdicts], area: state.area, q: state.q })); } catch (e) {} }
+
+(function buildControls() {
+  $("fchips").innerHTML = V_ORDER.map((v) => `
+    <button class="fchip" data-v="${v}" aria-pressed="${state.verdicts.has(v)}">
+      <span class="dot ${V_TOKEN[v]}"></span>${esc(v)}
+      <span style="opacity:.65">${D.summary.verdicts[v] || 0}</span>
+    </button>`).join("");
+  $("fchips").addEventListener("click", (e) => {
+    const btn = e.target.closest(".fchip"); if (!btn) return;
+    const v = btn.dataset.v;
+    state.verdicts.has(v) ? state.verdicts.delete(v) : state.verdicts.add(v);
+    btn.setAttribute("aria-pressed", state.verdicts.has(v));
+    persist(); renderMatrix();
+  });
+  const sel = $("area-sel");
+  sel.innerHTML = `<option value="">全部区域</option>` + D.areas.map((a) => `<option value="${esc(a.key)}">${esc(a.title)} ${esc(a.key)}</option>`).join("");
+  sel.value = state.area;
+  sel.addEventListener("change", () => { state.area = sel.value; persist(); renderMatrix(); });
+  const search = $("search");
+  search.value = state.q;
+  search.addEventListener("input", () => { state.q = search.value.trim().toLowerCase(); persist(); renderMatrix(); });
+})();
+
+function renderMatrix() {
+  const rows = D.cases.filter((c) =>
+    (!state.verdicts.size || state.verdicts.has(c.verdict)) &&
+    (!state.area || c.area === state.area) &&
+    (!state.q || (c.id + " " + c.cls + " " + c.iface + " " + (c.note || "")).toLowerCase().includes(state.q)));
+  $("matrix-body").innerHTML = rows.map((c) => `
+    <tr class="is-${V_TOKEN[c.verdict]}">
+      <td class="c-id">${esc(c.id)}<small>${esc(c.cls)}</small></td>
+      <td class="c-if">${esc(c.iface)}</td>
+      <td><span class="chip ${V_TOKEN[c.verdict]}">${esc(c.verdict)}</span></td>
+      <td class="c-ms">${fmtMs(c.ms)}</td>
+      <td class="c-note">${c.note ? `<div class="m">${esc(c.note)}</div>` : "—"}</td>
+    </tr>`).join("");
+  $("count").textContent = `${rows.length} / ${D.cases.length} 行`;
+}
+renderMatrix();
+
+/* ---- 04 timeline ---- */
+$("timeline").innerHTML = D.opsNotes.map((n) => {
+  const m = n.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?:[–—-]\d{2}:\d{2})?)/);
+  const t = m ? m[1] : "";
+  const body = t ? n.slice(m[0].length).replace(/^[((]?/, "").replace(/[))]?$/, "") : n;
+  return `<li>${t ? `<span class="t">${esc(t)}</span>` : ""}<p>${esc(body)}</p></li>`;
+}).join("");
+
+/* ---- 05 coverage + env ---- */
+(function covEnv() {
+  const c = D.coverage;
+  if (c.total) {
+    $("cov-headline").innerHTML = `公开 API 方法覆盖:<b>${c.covered}/${c.total}</b>( ${(100 * c.covered / c.total).toFixed(1)}%,保守口径:矩阵中以 Class.method 形态标记的调用)`;
+    $("cov-body").innerHTML = c.rows.map((r) => `
+      <tr class="${r.hit ? "" : "zero"}">
+        <td class="mono" style="white-space:nowrap">${esc(r.cls)}</td>
+        <td><div class="covbar"><i style="width:${(100 * r.hit / r.total).toFixed(0)}%"></i></div></td>
+        <td>${r.hit}/${r.total}</td>
+      </tr>`).join("");
+  }
+  const kv = [
+    ["报告生成", esc((D.generated || "").replace("T", " ").slice(0, 19)) + " GMT"],
+    ["内核/架构", esc((D.node.uname || "").split(" #")[0])],
+    ["SDK 版本", `<b style="font-weight:600">${esc(D.sdk.version || "")}</b>`],
+    ["安装路径", esc(D.sdk.module_path || "")],
+    ["UDS 端点", `${D.sockets.length} 个`],
+  ];
+  $("env-dl").innerHTML = kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("") +
+    `<dt style="align-self:start;padding-top:2px">socket 清单</dt><dd><div class="sock-list">${D.sockets.map((s) => `<span>${esc(s)}</span>`).join("")}</div></dd>`;
+})();
+
+/* ---- footer ---- */
+$("footer").innerHTML = `设备 venv 由编排脚本安装被测版本,回滚:<code>pip install --no-deps neoruntime-ipc-sdk==&lt;previous-version&gt;</code>;镜头物理状态已由 <code>lens_reset_zero()</code> 复位校验。报告数据:${esc((D.generated || "").slice(0, 10))} · SDK ${esc(D.sdk.version || "")}。`;
+</script>
+</body>
+</html>

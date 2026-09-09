@@ -61,7 +61,7 @@ Application Code (app.py)
        def run(self):
            try:
                for frame, result in self.inference.subscribe(
-                   stream="cam0_main", model="person_v1", fps=10
+                   stream="main", model="person_v1", fps=10
                ):
                    if not self.running:
                        break
@@ -90,13 +90,10 @@ Dockerfile
 
    LABEL maintainer="your@email.com"
 
-   # Install NeoRuntime Python SDK from the public source repository.
-   # PyPI packages are not published yet.
-   RUN apt-get update \
-       && apt-get install -y --no-install-recommends git \
-       && rm -rf /var/lib/apt/lists/*
+   # Install the NeoRuntime Python SDK (published on PyPI; the pinned
+   # version keeps builds reproducible — bump it alongside SDK upgrades)
    RUN python -m pip install --no-cache-dir \
-       "git+https://github.com/camthink-ai/neoruntime-sdks.git#subdirectory=python"
+       "neoruntime-ipc-sdk==0.7.4"
 
    WORKDIR /app
    COPY app.py app.yaml /app/
@@ -140,7 +137,8 @@ Verify the image was built successfully:
 
 .. note::
 
-   If the application requires additional dependencies, add a ``requirements.txt`` file to the directory and include ``RUN pip install -r requirements.txt`` in the Dockerfile. For offline or repeatable builds, build the SDK wheel first, copy ``neoruntime_ipc_sdk-*.whl`` into the image, and install that local wheel instead of installing from GitHub.
+   If the application requires additional dependencies, add a ``requirements.txt`` file to the directory and include ``RUN pip install -r requirements.txt`` in the Dockerfile. For offline or repeatable builds, build the SDK wheel first, copy ``neoruntime_ipc_sdk-*.whl`` into the image, and install that local wheel instead of installing from GitHub. Source installs can pin a release tag instead:
+   ``git+https://github.com/camthink-ai/neoruntime-sdks.git@v0.7.4#subdirectory=python``.
 
 .. _app_image_step3:
 
@@ -348,6 +346,14 @@ Specify video streams the application can access:
 - ``cam0_main.raw`` — Raw video stream (via SHM zero-copy)
 - ``cam0_sub.raw`` — Sub-stream raw video
 - ``cam0_main`` — Encoded video stream (via Unix socket)
+
+.. note::
+
+   Permission-layer and SDK stream naming live at different layers:
+   manifest permissions use the platform-side names (e.g.
+   ``cam0_main.raw``); SDK calls (``FdMediaClient.subscribe`` /
+   ``InferenceClient.subscribe``) subscribe by the device-exposed
+   stream IDs ``main`` / ``sub``.
 
 **AI Inference Permissions (inference)**
 
