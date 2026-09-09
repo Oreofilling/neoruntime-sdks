@@ -27,15 +27,20 @@ TEST_MODEL_ID = "sdk-test-yolo"
 # goes totally silent, which is the exact hang shape we must not produce.
 SUBSCRIBE_STREAM = "main"
 
-# KNOWN daemon-side regression, probed 2026-09-09 directly on the device:
-# BOTH bundled models (yolo_world_v2s.hef and yolo_world_v2s_540.hef)
-# register cleanly, the camera produces frames (2160x3840), yet every
-# infer returns "Inference failed: -2799" — identical for either model,
-# so it is not model-specific and sits in the ai-runtime deployment.
+# KNOWN contract/deployment note, corrected 2026-09-09 by live probing
+# (the earlier "daemon-side regression" read was wrong): -2799/-2811 is
+# the daemon's input byte_size validation — an RGB array into an NV12
+# model, or any buffer whose size disagrees with the model geometry,
+# fails there. BOTH bundled models are yolo_world dual-input models, so
+# the single-image infer RPC cannot drive them at all (-2799 even with
+# geometry-matched NV12). A single-input model (hailo_yolov8n_384_640)
+# fed geometry-matched NV12 infers fine (~70 FPS, same daemon build).
 _INFER_2799 = (
-    "infer family: daemon-side failure -2799 on every call (both models "
-    "probed 2026-09-09, registration fine, frames fine — ai-runtime "
-    "deployment regression)"
+    "infer family: yolo_world models are dual-input — single-image "
+    "infer cannot drive them (-2799); feeding RGB instead of NV12 "
+    "fails byte_size validation (-2799/-2811). Verified 2026-09-09: "
+    "geometry-matched NV12 into a single-input model works on the "
+    "same daemon build"
 )
 
 
@@ -286,19 +291,20 @@ class T03Subscribe(DeviceTestCase):
             pass
         cls.client.close()
 
-    # KNOWN daemon-side regression, re-confirmed by direct probe on
-    # 2026-09-08: with stream="main" frames DO arrive, but every frame's
-    # inference returns -2814 (HAL_ERR_INVALID_ARG) — the ai-runtime
-    # redeployed that morning lacks the 8/28 mmap+NV12 fd-tensor fix
-    # (no bak-2814fix backup present either). The SDK converts 10
+    # KNOWN daemon-side issue, re-confirmed 2026-09-09 with a geometry-
+    # matched pair: with stream="main" frames DO arrive, but every
+    # frame's inference returns -2814 (HAL_ERR_INVALID_ARG) — and it
+    # fails the same way against a 640×384 stream/model pair, so it is
+    # not an input-geometry mismatch (the -2799/-2811 family) but the
+    # streaming path itself on this daemon build. The SDK converts 10
     # consecutive failed frames into a RuntimeError, which lands here as
     # KNOWN-ISSUE rather than an unattributed ERROR. If the daemon is
     # fixed, these tests pass and the report notes the non-reproduction.
     _SUBSCRIBE_2814 = (
         "subscribe: frames arrive but every inference fails -2814 "
-        "(HAL_ERR_INVALID_ARG) against the ai-runtime build deployed "
-        "2026-09-08; SDK raises RuntimeError after 10 consecutive "
-        "failed frames"
+        "(HAL_ERR_INVALID_ARG) on the deployed ai-runtime build, even "
+        "with a geometry-matched stream/model pair (probed 2026-09-09); "
+        "SDK raises RuntimeError after 10 consecutive failed frames"
     )
 
     @known_issue(_SUBSCRIBE_2814)

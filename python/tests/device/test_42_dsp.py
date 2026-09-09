@@ -178,7 +178,8 @@ class T06Blend(_DspArea):
         base = _nv12(W, H)
         snapshot = base.copy()
         rgba = np.zeros((8, 8, 4), np.uint8)
-        rgba[:, :, 0] = 255  # opaque alpha in wire [A,R,G,B] order
+        rgba[:, :, 3] = 255  # opaque black: input is RGBA (alpha LAST) —
+        # blend_hw packs the wire's ARGB32 order internally (dsp.py)
         out = self._run(self.client.blend_hw, base, [(rgba, 4, 4)],
                         fmt=FMT, label="blend_hw")
         self.evidence(out_shape=out.shape,

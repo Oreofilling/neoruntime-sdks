@@ -32,7 +32,7 @@ from neoruntime_ipc_sdk import (
     IrCutMode,
 )
 
-from common import DeviceTestCase, known_issue
+from common import DeviceTestCase
 
 
 def _soft(fn, *args, **kwargs):
@@ -55,12 +55,6 @@ class T01Readonly(DeviceTestCase):
     def tearDownClass(cls):
         cls.client.close()
 
-    @known_issue(
-        "SDK 0.7.4 defect: no bundled device_pb2 message carries "
-        "ir_led_on, and device.py reads response.ir_led_on unconditionally"
-        " when building DeviceStatus — the call raises AttributeError even"
-        " against a healthy daemon (verified locally against the wheel's"
-        " proto descriptors; SDK-side, fix = guard the field)")
     def test_01_get_device_status(self):
         self.mark("DeviceClient.get_device_status")
         status = self.timed(self.client.get_device_status,

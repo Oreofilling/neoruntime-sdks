@@ -16,13 +16,15 @@ from neoruntime_ipc_sdk import AppClient
 
 from common import DeviceTestCase, known_issue
 
-# SDK 0.7.4 defect: app.py builds its request with app_pb2.Empty(), but
-# the bundled app_pb2 module has no Empty message (verified against the
-# wheel's proto descriptors), so every AppClient query RPC raises
-# AttributeError before any traffic leaves the process — SDK-side fix.
-_APP_EMPTY_DEFECT = (
-    "SDK 0.7.4: app_pb2 lacks Empty, AppClient RPCs raise AttributeError "
-    "client-side (app.py app_pb2.Empty())")
+# SDK-side Empty defect FIXED after the 2026-09-09 device run (app.py now
+# sends google.protobuf.empty_pb2.Empty for ListApps). The one remaining
+# app-query failure is daemon-side: GetLogs answers "no logs available"
+# for the first installed app because its instances/<app>/logs/app.log is
+# not on disk — while GetLogsText serves lines for that same app.
+_APP_LOGS_MISSING = (
+    "daemon: GetLogs answers 'no logs available' for the first installed "
+    "app (its instances/<app>/logs/app.log is not on disk) even though "
+    "GetLogsText serves lines for it")
 
 
 def _soft(fn, *args, **kwargs):
@@ -44,7 +46,6 @@ class T01AppQuery(DeviceTestCase):
     def tearDownClass(cls):
         cls.client.close()
 
-    @known_issue(_APP_EMPTY_DEFECT)
     def test_01_list_apps(self):
         self.mark("AppClient.list_apps")
         apps = self.timed(self.client.list_apps, label="list_apps")
@@ -69,7 +70,6 @@ class T01AppQuery(DeviceTestCase):
             self.na("no apps installed on this device — nothing to query")
         return apps[0]
 
-    @known_issue(_APP_EMPTY_DEFECT)
     def test_03_get_app(self):
         self.mark("AppClient.get_app")
         target = self._installed()
@@ -79,7 +79,6 @@ class T01AppQuery(DeviceTestCase):
                       manifest=info.manifest_path)
         self.assertEqual(info.id, target.id)
 
-    @known_issue(_APP_EMPTY_DEFECT)
     def test_04_get_app_stats(self):
         self.mark("AppClient.get_app_stats")
         target = self._installed()
@@ -90,7 +89,7 @@ class T01AppQuery(DeviceTestCase):
                       threads=stats.thread_count,
                       uptime_s=stats.uptime_seconds)
 
-    @known_issue(_APP_EMPTY_DEFECT)
+    @known_issue(_APP_LOGS_MISSING)
     def test_05_get_logs(self):
         self.mark("AppClient.get_logs")
         target = self._installed()
@@ -101,7 +100,6 @@ class T01AppQuery(DeviceTestCase):
         for line in lines:
             self.assertIsInstance(line.level, str)
 
-    @known_issue(_APP_EMPTY_DEFECT)
     def test_06_get_logs_text(self):
         self.mark("AppClient.get_logs_text")
         target = self._installed()
