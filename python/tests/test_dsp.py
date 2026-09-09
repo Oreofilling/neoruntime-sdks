@@ -474,8 +474,22 @@ class TestImportWireCodec:
     def test_parse_import_resp_roundtrip(self):
         ok = struct.pack("<IIi4xq", 11, 24, 0, 4242)
         assert parse_import_resp(ok) == (0, 4242)
-        bad = struct.pack("<IIi4xq", 11, 24, -1, -1)
-        assert parse_import_resp(bad) == (-1, -1)
+        # error responses carry code<0; the daemon's id field is uint64
+        # (dsp_service.cpp), so an error body still has an unsigned id.
+        bad = struct.pack("<IIi4xQ", 11, 24, -1, 0)
+        assert parse_import_resp(bad) == (-1, 0)
+
+    def test_parse_import_resp_high_bit_import_id(self):
+        # Regression (device run 2026-09-09): daemon import ids are uint64
+        # and routinely have the high bit set; the response format used a
+        # signed q, so such ids parsed negative and then failed
+        # DspJobRequest field validation with ValueError (blend_hw ERROR).
+        big = 16053137586893052802  # observed live on the primary device
+        raw = struct.pack("<IIi4xQ", 11, 24, 0, big)
+        code, import_id = parse_import_resp(raw)
+        assert import_id == big
+        # the parsed id must be accepted by the proto field it feeds
+        camera_pb2.DspJobRequest(src_buffer_id=import_id)
 
     def test_parse_import_resp_rejects_wrong_type_and_short(self):
         with pytest.raises(DspError):

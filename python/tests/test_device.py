@@ -222,3 +222,39 @@ class TestDeviceClientGPIO:
         
         assert value is True
         mock_stub.GPIORead.assert_called_once()
+
+class TestDeviceClientStatus:
+    """get_device_status against the *real* response proto shape.
+
+    Regression (device run 2026-09-09): DeviceStatus on the wire carries
+    ``ir_led_level`` (uint32); the client read a nonexistent
+    ``ir_led_on`` field and raised AttributeError. Plain ``Mock``
+    responses auto-create any attribute, so these tests feed genuine
+    ``device_pb2.DeviceStatus`` messages.
+    """
+
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
+    def test_get_device_status_maps_ir_led_level(self, mock_channel):
+        from neoruntime_ipc_sdk.proto import device_pb2
+
+        client = DeviceClient()
+        mock_stub = Mock()
+        mock_stub.GetDeviceStatus.return_value = device_pb2.DeviceStatus(
+            ir_led_level=3)
+        client.stub = mock_stub
+
+        status = client.get_device_status()
+
+        assert status.ir_led_on is True
+
+    @patch('neoruntime_ipc_sdk.device.grpc.insecure_channel')
+    def test_get_device_status_ir_led_off_when_level_zero(self, mock_channel):
+        from neoruntime_ipc_sdk.proto import device_pb2
+
+        client = DeviceClient()
+        mock_stub = Mock()
+        mock_stub.GetDeviceStatus.return_value = device_pb2.DeviceStatus(
+            ir_led_level=0)
+        client.stub = mock_stub
+
+        assert client.get_device_status().ir_led_on is False

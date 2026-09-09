@@ -670,7 +670,7 @@ class DeviceClient(GrpcClient):
             autofocus_enabled=response.autofocus_enabled,
             ircut_mode=IrCutMode(response.ircut_mode),
             white_light_level=response.white_light_level,
-            ir_led_on=response.ir_led_on,
+            ir_led_on=bool(response.ir_led_level),
             mcu_version=response.mcu_version,
             mcu_uptime_ms=response.mcu_uptime_ms,
         )

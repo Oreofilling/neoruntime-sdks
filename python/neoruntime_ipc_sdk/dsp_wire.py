@@ -28,7 +28,7 @@ _ALLOC_RESP_SIZE = struct.calcsize(_ALLOC_RESP_FMT)
 _RELEASE_FMT = "<IIQ"
 _IMPORT_REQ_FMT = "<12I"  # hdr + w,h,fmt,planes,strides[3],sizes[3]
 _IMPORT_REQ_SIZE = struct.calcsize(_IMPORT_REQ_FMT)  # 48
-_IMPORT_RESP_FMT = "<IIi4xq"  # hdr + code, pad, import_id
+_IMPORT_RESP_FMT = "<IIi4xQ"  # hdr + code, pad, import_id (u64, daemon-side)
 _IMPORT_RESP_SIZE = struct.calcsize(_IMPORT_RESP_FMT)  # 24
 _DSP_MAX_FDS = 64  # FD_PUB_DSP_MAX_FDS
 

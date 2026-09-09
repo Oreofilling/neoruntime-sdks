@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Iterator
 
 import grpc  # noqa: F401 — tests patch app.grpc.insecure_channel
+from google.protobuf import empty_pb2
 
 from ._transport import GrpcClient
 from .proto import app_pb2, app_pb2_grpc
@@ -221,7 +222,7 @@ class AppClient(GrpcClient):
         if self.stub is None:
             self.connect()
 
-        request = app_pb2.Empty()
+        request = empty_pb2.Empty()
         response = self.stub.ListApps(request)
 
         return [self._parse_app_info(app) for app in response.apps]
