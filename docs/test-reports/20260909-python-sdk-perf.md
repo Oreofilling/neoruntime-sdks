@@ -100,52 +100,59 @@
 
 ### 长稳结果
 
-- 模式: **media-only (infer degraded)**(infer 冒烟失败:RuntimeError: Inference failed: Inference failed: -2799)
+- 模式: **full**
 - 时长 1800.0s / 迭代 3600 / 错误 0
-- 速率: 首 2.02/s → 末 2.0/s(衰减 0.85%,阈值 10.0%)
-- 客户端 RSS: 75.5MiB → 89.0MiB(Δ 13.5MiB); fd 15 → 16
+- 速率: 首 2.01/s → 末 2.0/s(衰减 0.68%,阈值 10.0%)
+- 客户端 RSS: 76.7MiB → 89.9MiB(Δ 13.2MiB); fd 15 → 16
 
 | daemon | RSS Δ |
 |---|---:|
-| ai-runtime | 1.9MiB |
+| ai-runtime | 836KiB |
 | app-manager | 0KiB |
-| camera-daemon | 2.0MiB |
-| event-bus | 52KiB |
+| camera-daemon | -740KiB |
+| event-bus | -164KiB |
 
 分桶序列(客户端 RSS KiB / 迭代数):
 ```
-t=    0.0s  rss=    77264  iters=0
-t=   60.0s  rss=    90656  iters=121
-t=  120.5s  rss=    90656  iters=242
-t=  181.0s  rss=    90656  iters=363
-t=  241.5s  rss=    90716  iters=484
-t=  302.0s  rss=    91056  iters=605
-t=  362.5s  rss=    91056  iters=726
-t=  423.0s  rss=    91056  iters=847
-t=  483.5s  rss=    91056  iters=968
-t=  544.0s  rss=    91064  iters=1089
-t=  604.5s  rss=    91064  iters=1210
-t=  665.0s  rss=    91064  iters=1331
-t=  725.5s  rss=    91068  iters=1452
-t=  786.0s  rss=    91076  iters=1573
-t=  846.5s  rss=    91076  iters=1694
-t=  907.0s  rss=    91076  iters=1815
-t=  967.5s  rss=    91080  iters=1936
-t= 1028.0s  rss=    91080  iters=2057
-t= 1088.5s  rss=    91080  iters=2178
-t= 1149.0s  rss=    91084  iters=2299
-t= 1209.5s  rss=    91084  iters=2420
-t= 1270.0s  rss=    91088  iters=2541
-t= 1330.5s  rss=    91092  iters=2662
-t= 1391.0s  rss=    91092  iters=2783
-t= 1451.5s  rss=    91092  iters=2904
-t= 1512.0s  rss=    91092  iters=3025
-t= 1572.5s  rss=    91096  iters=3146
-t= 1633.0s  rss=    91096  iters=3267
-t= 1693.5s  rss=    91096  iters=3388
-t= 1754.0s  rss=    91104  iters=3509
-t= 1800.0s  rss=    91108  iters=3600
+t=    0.0s  rss=    78568  iters=0
+t=   60.1s  rss=    91756  iters=121
+t=  120.6s  rss=    90388  iters=242
+t=  181.1s  rss=    94280  iters=363
+t=  241.6s  rss=    90392  iters=484
+t=  302.1s  rss=    92860  iters=605
+t=  362.6s  rss=    94300  iters=726
+t=  423.1s  rss=    91420  iters=847
+t=  483.1s  rss=    92604  iters=967
+t=  543.6s  rss=    87292  iters=1088
+t=  604.1s  rss=    91948  iters=1209
+t=  664.6s  rss=    93668  iters=1330
+t=  725.1s  rss=    90556  iters=1451
+t=  785.6s  rss=    93008  iters=1572
+t=  846.1s  rss=    94448  iters=1693
+t=  906.6s  rss=    91372  iters=1814
+t=  967.1s  rss=    93540  iters=1935
+t= 1027.1s  rss=    87716  iters=2055
+t= 1087.1s  rss=    91916  iters=2175
+t= 1147.6s  rss=    94096  iters=2296
+t= 1207.6s  rss=    88012  iters=2416
+t= 1268.1s  rss=    92660  iters=2537
+t= 1328.6s  rss=    93784  iters=2658
+t= 1389.1s  rss=    90624  iters=2779
+t= 1449.6s  rss=    93076  iters=2900
+t= 1510.1s  rss=    94528  iters=3021
+t= 1570.6s  rss=    91648  iters=3142
+t= 1631.1s  rss=    90872  iters=3263
+t= 1691.1s  rss=    92604  iters=3383
+t= 1751.6s  rss=    94044  iters=3504
+t= 1800.0s  rss=    92040  iters=3600
 ```
+
+## 关键发现
+
+- **模型注册陷阱**:运行时对已存在的 model_id 重复注册时不校验 model_path(返回成功但绑定不变),且平台侧自愈会按数据库复活无主注册——以固定 id 先后注册不同模型文件会静默打到旧模型(infer 报 -2799 输入校验错)。SDK 用户应让 id 与模型文件一一对应,或注册前先注销。本套件模型 id 已改为文件名派生;首次正式跑的 P5 曾因该陷阱误降级为 media-only,本报告P5 数据来自修复后的全量补跑。
+- **infer 输入契约**:daemon 按模型几何校验输入 byte_size:NV12 模型须喂几何匹配的 NV12(RGB 或尺寸不符均报 -2799/-2811)。hw_infer_time_us 对本模型族不上报(HAL 跳过 latency 标志),端到端时延以 infer_time_us 为准。
+- **设备面长尾**:get_lens_status 呈 p99/p50≈25× 长尾(max 2.2s),其余设备面 RPC p99 均在 20ms 内——对镜头状态有实时要求的调用方应容错偶发秒级抖动。
+- **subscribe 流式推理**:本部署上 daemon 侧流式推理逐帧 -2814(详见 NA 明细),单帧 infer 路径正常——流式与单帧路径健康状况独立,SDK 用户当前应以单帧/批量infer 为可用面。
 
 ### NA(前置缺失/路径不可用)
 
