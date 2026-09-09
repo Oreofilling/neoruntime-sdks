@@ -247,6 +247,30 @@ def soak_section(cases) -> list[str]:
     return out
 
 
+# 关键发现(渲染为报告的「关键发现」节;措辞与仓库脱敏规约一致,
+# 不含任何设备标识。条目与套件当前认知同步,报告是带日期快照)。
+FINDINGS = [
+    ("模型注册陷阱",
+     "运行时对已存在的 model_id 重复注册时不校验 model_path(返回成功但"
+     "绑定不变),且平台侧自愈会按数据库复活无主注册——以固定 id 先后注册"
+     "不同模型文件会静默打到旧模型(infer 报 -2799 输入校验错)。SDK 用户"
+     "应让 id 与模型文件一一对应,或注册前先注销。本套件模型 id 已改为"
+     "文件名派生;首次正式跑的 P5 曾因该陷阱误降级为 media-only,本报告"
+     "P5 数据来自修复后的全量补跑。"),
+    ("infer 输入契约",
+     "daemon 按模型几何校验输入 byte_size:NV12 模型须喂几何匹配的 NV12"
+     "(RGB 或尺寸不符均报 -2799/-2811)。hw_infer_time_us 对本模型族不上报"
+     "(HAL 跳过 latency 标志),端到端时延以 infer_time_us 为准。"),
+    ("设备面长尾",
+     "get_lens_status 呈 p99/p50≈25× 长尾(max 2.2s),其余设备面 RPC "
+     "p99 均在 20ms 内——对镜头状态有实时要求的调用方应容错偶发秒级抖动。"),
+    ("subscribe 流式推理",
+     "本部署上 daemon 侧流式推理逐帧 -2814(详见 NA 明细),单帧 infer "
+     "路径正常——流式与单帧路径健康状况独立,SDK 用户当前应以单帧/批量"
+     "infer 为可用面。"),
+]
+
+
 def notes_section(cases) -> list[str]:
     out = []
     buckets = (
@@ -331,6 +355,11 @@ def main() -> int:
         if stream:
             lines += stream_table(stream) + [""]
         lines += extra
+
+    if FINDINGS:
+        lines += ["", "## 关键发现", ""]
+        for title, body in FINDINGS:
+            lines += [f"- **{title}**:{body}"]
 
     lines += notes_section(cases)
     lines += ["", "---",

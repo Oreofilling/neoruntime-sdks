@@ -19,6 +19,7 @@ from perf_common import (  # noqa: E402
     arrival_stats,
     median_round,
     model_input_geometry,
+    perf_model_id,
     percentile_stats,
     pick_model,
 )
@@ -164,6 +165,25 @@ class ModelInputGeometryTest(unittest.TestCase):
 
     def test_no_numbers(self):
         self.assertIsNone(model_input_geometry("/m/yolov5m_vehicles.hef"))
+
+
+class PerfModelIdTest(unittest.TestCase):
+    def test_id_derives_from_filename(self):
+        # Same file → same id across runs and devices: the daemon keeps an
+        # existing id's binding when a re-registration names a different
+        # file, so ids must never outlive their file choice.
+        self.assertEqual(
+            perf_model_id("/m/hailo_yolov8n_384_640.hef"),
+            "sdk-perf-hailo_yolov8n_384_640")
+
+    def test_different_files_never_share_an_id(self):
+        self.assertNotEqual(
+            perf_model_id("/m/hailo_yolov8n_384_640.hef"),
+            perf_model_id("/m/yolo_world_v2s_540.hef"))
+
+    def test_pathless_or_none_degrades_not_crashes(self):
+        self.assertEqual(perf_model_id("model.hef"), "sdk-perf-model")
+        self.assertTrue(perf_model_id(None).startswith("sdk-perf-"))
 
 
 if __name__ == "__main__":

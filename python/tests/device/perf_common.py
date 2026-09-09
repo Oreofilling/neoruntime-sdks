@@ -235,6 +235,23 @@ def model_input_geometry(model_path: str) -> tuple[int, int] | None:
     return None
 
 
+def perf_model_id(model_path: str | None, prefix: str = "sdk-perf") -> str:
+    """Stable per-file test id: same HEF → same id across runs.
+
+    Two device behaviors make a FIXED test id a trap (formal-run
+    incident, 2026-09-09): the daemon keeps an existing id's binding
+    when a re-registration names a different file — register-with-
+    existing-id adds an owner and returns success — and the platform's
+    self-heal resurrects owner-less registrations from its database
+    about a minute after unregister. A calibration run's model then
+    shadows the formal run's model under the same id and every infer
+    lands on the stale geometry (-2799). Keying the id to the file
+    makes any healed entry match the file under test.
+    """
+    stem = os.path.basename(model_path or "model").rsplit(".", 1)[0]
+    return f"{prefix}-{stem}"
+
+
 class PerfTestCase(DeviceTestCase):
     """Base class for perf modules: sampling with evidence conventions."""
 

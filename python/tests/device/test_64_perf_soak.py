@@ -7,9 +7,13 @@ daemon separately. Drift attribution is the point: a client-side RSS
 climb is an SDK leak (fd or buffer), a daemon-side climb is a daemon
 leak, and the two need different fixes.
 
-If the infer path is dead on this deployment (the -2799 regression)
-the loop degrades to the media+events path and says so — a 30-minute
-soak of get_frame/to_rgb/publish still measures the media stack.
+If the infer path still fails after smoke (dead deployment path, wrong
+input contract), the loop degrades to the media+events path and says
+so — a 30-minute soak of get_frame/to_rgb/publish still measures the
+media stack. The model id is derived from the chosen file: a fixed id
+let a previous run's self-heal-resurrected model shadow this one on
+2026-09-09 (register-with-existing-id keeps the old binding), which
+degraded the formal soak with -2799 until the id became per-file.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from perf_common import (
     PerfTestCase,
     daemon_pids,
     model_input_geometry,
+    perf_model_id,
     pick_model,
     proc_snapshot,
 )
@@ -38,7 +43,7 @@ MODEL_PATH = pick_model("hailo_yolov8n_384_640.hef",
                         "yolov5m_vehicles.hef",
                         "yolo_world_v2s_540.hef",
                         "yolo_world_v2s.hef")
-TEST_MODEL_ID = "sdk-perf-soak"
+TEST_MODEL_ID = perf_model_id(MODEL_PATH)
 TOPIC = "sdk-perf/soak"
 SNAPSHOT_EVERY_S = 60
 TARGET_ITER_HZ = 2.0

@@ -37,16 +37,21 @@ from perf_common import (
     STREAM_S,
     PerfTestCase,
     model_input_geometry,
+    perf_model_id,
     pick_model,
 )
 
 # Single-input NV12 model first (proven inferable); dual-input models
-# only as last-resort fallback (see module docstring).
+# only as last-resort fallback (see module docstring). The test id is
+# derived from the chosen file: the daemon keeps an existing id's
+# binding when a re-registration names a different file, so a fixed id
+# would let a previous run's (self-heal-resurrected) model shadow this
+# one — same file must always mean same id.
 MODEL_PATH = pick_model("hailo_yolov8n_384_640.hef",
                         "yolov5m_vehicles.hef",
                         "yolo_world_v2s_540.hef",
                         "yolo_world_v2s.hef")
-TEST_MODEL_ID = "sdk-perf-yolo"
+TEST_MODEL_ID = perf_model_id(MODEL_PATH)
 SUBSCRIBE_STREAM = "third"  # 640×384@15 — geometry-matched to yolov8n
 SUBSCRIBE_PROBE_S = 5.0
 
