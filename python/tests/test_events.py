@@ -68,9 +68,30 @@ class TestEventClient:
     def test_connect(self, mock_channel):
         client = EventClient()
         client.connect()
-        
+
         assert client.channel is not None
         mock_channel.assert_called_once()
+
+    def test_on_event_logs_callback_errors(self, caplog):
+        import logging
+
+        client = EventClient()
+        event = Event(topic="app/alert", payload={})
+
+        def fake_subscribe(topic, filters=None):
+            yield event
+
+        client.subscribe = fake_subscribe
+
+        def boom(event):
+            raise ValueError("handler bug")
+
+        with caplog.at_level(logging.ERROR, logger="neoruntime_ipc_sdk.events"):
+            thread = client.on_event("app/alert", boom)
+            thread.join(timeout=2)
+
+        assert not thread.is_alive()
+        assert "callback error" in caplog.text
 
 
 class TestEventClientPublish:

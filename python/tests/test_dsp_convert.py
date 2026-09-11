@@ -326,3 +326,33 @@ class TestJobRejection:
         assert np.array_equal(out, rgb_to_nv12(src))  # software leg ran
         op = router.health()["ops"]["rgb_to_nv12"]
         assert (op["fallbacks"], op["software_calls"], op["hardware_calls"]) == (1, 1, 0)
+
+
+class TestBgrConvertWarning:
+    """BGR frames entering a DSP conversion are flagged, not silently swapped."""
+
+    def test_warns_for_bgr_frame(self, caplog):
+        import logging
+
+        from neoruntime_ipc_sdk import Frame
+        from neoruntime_ipc_sdk.dsp import _warn_bgr_convert
+
+        frame = Frame(sequence=1, timestamp_ns=0, width=8, height=8, format="BGR",
+                      image=np.zeros((8, 8, 3), np.uint8))
+        with caplog.at_level(logging.WARNING, logger="neoruntime_ipc_sdk.dsp"):
+            _warn_bgr_convert(frame)
+        assert "BGR" in caplog.text
+        assert "rgb24" in caplog.text
+
+    def test_silent_for_rgb_and_raw_arrays(self, caplog):
+        import logging
+
+        from neoruntime_ipc_sdk import Frame
+        from neoruntime_ipc_sdk.dsp import _warn_bgr_convert
+
+        frame = Frame(sequence=1, timestamp_ns=0, width=8, height=8, format="RGB",
+                      image=np.zeros((8, 8, 3), np.uint8))
+        with caplog.at_level(logging.WARNING, logger="neoruntime_ipc_sdk.dsp"):
+            _warn_bgr_convert(frame)
+            _warn_bgr_convert(np.zeros((8, 8, 3), np.uint8))
+        assert caplog.text == ""

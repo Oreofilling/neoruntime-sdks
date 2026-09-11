@@ -1,5 +1,6 @@
 """
 Tests for MJPEG streaming helpers: MjpegStream / mjpeg_wsgi_app / MjpegServer
+plus the platform stream URL composer (platform_stream_url).
 """
 
 import threading
@@ -10,7 +11,12 @@ import numpy as np
 import pytest
 
 from neoruntime_ipc_sdk.media import Frame
-from neoruntime_ipc_sdk.web import MjpegServer, MjpegStream, mjpeg_wsgi_app
+from neoruntime_ipc_sdk.web import (
+    MjpegServer,
+    MjpegStream,
+    mjpeg_wsgi_app,
+    platform_stream_url,
+)
 
 JPEG_MAGIC = b"\xff\xd8\xff"
 
@@ -145,3 +151,51 @@ class TestMjpegServer:
         server.stop()
         with pytest.raises(urllib.error.URLError):
             urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5)
+
+
+class TestPlatformStreamUrl:
+    """platform_stream_url: compose the console-visible WS URL of a platform
+    camera stream (the same /api/v1/h264/{id} endpoint the web console plays),
+    so apps that inject frames can hand viewers a URL instead of opening
+    their own ports."""
+
+    def test_default_host_is_localhost_wss(self):
+        assert platform_stream_url("sub") == "wss://localhost/api/v1/h264/sub"
+
+    def test_explicit_host_with_port_kept_verbatim(self):
+        url = platform_stream_url("main", host="192.168.1.10:8443")
+        assert url == "wss://192.168.1.10:8443/api/v1/h264/main"
+
+    def test_http_origin_host_normalizes_scheme_to_ws(self):
+        url = platform_stream_url("sub", host="http://localhost:8080")
+        assert url == "ws://localhost:8080/api/v1/h264/sub"
+
+    def test_https_origin_host_normalizes_scheme_to_wss(self):
+        url = platform_stream_url("sub", host="https://device.example/")
+        assert url == "wss://device.example/api/v1/h264/sub"
+
+    def test_explicit_scheme_overrides_origin_inference(self):
+        url = platform_stream_url("sub", host="https://device.example", scheme="ws")
+        assert url == "ws://device.example/api/v1/h264/sub"
+
+    def test_token_appended_url_encoded(self):
+        url = platform_stream_url("sub", host="h", token="a b/c+d")
+        assert url == "wss://h/api/v1/h264/sub?token=a%20b%2Fc%2Bd"
+
+    def test_stream_id_leading_slash_stripped(self):
+        assert platform_stream_url("/sub", host="h") == "wss://h/api/v1/h264/sub"
+
+    def test_env_var_used_when_host_none(self, monkeypatch):
+        monkeypatch.setenv("AIPC_WEB_HOST", "from-env:9443")
+        assert platform_stream_url("sub") == "wss://from-env:9443/api/v1/h264/sub"
+
+    def test_explicit_host_beats_env_var(self, monkeypatch):
+        monkeypatch.setenv("AIPC_WEB_HOST", "from-env")
+        assert platform_stream_url("sub", host="explicit") == \
+            "wss://explicit/api/v1/h264/sub"
+
+    def test_empty_stream_id_rejected(self):
+        with pytest.raises(ValueError):
+            platform_stream_url("", host="h")
+        with pytest.raises(ValueError):
+            platform_stream_url("/", host="h")

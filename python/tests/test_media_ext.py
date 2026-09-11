@@ -43,7 +43,8 @@ class TestFrameCropRgb:
         assert c is not f
         assert c.sequence == 7
         assert c.timestamp_ns == 12345
-        assert c.metadata == {"stream": "main"}
+        assert c.metadata["stream"] == "main"      # custom keys survive
+        assert c.metadata["transform"]["op"] == "crop"   # geometry recorded
 
     def test_crop_does_not_mutate_original(self):
         f = make_rgb_frame()
@@ -311,7 +312,8 @@ class TestResizeDspFastPath:
         assert r.image is out                       # DSP output passed through
         assert (r.width, r.height, r.format) == (96, 72, "GRAY8")
         assert r.sequence == 7 and r.timestamp_ns == 12345
-        assert r.metadata == {"stream": "main"}
+        assert r.metadata["stream"] == "main"      # custom keys survive
+        assert r.metadata["transform"]["mode"] == "stretch"   # geometry recorded
         assert not f.handle.closed                  # input frame not consumed
         assert f.image is None                      # never materialized
 
