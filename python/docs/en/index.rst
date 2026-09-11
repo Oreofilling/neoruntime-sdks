@@ -111,6 +111,8 @@ Contents
    api/app
    api/config
    api/dsp
+   api/injection
+   api/stream_pipeline
    api/camera
    api/audio
    api/audio_stream

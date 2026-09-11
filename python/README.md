@@ -191,7 +191,56 @@ for frame_seq, result in inf.subscribe(stream="cam0_main", model="person_v1"):
         dev.set_white_light(0)
 ```
 
-### 6. App Toolkit: Drawing, Recording, and Web Streaming
+### 7. Inference Pipeline (client-side pre/post)
+
+For custom models whose postprocess is not handled server-side, or apps
+that need their own thresholds — `InferencePipeline` composes
+preprocessing (derived from the model's input spec, DSP-scaled for
+keep-fd frames), inference, and a client-side YOLO decoder whose
+thresholds are yours:
+
+```python
+from neoruntime_ipc_sdk import (
+    FdMediaClient, InferencePipeline, YoloV8Postprocessor,
+)
+
+pipe = InferencePipeline.from_model(
+    "custom_yolov8n",
+    postprocessor=YoloV8Postprocessor(labels=["person", "car"], score_threshold=0.3),
+)
+for frame in FdMediaClient().subscribe("sub", keep_fd=True):
+    out = pipe.run(frame)          # out.objects in source-frame coordinates
+```
+
+`Preprocessor` also works standalone: `tensor, meta = pre(frame)` with
+`meta.to_source(x, y)` mapping model-input coordinates back to the frame.
+When a family model fits, `InferenceClient.subscribe` remains the cheaper
+path — see [PERFORMANCE.md](PERFORMANCE.md) for the decision table.
+
+For long-running apps, `PipelineRunner` productises the whole loop — a
+reader thread pulling frames into a latest-wins queue, a worker thread
+running the pipeline and handing results to a sink, keep-fd handles
+released on consumption, drops/latency/errors visible in `stats`:
+
+```python
+from neoruntime_ipc_sdk import FdMediaClient, InferencePipeline, PipelineRunner
+
+media = FdMediaClient()
+runner = PipelineRunner(
+    source=media.subscribe("sub", keep_fd=True),
+    pipeline=InferencePipeline.from_model("person_v1"),
+    sink=lambda out, frame: print(out.objects),
+    queue_size=1,            # latest-wins: always infer the newest frame
+)
+runner.start()
+print(runner.stats)          # {"fps": ..., "dropped": ..., "recent_latency_ms": ...}
+runner.stop()                # or: with PipelineRunner(...) as runner: ...
+```
+
+Sinks receive `(result, frame)` on the worker thread and must not retain
+the frame beyond the call — the runner releases it right after.
+
+### 8. App Toolkit: Drawing, Recording, and Web Streaming
 
 Detection visualization on a live frame (pure numpy/PIL, cv2 optional):
 
@@ -242,7 +291,7 @@ AI inference client for model inference and streaming inference subscription.
 | `close()` | - | - | Close connection |
 | `infer(image, model_id, timeout_ms, priority, session_id)` | ndarray, str, int, int, str | InferenceResult | Single inference |
 | `infer_with_tensors(model_id, inputs, input_names, timeout_ms)` | str, List[ndarray], List[str], int | List[ndarray] | Multi-tensor inference |
-| `subscribe(stream, model, fps, session_id, raw_output_only, max_consecutive_failures)` | str, str, int, str, bool, Optional[int] | Iterator[Tuple[int, InferenceResult]] | Streaming inference; failed frames are skipped with a warning and a `RuntimeError` is raised after 10 consecutive failures (0/None disables) |
+| `subscribe(stream, model, fps, session_id, raw_output_only, max_consecutive_failures, queue_size)` | str, str, int, str, bool, Optional[int], Optional[int] | Iterator[Tuple[int, InferenceResult]] | Streaming inference; failed frames are skipped with a warning and a `RuntimeError` is raised after 10 consecutive failures (0/None disables). The client-side queue is bounded (`queue_size`, default 100): a slow consumer drops its *oldest* queued results — counted on the iterator's `dropped` attribute and reported in a throttled warning — instead of growing memory without bound (0/None = unbounded) |
 | `register_model(model_path, model_id, inputs, outputs)` | str, str, List[Dict], List[Dict] | str | Register model |
 | `unregister_model(model_id)` | str | - | Unregister model |
 | `list_models()` | - | List[ModelInfo] | List models |
@@ -376,11 +425,11 @@ Video stream client receiving frames over UDS (dma-buf fds, decoded on receive b
 
 | Method | Parameters | Returns | Description |
 |--------|------------|---------|-------------|
-| `subscribe(stream_id, skip_frames, keep_fd)` | str, bool, bool | Iterator[Frame] | Subscribe to video stream |
-| `subscribe_raw(stream_id, skip_frames, keep_fd)` | str, bool, bool | Iterator[Frame] | Same as `subscribe` |
+| `subscribe(stream_id, skip_frames, keep_fd)` | str, int/bool, bool | Iterator[Frame] | Subscribe to video stream; `skip_frames` is a decimation interval — 1 (or the historical `True`/`False`) yields every frame, N>1 yields every Nth (decimated keep-fd frames are released back to the daemon immediately) |
+| `subscribe_raw(stream_id, skip_frames, keep_fd)` | str, int/bool, bool | Iterator[Frame] | Same as `subscribe` |
 | `get_frame(stream_id, timeout_ms, keep_fd)` | str, int, bool | Frame \| None | Get single frame |
 | `get_encoded_stream(stream_id)` | str | EncodedStreamClient | H.264/H.265 Annex-B stream client |
-| `list_streams()` | - | List[str] | List available streams (`main` / `sub`) |
+| `list_streams()` | - | List[str] | List active stream IDs from the camera daemon (falls back to `main` / `sub` when the service is unreachable) |
 | `get_rtsp_url(stream_id, host, port)` | str, str, int | str | RTSP playback URL (needs RTSP enabled) |
 | `on_frame(stream_id, callback)` | str, Callable | Thread | Callback subscription |
 | `close()` | - | - | Close connection |
@@ -393,8 +442,53 @@ Video stream client receiving frames over UDS (dma-buf fds, decoded on receive b
 - `Frame.resize(width, height, mode="letterbox", pad_value=114)` - New resized Frame (`stretch` / `letterbox` / `crop`)
 - `Frame.to_jpeg_bytes(quality=85)` - JPEG bytes (cv2 fast path, PIL fallback)
 - `frame.release()` - Return a `keep_fd=True` buffer to the daemon (idempotent)
+- `frame.metadata["transform"]` - Affine geometry of the last crop/resize chain: `dst = src * scale + origin` per axis (composed across chained calls). Map model-input coordinates back to the source frame with `src = (dst - origin) / scale` — no hand-derived letterbox maths in the app
 - `EncodedStreamClient` / `EncodedFrame`: encoded stream subscription; `EncodedFrame.data` (Annex-B bytes), `.is_keyframe()`, `.codec_name()`
 - `StreamInfo`, `PixelFormat`: NV12, NV21, RGB, BGR, RGBA, BGRA, GRAY8, YUYV
+
+### Diagnostics
+
+`diagnostics()` (never raises) snapshots the SDK's execution environment — the first stop when an app feels slow:
+
+```python
+from neoruntime_ipc_sdk import diagnostics
+
+report = diagnostics()
+report["optional_deps"]["cv2"]          # {"available": bool, "version": ...}
+report["services"]["camera_control"]    # {"path", "exists", "connectable"}
+report["media"]["encoded_dir"]["streams"]
+report["accel_router"]["ops"]["nv12_to_rgb"]["backend"]   # "hardware" | "software"
+```
+
+Without cv2 installed, conversions/resize/JPEG run on pure-numpy fallbacks that are 10-50x slower at frame rate — the SDK warns once per operation on that path.
+
+`diagnostics.check()` grades the snapshot against an app's requirements — a deployment gate:
+
+```python
+from neoruntime_ipc_sdk.diagnostics import check
+
+check(["inference", "camera_sock"]).raise_if_unhealthy()   # RuntimeError listing failures
+# live model/stream probes are opt-in:
+check(["model_registered", "stream_active"],
+      inference=InferenceClient(), model_id="person_v1",
+      camera=CameraClient(), stream_id="main").raise_if_unhealthy()
+```
+
+Hardware/software routing is one app-wide knob (see `AccelRouter.health()` for what is actually serving each operation):
+
+```python
+from neoruntime_ipc_sdk import set_route_policy
+
+set_route_policy("software_only")   # baseline/benchmark; "prefer_hardware" (default), "hardware_only" (refuse silent CPU fallback)
+```
+
+### Architecture and stability
+
+The SDK is layered, and the middle layer is a stability contract:
+
+1. **Daemon clients** — `InferenceClient`, `FdMediaClient`, `CameraClient`, `DeviceClient`, `EventClient`, `AppClient`: communication, timeouts, reconnection, resource release.
+2. **Data & algorithm primitives** *(stable contract)* — `Frame`/`FrameHandle`, `PreprocessMeta`, `DetectedObject`, and the callable protocols `preprocessor(frame) -> (tensor, meta)` / `postprocessor(raw_outputs, meta) -> objects`. The built-in `Preprocessor` and `YoloV5/V8Postprocessor` implement them; custom decoders (RetinaFace, OCR, pose...) can replace them freely. Breaking changes here are gated behind a minor-version bump with deprecation warnings.
+3. **App pipeline** — `InferencePipeline` (single pass) and `PipelineRunner` (long-running): composition, backpressure (latest-wins with drop counters), latency/error stats, frame ownership.
 
 ### Recording (`recording`)
 

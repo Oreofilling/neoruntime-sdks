@@ -156,7 +156,7 @@ t= 1800.0s  rss=    92040  iters=3600
 
 ### NA(前置缺失/路径不可用)
 
-- `test_60_perf_inference.T03InferDataPlane.test_03_subscribe_stream`: subscribe path dead on this deployment: RuntimeError: Stream inference failed 10 consecutive times (stream='third', model='sdk-perf-yolo', last frame=401649): 'Inference failed: -2814'
+- `test_60_perf_inference.T03InferDataPlane.test_03_subscribe_stream`: subscribe path dead on this deployment: RuntimeError: Stream inference failed 10 consecutive times (stream='third', model='sdk-perf-yolo', last frame=401649): 'Inference failed: -2814' —— **2026-09-10 已修复**(根因与验证见上"关键发现"更新),补跑几何匹配对(sub=720p 需几何对齐模型;third 640×384 + yolov8n)已恢复出结果
 
 ### KNOWN-ISSUE(已知缺陷,非本次新失败)
 

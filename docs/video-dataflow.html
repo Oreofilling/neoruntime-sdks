@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NE503 视频流数据流向全景图 · 平台层 → SDK 接口</title>
+<style>
+  :root {
+    --ink: #1f2933;
+    --muted: #5f6b7a;
+    --line: #d9e2ec;
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --hw: #f3e8ff;      --hw-b: #8b5cf6;
+    --daemon: #fff7e0;  --daemon-b: #d97706;
+    --ipc: #fde8e8;     --ipc-b: #dc2626;
+    --sdk: #e6f4ea;     --sdk-b: #16a34a;
+    --app: #eef2ff;     --app-b: #4f46e5;
+    --ctrl: #f1f5f9;    --ctrl-b: #64748b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    background: var(--bg); color: var(--ink);
+    line-height: 1.65; padding: 32px 16px 64px;
+  }
+  .page { max-width: 1080px; margin: 0 auto; }
+  header.page-head { text-align: center; margin-bottom: 28px; }
+  header.page-head h1 { font-size: 26px; letter-spacing: .5px; }
+  header.page-head .sub { color: var(--muted); margin-top: 6px; font-size: 14px; }
+  header.page-head .meta { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  header.page-head .meta span { background: #e2e8f0; border-radius: 999px; padding: 2px 10px; margin: 0 3px; }
+
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 22px; }
+  section > h2 { font-size: 18px; padding-bottom: 10px; border-bottom: 2px solid var(--line); margin-bottom: 16px; }
+  section > h2 .no { color: var(--muted); font-weight: 600; margin-right: 6px; }
+
+  /* legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 13px; }
+  .legend .item { display: flex; align-items: center; gap: 6px; }
+  .legend .chip { width: 14px; height: 14px; border-radius: 4px; border: 1px solid; }
+
+  /* flow primitives */
+  .flow { display: flex; flex-direction: column; align-items: stretch; }
+  .box { border: 1.5px solid; border-radius: 10px; padding: 10px 14px; background: var(--card); }
+  .box .t { font-weight: 700; font-size: 14.5px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .box .d { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  .box .anchor { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: #2563eb; background:#eff6ff; border-radius: 4px; padding: 0 5px; }
+
+  .band { border-radius: 12px; padding: 14px 16px; border: 1.5px dashed; }
+  .band > .band-title { font-size: 13px; font-weight: 700; letter-spacing: 1px; margin-bottom: 10px; display:flex; align-items:center; gap:8px;}
+  .band.hw    { background: var(--hw);     border-color: var(--hw-b); }
+  .band.daemon{ background: var(--daemon); border-color: var(--daemon-b); }
+  .band.ipc   { background: var(--ipc);    border-color: var(--ipc-b); }
+  .band.sdk   { background: var(--sdk);    border-color: var(--sdk-b); }
+  .band.app   { background: var(--app);    border-color: var(--app-b); }
+  .band.ctrl  { background: var(--ctrl);   border-color: var(--ctrl-b); border-style: dashed; }
+  .band .box  { background: rgba(255,255,255,.75); }
+
+  .arrow { display: flex; flex-direction: column; align-items: center; padding: 2px 0; }
+  .arrow .stem { color: #94a3b8; font-size: 15px; line-height: 1.1; }
+  .arrow .lbl { font-size: 11.5px; color: var(--muted); background: #eef2f7; border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; margin: 1px 0; }
+  .arrow .lbl strong { color: var(--ipc-b); }
+
+  .row { display: flex; gap: 14px; align-items: stretch; }
+  .row > * { flex: 1; min-width: 0; }
+  .col { display: flex; flex-direction: column; }
+
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 8px; border: 1px solid; }
+  .badge.red   { color:#b91c1c; background:#fee2e2; border-color:#fca5a5; }
+  .badge.amber { color:#92400e; background:#fef3c7; border-color:#fcd34d; }
+  .badge.blue  { color:#1e40af; background:#dbeafe; border-color:#93c5fd; }
+  .badge.green { color:#166534; background:#dcfce7; border-color:#86efac; }
+  .star { font-size: 12px; color: var(--daemon-b); font-weight: 700; }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; font-size: 12.5px; }
+  td code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #0f766e; }
+  td .anchor-inline { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color:#2563eb; white-space: nowrap; }
+  table tr:nth-child(even) td { background: #fbfdff; }
+
+  /* callouts */
+  .callouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .callout { border-left: 4px solid var(--app-b); background: #f8faff; border-radius: 8px; padding: 12px 14px; font-size: 13px; }
+  .callout h3 { font-size: 14px; margin-bottom: 6px; }
+  .callout.warn { border-left-color: var(--ipc-b); background: #fff8f8; }
+
+  footer.page-foot { text-align: center; color: var(--muted); font-size: 12px; margin-top: 8px; }
+
+  @media (max-width: 760px) {
+    .row { flex-direction: column; }
+    .arrow .lbl { max-width: 92%; text-align: center; }
+  }
+  @media print {
+    body { background: #fff; padding: 8px; }
+    section { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="page-head">
+  <h1>NE503 视频流数据流向全景图</h1>
+  <div class="sub">平台层（camera-daemon / hal_v2 / ai-runtime）→ IPC 出口 → Python SDK 接口 → 应用处理链</div>
+  <div class="meta">
+    <span>2026-09-10</span><span>依据 ne503-aipc + ne503-aipc-sdks 源码逐跳核实</span><span>SDK 0.7.4</span>
+  </div>
+</header>
+
+<!-- ===================== 图例 ===================== -->
+<section>
+  <h2><span class="no">◈</span>图例</h2>
+  <div class="legend">
+    <div class="item"><span class="chip" style="background:var(--hw);border-color:var(--hw-b)"></span>硬件 / HAL</div>
+    <div class="item"><span class="chip" style="background:var(--daemon);border-color:var(--daemon-b)"></span>camera-daemon 内部</div>
+    <div class="item"><span class="chip" style="background:var(--ipc);border-color:var(--ipc-b)"></span>IPC 出口（进程边界）</div>
+    <div class="item"><span class="chip" style="background:var(--sdk);border-color:var(--sdk-b)"></span>Python SDK 客户端</div>
+    <div class="item"><span class="chip" style="background:var(--app);border-color:var(--app-b)"></span>应用处理链</div>
+    <div class="item"><span class="chip" style="background:var(--ctrl);border-color:var(--ctrl-b)"></span>控制面（gRPC）</div>
+    <div class="item"><span class="badge red">红</span>缓冲/配额硬数字</div>
+    <div class="item"><span class="anchor">camera_daemon.cpp:1461</span>&nbsp;源码锚点</div>
+  </div>
+</section>
+
+<!-- ===================== 全景图 ===================== -->
+<section>
+  <h2><span class="no">一</span>数据流向总览</h2>
+  <div class="flow">
+
+    <!-- 硬件层 -->
+    <div class="band hw">
+      <div class="band-title">🛠 硬件 / HAL（hal_v2 · vendor media library）</div>
+      <div class="row">
+        <div class="box" style="border-color:var(--hw-b)">
+          <div class="t">传感器 Sensor（IMX678）</div>
+          <div class="d">MIPI 输出 → ISP</div>
+        </div>
+        <div class="box" style="border-color:var(--hw-b)">
+          <div class="t">ISP / 采集缓冲池</div>
+          <div class="d">hal_v2 media library 管理；采集缓冲借出给下游，配置驱动</div>
+        </div>
+        <div class="box" style="border-color:var(--hw-b)">
+          <div class="t">编码器硬件（H.264/H.265）</div>
+          <div class="d">由 EncoderManager 驱动</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow"><span class="stem">▼</span><span class="lbl">帧回调（HalFrameBuffer，dma-buf fd）</span><span class="stem">▼</span></div>
+
+    <!-- camera-daemon -->
+    <div class="band daemon">
+      <div class="band-title">🎥 camera-daemon 内部（platform/camera-daemon）</div>
+
+      <div class="box" style="border-color:var(--daemon-b)">
+        <div class="t">① 前端帧回调 handle_video_frame_for_routing <span class="anchor">camera_daemon.cpp:1461</span></div>
+        <div class="d"><span class="star">★ AI overlay 绘制点</span>（apply_overlay <span class="anchor">:1607</span>）：检测框/标签/置信度与人脸马赛克/模糊（face_blur）经 HAL draw ops（DSP）画在 NV12 上——
+          内容源是 event-bus 话题 <code>inference/&lt;stream&gt;</code>（见出口 4），500ms 过期需几 Hz 刷新。绘制发生在路由<b>之前</b>，auto_feed 与手动编码及原始帧分发都带着它；但只烘在 <code>ai_overlay.stream_map</code> 配置为目标流的流上（推理流 → 显示流映射），要干净推理帧请订阅非目标流。</div>
+      </div>
+
+      <div class="arrow"><span class="stem">▼</span></div>
+
+      <div class="box" style="border-color:var(--daemon-b)">
+        <div class="t">② FrameRouter 派发 <span class="anchor">frame_router.cpp:100</span>
+          <span class="badge red">派发队列 ≤ 8</span><span class="badge red">看门狗 200ms 强制回收</span><span class="badge amber">扫描 50ms</span>
+        </div>
+        <div class="d">元数据浅拷贝入队；ManagedFrame 引用计数（<span class="anchor">frame_router.h:36</span>）——<b>HAL buffer 在引用归零（所有订阅者 release）或 200ms 强收时归还</b>，仅无订阅者分支才立即归还；
+          派发队列满 8 丢最旧（<span class="anchor">frame_router.h:155</span>）；外借超 200ms 被 force_reclaim（<span class="anchor">frame_router.cpp:206</span>）。以上为默认值（YAML watchdog_*_ms 可配）。</div>
+      </div>
+
+      <div class="arrow"><span class="stem">▼</span><span class="lbl">按注册顺序分发给订阅者（camera_daemon.cpp:4166）</span><span class="stem">▼</span></div>
+
+      <div class="row">
+        <div class="col">
+          <div class="box" style="border-color:var(--daemon-b)">
+            <div class="t">订阅者 1 <code>fd_&lt;stream&gt;</code> <span class="anchor">:4197</span></div>
+            <div class="d">→ ③ FdPublisher：dma-buf fd 经 SCM_RIGHTS 投递<br>
+              <span class="badge red">每客户端未还帧 ≤ 3</span><span class="badge red">≤ 16 客户端</span><span class="badge amber">超出对该客户端丢帧</span><br>
+              MSG_DONTWAIT 发送，EAGAIN 丢帧（<span class="anchor">fd_publisher.h:30-33, :58</span>）</div>
+          </div>
+          <div class="arrow"><span class="stem">▼</span><span class="lbl"><strong>出口 1 · camera.sock</strong>（原始帧，fd 协议）</span><span class="stem">▼</span></div>
+          <div class="box" style="border-color:var(--daemon-b)">
+            <div class="t">附：DSP 缓冲面（PLAT-5，同一 socket 第二平面）</div>
+            <div class="d">DSP_ALLOC / DSP_IMPORT / DSP_BUF_RELEASE（UDS 二进制）</div>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="box" style="border-color:var(--daemon-b)">
+            <div class="t">订阅者 2 <code>encoder_&lt;stream&gt;</code> <span class="anchor">:4218</span></div>
+            <div class="d">→ EncoderManager 编码（auto_feed 模式下由 media pipeline 直接驱动）＋ OSD 叠加</div>
+          </div>
+          <div class="arrow"><span class="stem">▼</span><span class="lbl">编码器输出回调 <span class="anchor">:3722</span>（两路并列消费）</span><span class="stem">▼</span></div>
+          <div class="row">
+            <div class="box" style="border-color:var(--daemon-b)">
+              <div class="t">④ RTSP Server</div>
+              <div class="d">on_packet 直供（<span class="anchor">:876 / :5975…</span>）<br>rtsp://&lt;ip&gt;:8554/&lt;stream&gt;</div>
+            </div>
+            <div class="box" style="border-color:var(--daemon-b)">
+              <div class="t">⑤ EncodedPublisher</div>
+              <div class="d">短临界区入队（有界队列 120，满丢最旧）→ 派发线程 → UDS 广播；<span class="badge blue">30 字节头 V2</span> + Annex-B（<span class="anchor">encoded_publisher.h</span>）</div>
+            </div>
+          </div>
+          <div class="arrow"><span class="stem">▼</span><span class="lbl"><strong>出口 2 · /run/aipc/encoded/&lt;stream&gt;.sock</strong>（编码流）</span><span class="stem">▼</span></div>
+          <div class="box" style="border-color:var(--daemon-b)">
+            <div class="t">⑦ AudioService → 同一 EncodedPublisher 加流 <code>audio_capture</code></div>
+            <div class="d"><span class="anchor">camera_daemon.cpp:430-438</span> → audio_capture.sock（当前帧头为视频布局，SDK 启发式兼容）</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 出口 1 客户端 -->
+    <div class="band sdk">
+      <div class="band-title">🐍 出口 1 的客户端（camera.sock · fd 协议 · 平级租户，各自独立配额）</div>
+      <div class="row">
+        <div class="col">
+          <div class="box" style="border-color:var(--sdk-b)">
+            <div class="t">SDK <code>FdMediaClient</code>（subscribe / get_frame / on_frame）</div>
+            <div class="d">拷贝路径（默认）：mmap → 拷贝 numpy → 立即 RELEASE<br>
+              keep-fd 路径：fd 存 FrameHandle，<span class="badge red">未还 ≤ 3</span><span class="badge red">持有 &lt; 200ms</span>（超期内容未定义）<br>
+              → <code>Frame.resize</code> 自动走 DSP 快路径（零拷贝缩放）→ <code>to_rgb</code>（小图）→ <code>Preprocessor</code></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="box" style="border-color:var(--sdk-b)">
+            <div class="t">ai-runtime <code>FdReceiver</code> <span class="anchor">ai-runtime/fd_receiver.cpp:19</span></div>
+            <div class="d">与 SDK 同协议的客户端 → 推理调度 → NPU（Hailo HEF）→ 后处理池<br>
+              ├ StreamInfer gRPC 服务端流（ai-runtime.sock）→ SDK <code>InferenceClient.subscribe</code>（零像素形态 A）<br>
+              └ auto_infer → event-bus 话题 <code>inference/&lt;stream&gt;</code> → daemon overlay 订阅者（① 的内容源）＋ SDK <code>EventClient</code></div>
+          </div>
+          <div class="arrow"><span class="stem">▼</span><span class="lbl"><strong>出口 4 · event-bus.sock</strong>（推理结果话题，跨应用扇出）</span><span class="stem">▼</span></div>
+          <div class="box" style="border-color:var(--sdk-b)">
+            <div class="t">SDK <code>EventClient</code> / <code>OverlayClient.annotate</code>（内容面）</div>
+            <div class="d">服务端每订阅者队列（queue_size / drop_old）</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow"><span class="stem">▼</span></div>
+
+    <!-- 出口 2/3 客户端 -->
+    <div class="row">
+      <div class="band sdk" style="flex:1">
+        <div class="band-title">🐍 出口 2 的客户端（encoded/*.sock）</div>
+        <div class="box" style="border-color:var(--sdk-b)">
+          <div class="t">SDK <code>EncodedStreamClient</code> → <code>EncodedFrame</code>（Annex-B）</div>
+          <div class="d">├ <code>TsWriter</code>（单文件 .ts，纯 Python TS 复用）<br>
+            ├ <code>HlsWriter</code>（关键帧切片 + m3u8 原子替换）<br>
+            └ <code>PrerollBuffer</code>（预录环，按秒）</div>
+        </div>
+        <div class="arrow"><span class="stem">▼</span></div>
+        <div class="box" style="border-color:var(--sdk-b)">
+          <div class="t">SDK <code>AudioStreamClient</code>（audio_capture.sock）</div>
+          <div class="d">30B 头启发式双解码；帧 &gt; 50MiB 视为坏帧丢弃</div>
+        </div>
+      </div>
+
+      <div class="band sdk" style="flex:1">
+        <div class="band-title">🐍 出口 3 的客户端（DSP 缓冲面 + 任务面）</div>
+        <div class="box" style="border-color:var(--sdk-b)">
+          <div class="t">SDK <code>DspClient</code></div>
+          <div class="d">resize / crop / multi_crop / convert / blend / encode_jpeg；缓冲走 camera.sock（UDS 二进制），任务走 camera-control.sock 的 SubmitDspJob gRPC<br>
+            <span class="badge red">每客户端 ≤ 128 buffer</span><span class="badge red">未还像素 ≤ 16 MPix</span><span class="badge red">异步任务 ≤ 32</span><span class="badge amber">120 MPix/s + 100 jobs/s 超限抛错（code -3）</span><br>
+            ↑ accel 路由器：硬件优先、numpy 降级、<code>health()</code> 可观测</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow"><span class="stem">▼</span></div>
+
+    <!-- 应用处理链 -->
+    <div class="band app">
+      <div class="band-title">🧩 应用处理链（SDK 组装层）</div>
+      <div class="box" style="border-color:var(--app-b)">
+        <div class="t"><code>Frame</code>（keep-fd）→ <code>resize</code>（DSP）→ <code>to_rgb</code>（小图）→ <code>Preprocessor</code>(tensor, meta) → <code>InferencePipeline</code> → <code>Postprocessor</code>（YOLO 解码 + NMS）→ 输出</div>
+        <div class="d">输出四选一：<code>PipelineRunner</code> 长跑（latest-wins 队列默认 1）· <code>draw_detections</code> + <code>MjpegServer</code> 网页预览 · <code>to_jpeg_bytes</code> 快照（keep-fd 走硬件 JPEG 腿）· <code>OverlayClient</code> 上编码流</div>
+      </div>
+    </div>
+
+    <div class="arrow"><span class="stem">▼</span></div>
+
+    <!-- 控制面 -->
+    <div class="band ctrl">
+      <div class="band-title">⚙ 控制面（gRPC over UDS · 不在数据流内 · 可慢但要有 timeout）</div>
+      <div class="row">
+        <div class="box" style="border-color:var(--ctrl-b)"><div class="t">camera-control.sock</div>
+          <div class="d"><code>CameraClient</code>（编码参数/加流/RTSP/OSD/ISP/隐私遮挡）· <code>OverlayClient</code>（UpdateAiOverlay 配置面，含 face_blur）· <code>AudioClient</code>（采集/播放/对讲）· <code>DspClient</code>（任务面）</div></div>
+        <div class="box" style="border-color:var(--ctrl-b)"><div class="t">ai-runtime.sock</div>
+          <div class="d"><code>InferenceClient</code>（infer / subscribe / 模型管理 / GenAI）</div></div>
+        <div class="box" style="border-color:var(--ctrl-b)"><div class="t">event-bus.sock</div>
+          <div class="d"><code>EventClient</code>（含 OverlayClient 的内容面）</div></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ===================== 逐跳表 ===================== -->
+<section>
+  <h2><span class="no">二</span>逐跳机制与缓冲对照表</h2>
+  <table>
+    <thead><tr><th style="width:34px">#</th><th style="width:150px">跳</th><th>机制</th><th style="width:260px">缓冲 / 背压（实测契约）</th><th style="width:190px">源码锚点（ne503-aipc）</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>传感器 → HAL</td><td>MIPI / ISP，vendor media library</td><td>HAL 采集池（vendor 管理，配置驱动）</td><td class="anchor-inline">hal_v2/</td></tr>
+      <tr><td>2</td><td>HAL → 前端回调</td><td>帧回调（dma-buf fd 借出）</td><td>—</td><td class="anchor-inline">camera_daemon.cpp:1461</td></tr>
+      <tr><td>2a</td><td>overlay 绘制</td><td>HAL draw ops（DSP）画在 NV12</td><td>内容 500ms 过期，需几 Hz 刷新</td><td class="anchor-inline">camera_daemon.cpp:1607</td></tr>
+      <tr><td>3</td><td>回调 → FrameRouter</td><td>元数据浅拷贝入队；HAL buffer 在引用归零或强收时归还</td><td><b>派发队列 ≤8</b>（满丢最旧）；<b>看门狗 200ms 强制回收</b>（扫描 50ms）——均为默认，YAML watchdog_*_ms 可配</td><td class="anchor-inline">frame_router.cpp:100 · frame_router.h:155 · frame_watchdog.h:20</td></tr>
+      <tr><td>4</td><td>Router → FdPublisher</td><td>订阅者 <code>fd_&lt;stream&gt;</code>，SCM_RIGHTS 传 fd</td><td><b>每客户端未还 ≤3</b>（超出对该客户端丢帧）、≤16 客户端、MSG_DONTWAIT——默认，YAML fd_pub_max_* 可配</td><td class="anchor-inline">fd_publisher.h:30-33, :58</td></tr>
+      <tr><td>5</td><td>Router → 编码器</td><td>订阅者 <code>encoder_&lt;stream&gt;</code>（auto_feed 模式直驱）</td><td>编码器硬件</td><td class="anchor-inline">camera_daemon.cpp:4218</td></tr>
+      <tr><td>6</td><td>编码输出 → RTSP</td><td>on_packet 直供（多模式挂点）</td><td>RTP 会话级</td><td class="anchor-inline">:3722 / :876 / :5975</td></tr>
+      <tr><td>7</td><td>编码输出 → EncodedPublisher</td><td>短临界区入队 → 派发线程 → UDS 广播</td><td><b>有界队列 120</b>（互斥量保护、满丢最旧）；30B 头 V2 + Annex-B</td><td class="anchor-inline">encoded_publisher.cpp:354-360 · encoded_publisher.h</td></tr>
+      <tr><td>8</td><td>Audio → encoded socket</td><td>复用 EncodedPublisher 加 audio_capture 流</td><td>同上；帧头当前为视频布局（SDK 启发式兼容）</td><td class="anchor-inline">camera_daemon.cpp:430-438</td></tr>
+      <tr><td>9</td><td>camera.sock → ai-runtime</td><td>FdReceiver（与 SDK 同协议客户端）</td><td>同出口 1 配额（与 SDK 平级、独立计数）</td><td class="anchor-inline">ai-runtime/fd_receiver.cpp:19</td></tr>
+      <tr><td>10</td><td>NPU → 结果回 SDK</td><td>StreamInfer gRPC 服务端流</td><td>SDK 侧有界队列 100 + 丢旧 + <code>dropped</code> 计数 + 终止事件保证</td><td class="anchor-inline">ai-runtime/grpc_service.h:63 · inference.proto:295</td></tr>
+      <tr><td>11</td><td>结果 → event-bus</td><td>auto_infer 发布 <code>inference/&lt;stream&gt;</code></td><td>服务端每订阅者队列（queue_size / drop_old）</td><td class="anchor-inline">ai-runtime/auto_infer.cpp:523 · event.proto</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ===================== SDK 接口映射 ===================== -->
+<section>
+  <h2><span class="no">三</span>SDK 接口 ↔ 数据流出口映射</h2>
+  <table>
+    <thead><tr><th style="width:220px">SDK 接口</th><th style="width:250px">出口</th><th>得到什么</th><th style="width:220px">典型下游</th></tr></thead>
+    <tbody>
+      <tr><td><code>FdMediaClient</code></td><td>camera.sock（fd 协议）</td><td><code>Frame</code>（NV12；keep-fd 可零拷贝）</td><td>PipelineRunner / Preprocessor</td></tr>
+      <tr><td><code>InferenceClient.subscribe</code></td><td>ai-runtime.sock（gRPC 服务端流）</td><td><code>(seq, InferenceResult)</code>，零像素</td><td>事件发布 / overlay 联动</td></tr>
+      <tr><td><code>InferenceClient.infer</code></td><td>ai-runtime.sock</td><td>上送预处理小图 → <code>InferenceResult</code></td><td>Postprocessor</td></tr>
+      <tr><td><code>EncodedStreamClient</code></td><td>encoded/&lt;stream&gt;.sock</td><td><code>EncodedFrame</code>（Annex-B）</td><td>TsWriter / HlsWriter / PrerollBuffer</td></tr>
+      <tr><td><code>AudioStreamClient</code></td><td>encoded/audio_capture.sock</td><td><code>AudioFrame</code></td><td>音频分析 / 对讲</td></tr>
+      <tr><td><code>DspClient</code></td><td>camera.sock 缓冲面 + camera-control 任务面</td><td>硬件处理后的数组 / <code>PendingDspJob</code></td><td>accel 路由的硬件腿</td></tr>
+      <tr><td><code>EventClient</code></td><td>event-bus.sock</td><td><code>Event</code>（含推理结果话题）</td><td>跨应用分发</td></tr>
+      <tr><td><code>OverlayClient</code></td><td>camera-control（配置）+ event-bus（内容）</td><td>编码流上的检测框</td><td>RTSP / 录像标注</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ===================== 语义要点 ===================== -->
+<section>
+  <h2><span class="no">四</span>三条贯穿性语义（读图要点）</h2>
+  <div class="callouts">
+    <div class="callout warn">
+      <h3>① overlay 画在路由之前</h3>
+      一旦检测内容在总线话题上，帧在进入 FrameRouter <b>之前</b>就已带框——RTSP、录像（编码支路）和 <code>FdMediaClient</code> 拿到的原始帧<b>都带标注</b>（auto_feed 与手动编码同样带）；overlay 只烘在 <code>ai_overlay.stream_map</code> 配置为目标流的流上，需要"干净帧 + 自己画"的应用应订阅未被映射的流。
+    </div>
+    <div class="callout">
+      <h3>② 同一 socket、平级租户</h3>
+      camera.sock 既是原始帧发布口（fd 协议）也是 DSP 缓冲管理口（PLAT-5）；ai-runtime 与 SDK 的 <code>FdMediaClient</code> 是<b>平级客户端</b>，各自独立计"未还 ≤3、200ms 看门狗"配额，互不挤占。
+    </div>
+    <div class="callout">
+      <h3>③ 像素只在三处跨进程</h3>
+      fd 协议（mmap 直达 dma-buf）、编码流（Annex-B 字节）、DSP 缓冲面（fd + gRPC）。SDK 的零拷贝链（keep-fd → DSP resize → encode_jpeg_hw）就是让像素在这三处尽量不出 daemon。
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 用户视角 ===================== -->
+<section>
+  <h2><span class="no">五</span>用户视角：每条数据流向能为你做什么</h2>
+  <table>
+    <thead><tr><th style="width:260px">数据流出口</th><th>用户获得的功能</th><th style="width:220px">典型场景</th></tr></thead>
+    <tbody>
+      <tr><td>RTSP <code>rtsp://&lt;ip&gt;:8554/&lt;stream&gt;</code></td><td>任何标准播放器 / NVR 直接看直播，无需写一行代码</td><td>快速验机、接入存量监控（VLC / ffplay / ONVIF）</td></tr>
+      <tr><td><code>camera.sock</code> 原始帧（<code>FdMediaClient</code>）</td><td>实时 NV12 原始像素（主 / 子码流），自研 AI 分析、抓图、自绘 UI；keep-fd 零拷贝省内存与拷贝 CPU</td><td>自己跑模型 / 算法</td></tr>
+      <tr><td><code>encoded/&lt;stream&gt;.sock</code>（<code>EncodedStreamClient</code>）</td><td>TS 单文件录像、HLS 网页直播（关键帧切片、m3u8 原子替换）、事件前 N 秒预录环</td><td>录像回放、web 直播、事件剪辑</td></tr>
+      <tr><td><code>encoded/audio_capture.sock</code>（<code>AudioStreamClient</code>）</td><td>拾音器音频帧（30B 头启发式兼容当前视频布局头）</td><td>音频分析、对讲采集端</td></tr>
+      <tr><td><code>ai-runtime.sock</code> StreamInfer（<code>InferenceClient</code>）</td><td>订阅平台自动推理结果——自己不跑模型、零像素传输</td><td>轻客户端联动</td></tr>
+      <tr><td><code>event-bus.sock</code>（<code>EventClient</code>）</td><td>跨应用订阅推理 / 事件话题（通配、每订阅者独立队列）</td><td>多应用扇出、告警联动</td></tr>
+      <tr><td>overlay（<code>UpdateAiOverlay</code> 配置 + <code>annotate</code> 内容）</td><td>编码流 / RTSP / 录像直接带检测框 + 标签，或人脸马赛克 / 模糊（隐私合规）</td><td>标注即所见、隐私脱敏</td></tr>
+      <tr><td>DSP 缓冲面 + 任务面（<code>DspClient</code> / accel）</td><td>resize / crop / convert / blend / JPEG 硬件加速，CPU 近零占用；numpy 自动兜底、<code>health()</code> 可观测</td><td>预处理卸载、高并发抓图</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer class="page-foot">
+  每一跳均有 ne503-aipc（platform 层）与 ne503-aipc-sdks（SDK 层）源码行号背书 · 数字为源码常量或提案实测记录 · SDK 0.7.4 · 2026-09-10 复核修订
+</footer>
+
+</div>
+</body>
+</html>
