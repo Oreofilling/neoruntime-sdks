@@ -122,6 +122,22 @@ logger = logging.getLogger(__name__)
 JobSource = Union[np.ndarray, Frame, FrameHandle]
 
 
+def _warn_bgr_convert(src: JobSource) -> None:
+    """Warn (unconditionally) when a BGR frame enters a DSP conversion.
+
+    The DSP wire has no BGR variant — ``rgb24`` is RGB order — so BGR
+    pixels come back with R/B-swapped channels. Only frames are reliably
+    detectable (their ``format`` metadata says BGR); a raw BGR ndarray
+    without a ``fmt`` hint is indistinguishable from RGB by shape.
+    """
+    if isinstance(src, Frame) and src.format == "BGR":
+        logger.warning(
+            "convert_hw: source frame is BGR — the DSP wire only carries "
+            "rgb24, so R and B come back swapped; use frame.to_rgb() first "
+            "or stay on the CPU leg (color.bgr_to_nv12)"
+        )
+
+
 class DspBufferPool:
     """Daemon-allocated dma-buf buffers sharing one geometry.
 
@@ -263,6 +279,89 @@ class DspBufferPool:
         for bid in self.ids:
             self._client._send_release(bid)
         for fd in self.plane_fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+class SharedImportPool:
+    """A round-robin ring of shared ARGB32 imports the daemon can bake.
+
+    The deployed HAL refuses ARGB32 dma-buf pool allocation (wire OOM),
+    but its bake path blends ARGB imports fine: the daemon maps the
+    memfd we pass over SCM_RIGHTS as USERPTR planes, so both processes
+    share the same pages. :meth:`write` therefore lands directly in the
+    memory the daemon's blend reads — no dma-buf, no copy through the
+    wire.
+
+    Lease rules mirror :class:`DspBufferPool`: slots recycle
+    round-robin, the caller paces writes, and a slot must not be
+    rewritten while its frame may still sit in a daemon-side queue
+    (queue cap 3 ⇒ ring depth >= 4 for faster-than-bake publishing).
+
+    Not per-publish import/release: client-streaming has no per-frame
+    ack, so a release could race the daemon's pin. Not hold-until-RPC-end
+    either: the daemon caps imports at 64 per client. A small persistent
+    ring sidesteps both.
+    """
+
+    def __init__(
+        self,
+        client: "DspClient",
+        width: int,
+        height: int,
+        ids: Sequence[int],
+        maps: Sequence["mmap.mmap"],
+        fds: Sequence[int],
+    ):
+        self._client = client
+        self.width = width
+        self.height = height
+        self.fmt = "argb"
+        self.ids = tuple(ids)
+        self._maps = list(maps)
+        self._fds = list(fds)
+        self._released = False
+
+    @property
+    def count(self) -> int:
+        """Number of ring slots."""
+        return len(self.ids)
+
+    @property
+    def strides(self) -> tuple[int, ...]:
+        """Per-plane byte strides — ARGB32 is one ``width * 4`` plane."""
+        return (self.width * 4,)
+
+    def buffer_id(self, index: int) -> int:
+        """The daemon registry id of ring slot ``index``."""
+        return self.ids[index]
+
+    def write(self, index: int, arr: np.ndarray) -> None:
+        """Copy one ARGB32 frame into ring slot ``index``'s shared pages."""
+        if self._released:
+            raise DspError("write on released pool")
+        expected = (self.height, self.width, 4)
+        if arr.dtype != np.uint8 or arr.shape != expected:
+            raise DspError(
+                f"write expects uint8 {expected}, got {arr.dtype} {arr.shape}"
+            )
+        self._maps[index][:] = arr.tobytes()
+
+    def release(self) -> None:
+        """Return every import and close the shared pages (idempotent)."""
+        if self._released:
+            return
+        self._released = True
+        for bid in self.ids:
+            self._client._send_release(bid)
+        for mm in self._maps:
+            try:
+                mm.close()
+            except ValueError:
+                pass
+        for fd in self._fds:
             try:
                 os.close(fd)
             except OSError:
@@ -649,6 +748,82 @@ class DspClient(GrpcClient):
             width, height, _HAL_PIXEL_FORMAT[fmt], count
         )
         return DspBufferPool(self, width, height, fmt, ids, fds, strides, sizes)
+
+    def import_shared_buffers(
+        self,
+        width: int,
+        height: int,
+        fmt: str = "argb",
+        count: int = 2,
+        timeout_s: float = 5.0,
+    ) -> SharedImportPool:
+        """Import ``count`` shared ARGB32 buffers as a writable ring.
+
+        The deployed HAL refuses ARGB32 dma-buf pool allocation, so
+        alpha-blend overlays ride memfd imports instead: each slot is a
+        memfd the daemon maps (SCM_RIGHTS dup, MAP_SHARED both sides) and
+        bakes straight from. Writing the returned pool puts pixels in the
+        exact pages the daemon's blend reads. See :class:`SharedImportPool`
+        for the lease contract and why the ring is persistent.
+        """
+        if fmt != "argb":
+            raise DspError("shared import supports ARGB32 only")
+        _validate_geometry(width, height, fmt, "shared import")
+        if count < 1:
+            raise DspError("count must be >= 1")
+        stride = width * 4
+        size = stride * height
+        ids: list[int] = []
+        maps: list[mmap.mmap] = []
+        fds: list[int] = []
+        fd = -1
+        try:
+            for _slot in range(count):
+                fd = os.memfd_create("dsp-shared-import")
+                os.ftruncate(fd, size)
+                ids.append(
+                    self._import_planes(
+                        width, height, fmt, 1, [stride, 0, 0], [size, 0, 0], [fd], timeout_s
+                    )
+                )
+                maps.append(mmap.mmap(fd, size))
+                fds.append(fd)
+                fd = -1
+        except Exception:
+            for mm in maps:
+                try:
+                    mm.close()
+                except ValueError:
+                    pass
+            if fd >= 0:  # the failing slot's own memfd, never in fds
+                os.close(fd)
+            for opened in fds:
+                try:
+                    os.close(opened)
+                except OSError:
+                    pass
+            for bid in ids:  # earlier imports back to the daemon
+                self._send_release(bid)
+            raise
+        return SharedImportPool(self, width, height, ids, maps, fds)
+
+    def import_frame(self, handle: FrameHandle) -> int:
+        """Import a frame's dma-bufs into the daemon buffer registry (DSP_IMPORT).
+
+        The daemon dups the fds, so the returned id outlives the
+        FrameHandle; it lives in the same registry namespace as pool
+        buffer ids and stays valid until :meth:`release_buffer` (or the
+        daemon's lease watchdog). This is the zero-copy entry point for
+        ``InferenceClient.infer(frame, ...)``.
+        """
+        width, height, handle, fmt = _resolve_source(handle, None)
+        return self._import_source(handle, width, height, fmt)
+
+    def release_buffer(self, buffer_id: int) -> None:
+        """Free a registry id (import id or pool buffer) with DSP_BUF_RELEASE."""
+        if not isinstance(buffer_id, int) or buffer_id <= 0:
+            raise DspError(f"invalid buffer id: {buffer_id!r}")
+        self._send_release(buffer_id)
 
     def _send_release(self, buffer_id: int) -> None:
         """Fire-and-forget DSP_BUF_RELEASE (the daemon never answers)."""
@@ -1137,6 +1312,7 @@ class DspClient(GrpcClient):
         only for accepted jobs; a refused pair still returns CPU pixels.
         """
         sw, sh, handle, fmt = _resolve_source(src, fmt)
+        _warn_bgr_convert(src)
         _validate_geometry(sw, sh, fmt, "source")
         _validate_geometry(sw, sh, dst_fmt, "destination")
         if dst_fmt == fmt:

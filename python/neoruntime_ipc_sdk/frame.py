@@ -19,6 +19,8 @@ from typing import Any, Callable
 
 import numpy as np
 
+from ._fallbacks import warn_numpy_fallback
+
 logger = logging.getLogger("neoruntime_ipc_sdk.frame")
 
 __all__ = [
@@ -77,6 +79,7 @@ def _resize_array(img: np.ndarray, width: int, height: int) -> np.ndarray:
         )
         return cv2.resize(img, (width, height), interpolation=interp)
     except ImportError:
+        warn_numpy_fallback("resize")
         rows = np.arange(height) * img.shape[0] // height
         cols = np.arange(width) * img.shape[1] // width
         if img.ndim == 2:
@@ -87,6 +90,115 @@ def _resize_array(img: np.ndarray, width: int, height: int) -> np.ndarray:
 def _even(value: int) -> int:
     """Round down to the nearest even number, minimum 2 (YUV plane safety)."""
     return max(2, value - (value % 2))
+
+
+def _resize_geometry(
+    sw: int, sh: int, dw: int, dh: int, mode: str, yuv: bool
+) -> tuple[int, int, int, int]:
+    """Content box (rw, rh) and placement (ox, oy) for the resize modes.
+
+    Single source of geometry truth for the DSP fast path and both CPU
+    paths — the legs must agree on content placement or the same frame
+    would place pixels differently depending on which leg served it.
+
+    stretch: content fills dst exactly. letterbox: content is scaled to
+    (rw, rh) and placed at (ox, oy) inside the dst canvas. crop: content
+    is scaled to cover at (rw, rh) and a dst-sized window is read out of
+    it at (ox, oy).
+    """
+    if mode == "stretch":
+        return dw, dh, 0, 0
+    if mode == "letterbox":
+        scale = min(dw / sw, dh / sh)
+        rw = max(1, int(round(sw * scale)))
+        rh = max(1, int(round(sh * scale)))
+        if yuv:
+            rw, rh = _even(rw), _even(rh)
+        ox, oy = (dw - rw) // 2, (dh - rh) // 2
+        if yuv:
+            ox, oy = ox & ~1, oy & ~1  # chroma-aligned pad offsets
+        return rw, rh, ox, oy
+    # crop: scale to cover, read a dst-sized window out of the middle
+    scale = max(dw / sw, dh / sh)
+    rw = max(dw, int(round(sw * scale)))
+    rh = max(dh, int(round(sh * scale)))
+    if yuv:
+        rw, rh = _even(rw), _even(rh)
+    ox, oy = (rw - dw) // 2, (rh - dh) // 2
+    return rw, rh, ox, oy
+
+
+def _resize_transform(
+    src_size: tuple[int, int],
+    dst_size: tuple[int, int],
+    mode: str,
+    rw: int,
+    rh: int,
+    ox: int,
+    oy: int,
+) -> dict[str, Any]:
+    """Affine mapping metadata for :meth:`Frame.resize`.
+
+    Semantics (per axis): ``dst = src * scale + origin``, so the inverse —
+    what postprocessing needs to map model-input coordinates back to the
+    source frame — is ``src = (dst - origin) / scale``. For letterbox the
+    origin is the pad offset (content placed at (ox, oy) in the canvas);
+    for crop it is negative (the canvas is a window into the content).
+    """
+    sw, sh = src_size
+    dw, dh = dst_size
+    if mode == "stretch":
+        return {
+            "op": "resize",
+            "src_size": (sw, sh),
+            "dst_size": (dw, dh),
+            "mode": mode,
+            "scale": (dw / sw, dh / sh),
+            "origin": (0, 0),
+        }
+    if mode == "letterbox":
+        return {
+            "op": "resize",
+            "src_size": (sw, sh),
+            "dst_size": (dw, dh),
+            "mode": mode,
+            "scale": (rw / sw, rh / sh),
+            "origin": (ox, oy),
+        }
+    # crop: dst pixel (x, y) shows scaled content at (x + ox, y + oy)
+    return {
+        "op": "resize",
+        "src_size": (sw, sh),
+        "dst_size": (dw, dh),
+        "mode": mode,
+        "scale": (rw / sw, rh / sh),
+        "origin": (-ox, -oy),
+    }
+
+
+def _compose_transform(prev: dict[str, Any], cur: dict[str, Any]) -> dict[str, Any]:
+    """Compose chained transforms: prev maps src→parent, cur maps parent→dst."""
+    composed = dict(cur)
+    composed["src_size"] = prev["src_size"]
+    composed["scale"] = (
+        prev["scale"][0] * cur["scale"][0],
+        prev["scale"][1] * cur["scale"][1],
+    )
+    composed["origin"] = (
+        prev["origin"][0] * cur["scale"][0] + cur["origin"][0],
+        prev["origin"][1] * cur["scale"][1] + cur["origin"][1],
+    )
+    return composed
+
+
+def _frame_transform_metadata(parent_metadata: dict[str, Any], transform: dict[str, Any]) -> dict[str, Any]:
+    """Copy ``parent_metadata`` and set/chain the affine ``transform`` entry."""
+    metadata = dict(parent_metadata)
+    prev = metadata.get("transform")
+    if isinstance(prev, dict) and "scale" in prev and "origin" in prev:
+        transform = _compose_transform(prev, transform)
+    metadata["transform"] = transform
+    return metadata
 
 
 def _encode_jpeg(rgb: np.ndarray, quality: int = 85) -> bytes:
@@ -100,6 +212,7 @@ def _encode_jpeg(rgb: np.ndarray, quality: int = 85) -> bytes:
             raise OSError("cv2.imencode failed to encode JPEG")
         return buf.tobytes()
     except ImportError:
+        warn_numpy_fallback("JPEG encode")
         import io
 
         from PIL import Image
@@ -132,6 +245,7 @@ class FrameHandle:
         width: int = 0,
         height: int = 0,
         format: str = "",
+        flags: int = 0,
     ):
         self.fds = list(fds)
         self.strides = tuple(strides)
@@ -140,6 +254,7 @@ class FrameHandle:
         self.width = width
         self.height = height
         self.format = format
+        self.flags = flags
         self._on_release = on_release
         self._closed = False
 
@@ -183,6 +298,16 @@ class FrameHandle:
         )
 
 
+# Frame metadata flags — mirror of FD_PUB_FRAME_FLAG_* in the daemon's
+# fd_protocol.h. Coarse "bake active" truth per stream at dispatch time:
+# a set bit means the corresponding pass ran on the dispatching path, so
+# the pixels may be modified. Clean-capture apps should subscribe a
+# stream outside the bake set (ai_overlay.stream_map) rather than rely
+# on the bit being clear while the pass is enabled.
+FRAME_FLAG_OVERLAY_BAKED = 0x1
+FRAME_FLAG_DPM_BAKED = 0x2
+
+
 @dataclass
 class Frame:
     sequence: int
@@ -193,6 +318,17 @@ class Frame:
     image: np.ndarray | None
     metadata: dict[str, Any] = field(default_factory=dict)
     handle: FrameHandle | None = None
+    flags: int = 0
+
+    @property
+    def baked_overlay(self) -> bool:
+        """True when the AI-overlay bake pass is active on this stream."""
+        return bool(self.flags & FRAME_FLAG_OVERLAY_BAKED)
+
+    @property
+    def baked_dpm(self) -> bool:
+        """True when the DPM (privacy mask) render pass is active."""
+        return bool(self.flags & FRAME_FLAG_DPM_BAKED)
 
     @property
     def data(self) -> np.ndarray | None:
@@ -221,10 +357,22 @@ class Frame:
     def release(self) -> None:
         """Release a retained fd frame back to the daemon (idempotent).
 
-        No-op for frames that were copied on receive.
+        No-op for frames that were copied on receive. Also invoked by
+        ``with frame:`` on exit — the context manager makes the keep-fd
+        ownership window explicit:
+
+        >>> with media.get_frame("sub", keep_fd=True) as frame:
+        ...     result = pipeline.run(frame)
+        >>> # handle returned to the daemon here, even on exceptions
         """
         if self.handle is not None:
             self.handle.close()
+
+    def __enter__(self) -> Frame:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.release()
 
     def to_rgb(self) -> np.ndarray:
         arr = self.to_array()
@@ -245,6 +393,7 @@ class Frame:
 
             return cv2.cvtColor(self.image, cv2.COLOR_YUV2RGB_NV12)
         except ImportError:
+            warn_numpy_fallback("NV12->RGB conversion")
             return self._nv12_to_rgb_pure()
 
     def _nv12_to_rgb_pure(self) -> np.ndarray:
@@ -270,7 +419,9 @@ class Frame:
         """Return a new Frame cropped to the given pixel rectangle.
 
         NV12/NV21 require even x, y, width, height (chroma subsampling).
-        The original Frame is left untouched.
+        The original Frame is left untouched. The crop geometry is
+        recorded in the new frame's ``metadata['transform']`` (affine,
+        scale 1:1, origin (-x, -y)).
         """
         if width <= 0 or height <= 0:
             raise ValueError("crop width/height must be positive")
@@ -293,6 +444,14 @@ class Frame:
             sub = np.ascontiguousarray(np.vstack([new_y, new_uv]))
         else:
             raise ValueError(f"crop not supported for format: {fmt}")
+        transform = {
+            "op": "crop",
+            "src_size": (self.width, self.height),
+            "dst_size": (width, height),
+            "mode": "crop",
+            "scale": (1.0, 1.0),
+            "origin": (-x, -y),
+        }
         return Frame(
             sequence=self.sequence,
             timestamp_ns=self.timestamp_ns,
@@ -300,7 +459,8 @@ class Frame:
             height=height,
             format=fmt,
             image=sub,
-            metadata=dict(self.metadata),
+            metadata=_frame_transform_metadata(self.metadata, transform),
+            flags=self.flags,
         )
 
     def resize(
@@ -325,6 +485,13 @@ class Frame:
         the fallback in the router's health counters. cv2 accelerates
         the CPU path when available; a pure-numpy nearest-neighbour
         path is the fallback.
+
+        The geometry is recorded in the new frame's
+        ``metadata['transform']`` as a per-axis affine mapping
+        ``dst = src * scale + origin`` (composed across chained
+        crop/resize calls). Postprocessing maps model-input coordinates
+        back to the source frame with ``src = (dst - origin) / scale`` —
+        no hand-derived letterbox maths in the app.
         """
         if width <= 0 or height <= 0:
             raise ValueError("resize width/height must be positive")
@@ -333,15 +500,20 @@ class Frame:
         fmt = self.format
         if fmt in _YUV_FORMATS and (width % 2 or height % 2):
             raise ValueError(f"{fmt} resize requires even width/height")
+        yuv = fmt in _YUV_FORMATS
+        rw, rh, ox, oy = _resize_geometry(self.width, self.height, width, height, mode, yuv)
         image = self._hw_resize(width, height, mode, pad_value)
         if image is None:
             self.to_array()  # materialize a retained fd before slicing planes
-            if fmt in _YUV_FORMATS:
+            if yuv:
                 image = self._resize_yuv(width, height, mode, pad_value)
             elif fmt in _PACKED_FORMATS:
                 image = self._resize_packed(width, height, mode, pad_value)
             else:
                 raise ValueError(f"resize not supported for format: {fmt}")
+        transform = _resize_transform(
+            (self.width, self.height), (width, height), mode, rw, rh, ox, oy
+        )
         return Frame(
             sequence=self.sequence,
             timestamp_ns=self.timestamp_ns,
@@ -349,7 +521,8 @@ class Frame:
             height=height,
             format=fmt,
             image=image,
-            metadata=dict(self.metadata),
+            metadata=_frame_transform_metadata(self.metadata, transform),
+            flags=self.flags,
         )
 
     def _hw_resize(self, dw: int, dh: int, mode: str, pad: int) -> np.ndarray | None:
@@ -382,27 +555,11 @@ class Frame:
         if self.format not in _DSP_RESIZE_FORMATS:
             return None
         yuv = self.format in _YUV_FORMATS
-        # (rw, rh, ox, oy) must match _resize_yuv/_resize_packed placement,
-        # or the two paths would disagree on the same frame
         sw, sh = self.width, self.height
-        if mode == "stretch":
-            rw, rh, ox, oy = dw, dh, 0, 0
-        elif mode == "letterbox":
-            scale = min(dw / sw, dh / sh)
-            rw = max(1, int(round(sw * scale)))
-            rh = max(1, int(round(sh * scale)))
-            if yuv:
-                rw, rh = _even(rw), _even(rh)
-            ox, oy = (dw - rw) // 2, (dh - rh) // 2
-            if yuv:
-                ox, oy = ox & ~1, oy & ~1  # chroma-aligned pad offsets
-        else:  # "crop": scale to cover, center-crop the overflow
-            scale = max(dw / sw, dh / sh)
-            rw = max(dw, int(round(sw * scale)))
-            rh = max(dh, int(round(sh * scale)))
-            if yuv:
-                rw, rh = _even(rw), _even(rh)
-            ox, oy = (rw - dw) // 2, (rh - dh) // 2
+        # (rw, rh, ox, oy) from the shared geometry helper — must match
+        # _resize_yuv/_resize_packed placement, or the two paths would
+        # disagree on the same frame (and on its transform metadata)
+        rw, rh, ox, oy = _resize_geometry(sw, sh, dw, dh, mode, yuv)
         from .accel import (  # lazy: accel imports frame
             HardwareUnavailable,
             RoutePolicy,
@@ -466,12 +623,9 @@ class Frame:
         sw, sh = self.width, self.height
         if mode == "stretch":
             return _resize_array(src, dw, dh)
+        rw, rh, ox, oy = _resize_geometry(sw, sh, dw, dh, mode, yuv=False)
         if mode == "letterbox":
-            scale = min(dw / sw, dh / sh)
-            rw = max(1, int(round(sw * scale)))
-            rh = max(1, int(round(sh * scale)))
             content = _resize_array(src, rw, rh)
-            ox, oy = (dw - rw) // 2, (dh - rh) // 2
             if src.ndim == 2:
                 canvas = np.full((dh, dw), pad, dtype=np.uint8)
             else:
@@ -482,11 +636,7 @@ class Frame:
             canvas[oy : oy + rh, ox : ox + rw] = content
             return canvas
         # mode == "crop": scale to cover, then center-crop
-        scale = max(dw / sw, dh / sh)
-        rw = max(dw, int(round(sw * scale)))
-        rh = max(dh, int(round(sh * scale)))
         tmp = _resize_array(src, rw, rh)
-        ox, oy = (rw - dw) // 2, (rh - dh) // 2
         return np.ascontiguousarray(tmp[oy : oy + dh, ox : ox + dw])
 
     def _resize_yuv(self, dw: int, dh: int, mode: str, pad: int) -> np.ndarray:
@@ -513,25 +663,18 @@ class Frame:
                     uv_resize(uv_plane, dw, dh),
                 ]
             )
+        rw, rh, ox, oy = _resize_geometry(sw, sh, dw, dh, mode, yuv=True)
         if mode == "letterbox":
-            scale = min(dw / sw, dh / sh)
-            rw = _even(int(round(sw * scale)))
-            rh = _even(int(round(sh * scale)))
             content_y = _resize_array(y_plane, rw, rh)
             content_uv = uv_resize(uv_plane, rw, rh)
-            ox, oy = (dw - rw) // 2 & ~1, (dh - rh) // 2 & ~1
             canvas_y = np.full((dh, dw), pad, dtype=np.uint8)
             canvas_uv = np.full((dh // 2, dw), 128, dtype=np.uint8)
             canvas_y[oy : oy + rh, ox : ox + rw] = content_y
             canvas_uv[oy // 2 : oy // 2 + rh // 2, ox : ox + rw] = content_uv
             return np.vstack([canvas_y, canvas_uv])
         # mode == "crop": scale to cover, then center-crop both planes
-        scale = max(dw / sw, dh / sh)
-        rw = _even(max(dw, int(round(sw * scale))))
-        rh = _even(max(dh, int(round(sh * scale))))
         tmp_y = _resize_array(y_plane, rw, rh)
         tmp_uv = uv_resize(uv_plane, rw, rh)
-        ox, oy = (rw - dw) // 2, (rh - dh) // 2
         return np.vstack(
             [
                 tmp_y[oy : oy + dh, ox : ox + dw],

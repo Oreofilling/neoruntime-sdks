@@ -352,6 +352,10 @@ class AccelRouter:
         self._degradations: deque[DegradationRecord] = deque(maxlen=64)
         self.on_degradation: Callable[[DegradationRecord], None] | None = None
 
+    def set_policy(self, policy: RoutePolicy | str) -> None:
+        """Switch the routing policy at runtime (also accepts its value name)."""
+        self._policy = RoutePolicy(policy) if isinstance(policy, str) else policy
+
     # -- registration --------------------------------------------------
 
     def register(
@@ -614,3 +618,20 @@ def get_default_router() -> AccelRouter:
             router.add_probe("dsp", _probe_dsp)
             _default_router = router
         return _default_router
+
+
+def set_route_policy(policy: RoutePolicy | str) -> None:
+    """App-wide hardware/software routing policy on the default router.
+
+    Thin facade over the default router's :meth:`AccelRouter.set_policy` —
+    one obvious knob instead of reaching for the singleton:
+
+    * ``"prefer_hardware"`` (default): hardware legs first, degrade to the
+      numpy/cv2 legs with a recorded fallback;
+    * ``"software_only"``: baseline / benchmark mode;
+    * ``"hardware_only"``: refuse the silent CPU fallback (raise instead)
+      to keep a "zero-CPU" promise honest.
+
+    Accepts :class:`RoutePolicy` members or their value names.
+    """
+    get_default_router().set_policy(policy)

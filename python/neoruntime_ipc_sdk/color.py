@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from ._fallbacks import warn_numpy_fallback
+
 __all__ = [
     "bgr_to_nv12",
     "nv12_resize",
@@ -97,6 +99,7 @@ def nv12_to_bgr(nv12: np.ndarray, width: int, height: int) -> np.ndarray:
 
 
 def _nv12_to_packed(nv12: np.ndarray, width: int, height: int, order: str) -> np.ndarray:
+    warn_numpy_fallback("NV12->packed RGB/BGR conversion")
     y = nv12[:height].astype(np.float32)
     uv = nv12[height:].reshape(height // 2, width // 2, 2)
     u = np.repeat(np.repeat(uv[:, :, 0], 2, axis=0), 2, axis=1)
@@ -150,6 +153,7 @@ def _packed_to_nv12(image: np.ndarray, order: str) -> np.ndarray:
         return np.vstack([y_plane, uv_plane])
     except ImportError:
         pass
+    warn_numpy_fallback("packed RGB/BGR->NV12 conversion")
 
     planar = image.astype(np.float32)
     if order == "bgr":
@@ -200,6 +204,7 @@ def nv12_resize(
         y_out = cv2.resize(y_plane, (dst_w, dst_h), interpolation=cv2.INTER_LINEAR)
         uv_out = cv2.resize(uv_plane, (dst_w, dst_h // 2), interpolation=cv2.INTER_LINEAR)
     except ImportError:
+        warn_numpy_fallback("NV12 resize")
         y_out = _resize_nearest(y_plane, dst_w, dst_h)
         uv_out = _resize_nearest(uv_plane, dst_w, dst_h // 2)
     return np.vstack([y_out, uv_out])

@@ -57,7 +57,11 @@ _SUB_FMT = "<II I 64s"
 _SUB_SIZE = struct.calcsize(_SUB_FMT)
 
 # struct FdPubFrameMsg (aarch64 pads to 8-byte alignment: 76 data + 4 padding = 80)
-_FRAME_FMT = "<II QQQ IIII 3I 3I I 4x"
+# Mirrors FdPubFrameMsg in fd_protocol.h. The trailing field is the
+# metadata flags word (FD_PUB_FRAME_FLAG_*); it occupies what used to be
+# explicit tail padding, so the struct size is unchanged (80 bytes) and
+# frames from an older daemon (memset → flags=0) parse identically.
+_FRAME_FMT = "<II QQQ IIII 3I 3I I I"
 _FRAME_SIZE = struct.calcsize(_FRAME_FMT)
 
 # struct FdPubReleaseMsg { header(8) + uint64 frame_id }
@@ -72,6 +76,12 @@ _RESP_SIZE = struct.calcsize(_RESP_FMT)
 class FdMediaClient:
     """Zero-copy media client using DMA-BUF FD passing over Unix Domain Socket."""
 
+    # A camera daemon buffer pool is small (single digits); retaining close to
+    # that many keep-fd frames starves the live stream. Warnings are
+    # log-spaced (8, 16, 32, ...) so a deliberate holder is told once per
+    # doubling instead of per frame.
+    _RETAINED_WARN_THRESHOLD = 8
+
     def __init__(self, socket_path: str | None = None):
         if socket_path is None:
             socket_path = os.getenv("CAMERA_SOCK_PATH", "/run/aipc/camera.sock")
@@ -81,6 +91,26 @@ class FdMediaClient:
         # Retained keep-fd handles. WeakSet: tracking without extending
         # lifetime — a dropped Frame is GC-released back to the daemon.
         self._retained: weakref.WeakSet[FrameHandle] = weakref.WeakSet()
+        self._retained_warned_at = 0
+        self._list_streams_cache: tuple[float, list[str]] | None = None
+
+    @property
+    def retained_frames(self) -> int:
+        """Number of keep-fd frames currently held (not yet released)."""
+        return len(self._retained)
+
+    def _check_retained(self) -> None:
+        count = len(self._retained)
+        threshold = max(self._RETAINED_WARN_THRESHOLD, 2 * self._retained_warned_at)
+        if count < threshold:
+            return
+        self._retained_warned_at = count
+        logger.warning(
+            "FdMediaClient: %d keep-fd frames retained — release frames you "
+            "no longer need (frame.release()) or the daemon's buffer pool "
+            "may starve and stall the stream",
+            count,
+        )
 
     def _connect_stream(self, stream_id: str) -> _socket.socket:
         logger.info("FdMediaClient: connecting to %s for stream '%s'", self.socket_path, stream_id)
@@ -170,6 +200,7 @@ class FdMediaClient:
         strides = values[9:12]
         sizes = values[12:15]
         _num_fds_expected = values[15]
+        flags = values[16]
 
         fmt_name = PIXEL_FORMAT_NAMES.get(fmt_code, f"UNKNOWN({fmt_code})")
 
@@ -192,8 +223,10 @@ class FdMediaClient:
                 width=width,
                 height=height,
                 format=fmt_name,
+                flags=flags,
             )
             self._retained.add(handle)
+            self._check_retained()
             logger.debug(
                 "FdMediaClient: retained frame seq=%d %dx%d %s (frame_id=%d)",
                 sequence,
@@ -210,6 +243,7 @@ class FdMediaClient:
                 format=fmt_name,
                 image=None,
                 handle=handle,
+                flags=flags,
             )
 
         # Copy path: mmap each dma-buf plane (fenced per HAL-3), copy to
@@ -251,6 +285,7 @@ class FdMediaClient:
             height=height,
             format=fmt_name,
             image=image,
+            flags=flags,
         )
 
     def get_frame(
@@ -281,14 +316,28 @@ class FdMediaClient:
             raise
 
     def subscribe_raw(
-        self, stream_id: str, skip_frames: bool = True, keep_fd: bool = False
+        self, stream_id: str, skip_frames: int | bool = 1, keep_fd: bool = False
     ) -> Iterator[Frame]:
+        """Yield frames from ``stream_id``, auto-reconnecting on socket errors.
+
+        ``skip_frames`` is a decimation interval: 1 (the default, and the
+        effective value of the historical ``True``/``False`` flags) yields
+        every frame; N > 1 yields every Nth frame. Decimated keep-fd frames
+        are released back to the daemon immediately so their dma-bufs are
+        not retained.
+        """
+        interval = max(1, int(skip_frames))
         sock = self._get_sock(stream_id)
         sock.settimeout(5.0)
+        seen = 0
         while True:
             try:
                 frame = self._recv_frame(sock, keep_fd=keep_fd)
                 if frame is not None:
+                    seen += 1
+                    if interval > 1 and (seen - 1) % interval:
+                        frame.release()
+                        continue
                     yield frame
             except _socket.timeout:
                 continue
@@ -304,8 +353,9 @@ class FdMediaClient:
                 sock.settimeout(5.0)
 
     def subscribe(
-        self, stream_id: str, skip_frames: bool = True, keep_fd: bool = False
+        self, stream_id: str, skip_frames: int | bool = 1, keep_fd: bool = False
     ) -> Iterator[Frame]:
+        """Yield frames; see :meth:`subscribe_raw` for the parameters."""
         return self.subscribe_raw(stream_id, skip_frames, keep_fd)
 
     def on_frame(self, stream_id: str, callback: Callable[[Frame], None]) -> threading.Thread:
@@ -314,7 +364,9 @@ class FdMediaClient:
                 try:
                     callback(frame)
                 except Exception:
-                    pass
+                    logger.exception(
+                        "FdMediaClient: on_frame callback error for stream %r", stream_id
+                    )
 
         t = threading.Thread(target=_run, daemon=True)
         t.start()
@@ -363,13 +415,48 @@ class FdMediaClient:
         """
         return EncodedStreamClient(stream_id=stream_id, socket_dir=socket_dir)
 
-    def list_streams(self) -> list[str]:
-        """List available raw stream IDs by scanning the camera socket.
+    # A camera daemon socket that exists but does not respond (hung service)
+    # must not stall this data-plane helper: bound the status probe and fall
+    # back to the guaranteed streams on deadline. Results (including the
+    # fallback) are cached briefly so per-frame control-plane hiccups stay
+    # invisible to callers that poll this helper.
+    _LIST_STREAM_TIMEOUT_S = 1.0
+    _LIST_STREAM_CACHE_S = 5.0
 
-        Returns common stream IDs. For detailed status use
+    def list_streams(self) -> list[str]:
+        """List available raw stream IDs by querying the camera daemon.
+
+        Streams whose pipeline is not active are excluded. Falls back to
+        the platform's guaranteed streams (``main``/``sub``) when the
+        camera control service is unreachable, unresponsive (1s probe
+        deadline) or reports nothing, so data-plane-only setups keep
+        working. Results are cached for ``_LIST_STREAM_CACHE_S`` seconds.
+        For detailed status (resolution, fps, codec) use
         :class:`CameraClient.get_stream_status`.
         """
-        return ["main", "sub"]
+        now = time.monotonic()
+        cached = self._list_streams_cache
+        if cached is not None and now - cached[0] < self._LIST_STREAM_CACHE_S:
+            return cached[1]
+        try:
+            from .camera import CameraClient  # deferred: heavy proto import
+
+            with CameraClient() as cam:
+                ids = [
+                    s.stream_id
+                    for s in cam.get_stream_status(timeout_s=self._LIST_STREAM_TIMEOUT_S)
+                    if s.status == "active"
+                ]
+        except Exception as exc:
+            logger.debug(
+                "list_streams: camera status unavailable (%s); using fallback", exc
+            )
+            ids = ["main", "sub"]
+        else:
+            if not ids:
+                ids = ["main", "sub"]
+        self._list_streams_cache = (now, ids)
+        return ids
 
     def get_rtsp_url(
         self, stream_id: str = "main", host: str = "192.0.2.72", port: int = 8554
