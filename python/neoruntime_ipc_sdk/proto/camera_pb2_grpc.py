@@ -380,6 +380,26 @@ class CameraControlStub(object):
                 request_serializer=camera__pb2.EncodeImageRequest.SerializeToString,
                 response_deserializer=camera__pb2.EncodeImageResponse.FromString,
                 _registered_method=True)
+        self.PushFrame = channel.unary_unary(
+                '/aipc.camera.CameraControl/PushFrame',
+                request_serializer=camera__pb2.PushFrameRequest.SerializeToString,
+                response_deserializer=camera__pb2.PushFrameResponse.FromString,
+                _registered_method=True)
+        self.PushFrameStream = channel.stream_unary(
+                '/aipc.camera.CameraControl/PushFrameStream',
+                request_serializer=camera__pb2.PushFrameRequest.SerializeToString,
+                response_deserializer=camera__pb2.PushFrameResponse.FromString,
+                _registered_method=True)
+        self.GetInjectionStatus = channel.unary_unary(
+                '/aipc.camera.CameraControl/GetInjectionStatus',
+                request_serializer=camera__pb2.Empty.SerializeToString,
+                response_deserializer=camera__pb2.InjectionStatusResponse.FromString,
+                _registered_method=True)
+        self.StopInjection = channel.unary_unary(
+                '/aipc.camera.CameraControl/StopInjection',
+                request_serializer=camera__pb2.Empty.SerializeToString,
+                response_deserializer=camera__pb2.InjectionStatusResponse.FromString,
+                _registered_method=True)
 
 
 class CameraControlServicer(object):
@@ -843,6 +863,41 @@ class CameraControlServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PushFrame(self, request, context):
+        """App frame injection (P0; see docs proposal frame-injection.md).
+        Control plane only: the NV12 buffer must already be registered with
+        the FD-publisher DSP registry (alloc or import over camera.sock
+        SCM_RIGHTS) and is referenced by buffer id — a raw fd number never
+        crosses gRPC. P0 substitutes the frame at the daemon's encoder feed
+        (bake/add_buffer frontier); /dev/video10 is a Bayer ISP-front
+        virtual-sensor node and is NOT part of this contract.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PushFrameStream(self, request_iterator, context):
+        """Client-streaming form (P2): each request is one push_frame; a request
+        with end_of_stream=true closes the injection session and returns. A
+        clean half-close WITHOUT EOS keeps the session open (matches the unary
+        semantics — a final burst already in the queue still drains).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetInjectionStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StopInjection(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_CameraControlServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1190,6 +1245,26 @@ def add_CameraControlServicer_to_server(servicer, server):
                     servicer.EncodeImage,
                     request_deserializer=camera__pb2.EncodeImageRequest.FromString,
                     response_serializer=camera__pb2.EncodeImageResponse.SerializeToString,
+            ),
+            'PushFrame': grpc.unary_unary_rpc_method_handler(
+                    servicer.PushFrame,
+                    request_deserializer=camera__pb2.PushFrameRequest.FromString,
+                    response_serializer=camera__pb2.PushFrameResponse.SerializeToString,
+            ),
+            'PushFrameStream': grpc.stream_unary_rpc_method_handler(
+                    servicer.PushFrameStream,
+                    request_deserializer=camera__pb2.PushFrameRequest.FromString,
+                    response_serializer=camera__pb2.PushFrameResponse.SerializeToString,
+            ),
+            'GetInjectionStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetInjectionStatus,
+                    request_deserializer=camera__pb2.Empty.FromString,
+                    response_serializer=camera__pb2.InjectionStatusResponse.SerializeToString,
+            ),
+            'StopInjection': grpc.unary_unary_rpc_method_handler(
+                    servicer.StopInjection,
+                    request_deserializer=camera__pb2.Empty.FromString,
+                    response_serializer=camera__pb2.InjectionStatusResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -3056,6 +3131,114 @@ class CameraControl(object):
             '/aipc.camera.CameraControl/EncodeImage',
             camera__pb2.EncodeImageRequest.SerializeToString,
             camera__pb2.EncodeImageResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PushFrame(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/PushFrame',
+            camera__pb2.PushFrameRequest.SerializeToString,
+            camera__pb2.PushFrameResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PushFrameStream(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/aipc.camera.CameraControl/PushFrameStream',
+            camera__pb2.PushFrameRequest.SerializeToString,
+            camera__pb2.PushFrameResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetInjectionStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/GetInjectionStatus',
+            camera__pb2.Empty.SerializeToString,
+            camera__pb2.InjectionStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StopInjection(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aipc.camera.CameraControl/StopInjection',
+            camera__pb2.Empty.SerializeToString,
+            camera__pb2.InjectionStatusResponse.FromString,
             options,
             channel_credentials,
             insecure,

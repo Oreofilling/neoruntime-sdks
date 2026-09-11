@@ -83,7 +83,7 @@ class InferenceServiceStub(object):
                 _registered_method=True)
         self.GetStats = channel.unary_unary(
                 '/aipc.inference.InferenceService/GetStats',
-                request_serializer=inference__pb2.Empty.SerializeToString,
+                request_serializer=inference__pb2.GetStatsRequest.SerializeToString,
                 response_deserializer=inference__pb2.SystemStats.FromString,
                 _registered_method=True)
         self.UpdatePostprocessConfig = channel.unary_unary(
@@ -279,7 +279,7 @@ def add_InferenceServiceServicer_to_server(servicer, server):
             ),
             'GetStats': grpc.unary_unary_rpc_method_handler(
                     servicer.GetStats,
-                    request_deserializer=inference__pb2.Empty.FromString,
+                    request_deserializer=inference__pb2.GetStatsRequest.FromString,
                     response_serializer=inference__pb2.SystemStats.SerializeToString,
             ),
             'UpdatePostprocessConfig': grpc.unary_unary_rpc_method_handler(
@@ -583,7 +583,7 @@ class InferenceService(object):
             request,
             target,
             '/aipc.inference.InferenceService/GetStats',
-            inference__pb2.Empty.SerializeToString,
+            inference__pb2.GetStatsRequest.SerializeToString,
             inference__pb2.SystemStats.FromString,
             options,
             channel_credentials,
