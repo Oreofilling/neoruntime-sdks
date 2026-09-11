@@ -32,16 +32,28 @@ message TensorSpec {
   repeated int32 shape = 1;
   DataType dtype = 2;
   string name = 3;
-  string layout = 4;  // "NHWC", "NCHW", "HWC", "CHW", "NC", "HW", etc.
+  string layout = 4;  // "NHWC", "NCHW", "HWC", "CHW", "NC", "HW", or "NV12" for
+                      // image-plane inputs (NV12/NV21/I420; see byte_size).
+  uint32 byte_size = 5;  // Host buffer size from the backend. Authoritative when
+                         // set: NV12-like inputs report an RGB-like shape whose
+                         // product is not the frame size (W*H*3/2 is).
 }
 
 message Tensor {
   repeated int32 shape = 1;
   DataType dtype = 2;
   bytes data = 3;
-  
+
   // Optional: DMA-BUF (zero-copy)
   int32 dma_fd = 4;
+
+  // Cross-process frame reference: id in camera-daemon's DSP buffer registry
+  // (from DSP_ALLOC or DSP_IMPORT over the camera.sock UDS). ai-runtime
+  // resolves it back to fds+geometry via DSP_LOOKUP and repacks into its own
+  // input buffer — the frame never crosses gRPC as pixels. Mutually exclusive
+  // with data/dma_fd; dma_fd (a raw fd number from another process) is
+  // rejected by ai-runtime.
+  uint64 buffer_id = 5;
 }
 
 // ============ Model management ============
@@ -61,6 +73,14 @@ message ModelRegisterRequest {
   // Post-process configuration
   string model_type = 13;       // Model type: detection, landmarks, segmentation, classification
   string model_variant = 14;    // Variant: yolov8n, yolov8s, etc. (for detection models)
+
+  bool transient = 15;          // App-bundled model (extracted from an app image): hidden from the model page, never persisted to platform.db
+
+  // Explicit opt-in for transient registrations that intentionally carry no
+  // model_type: the app wants raw tensors (no postprocess session) and will
+  // decode them itself. Distinguishes "package forgot the type" (rejected)
+  // from "package chose raw output" (allowed).
+  bool raw_output_only = 16;
 }
 
 message ModelRegisterResponse {
@@ -81,6 +101,7 @@ message ModelInfo {
   uint32 estimated_memory = 11;
   uint64 load_timestamp = 12;
   string owner_id = 13;         // Used during UnregisterModel to specify the caller's identity
+  bool transient = 14;          // True for app-bundled models (see ModelRegisterRequest.transient)
 }
 
 message ModelListResponse {
@@ -202,10 +223,18 @@ message StreamInferRequest {
 
 message StreamInferResponse {
   uint64 frame_sequence = 1;
-  uint64 timestamp_ns = 2;
+  uint64 timestamp_ns = 2;         // Frame capture time (daemon-side stamp)
   repeated Tensor outputs = 3;    // Raw tensors (when post-process disabled)
   Status status = 4;
   PostResult post_result = 5;     // Structured results (when post-process enabled)
+  // Result skew: result-ready time minus frame capture time, in microseconds.
+  // Both stamps are on the device's CLOCK_MONOTONIC — the same domain as
+  // timestamp_ns (the media pipeline's frame stamp is monotonic; wall-clock
+  // reads must not be mixed in). "Result-ready" is when post-processing
+  // finished and the result is usable (filled in the stream's on_complete).
+  // 0 means "not measured" — the field is absent on failed inferences and on
+  // servers that predate it.
+  int64 skew_us = 6;
 }
 
 // ============ Session management ============
@@ -235,6 +264,20 @@ message InferenceStats {
   float current_qps = 5;
   uint32 queue_depth = 6;
   float hw_fps = 7;  // Hardware FPS from HAL latency measurement, 0 if unavailable
+  // Stream-infer skew aggregates (result-ready minus frame capture). Samples
+  // come from StreamInfer responses only — single-shot Infer has no frame
+  // timestamp. All three are 0 when the model has never run on a stream.
+  uint64 avg_skew_us = 8;
+  uint64 max_skew_us = 9;
+  uint64 skew_samples = 10;
+}
+
+// GetStats request. sampling_window_ms bounds the blocking HAL sampling
+// window behind device_utilization / perf stats; 0 = server default (500).
+// Clamped to [1, 5000]. A pre-windowing client sends Empty, which parses
+// here as all-defaults — same behavior as before windowing.
+message GetStatsRequest {
+  uint32 sampling_window_ms = 1;
 }
 
 message SystemStats {
@@ -286,7 +329,7 @@ service InferenceService {
   rpc DestroySession(SessionConfig) returns (Status);
   
   // Statistics
-  rpc GetStats(Empty) returns (SystemStats);
+  rpc GetStats(GetStatsRequest) returns (SystemStats);
 
   // Dynamic postprocess configuration
   rpc UpdatePostprocessConfig(UpdatePostprocessConfigRequest) returns (UpdatePostprocessConfigResponse);
