@@ -9,6 +9,12 @@ standalone HTTP server for apps that do not run a web framework.
 Pair with AppClient.register_web_url() so the platform web console can
 reach the app container's MJPEG page.
 
+platform_stream_url() is the zero-server alternative: it composes the
+WebSocket URL of a PLATFORM camera stream (the same /api/v1/h264/{id}
+endpoint the console plays), so an app that pushes frames through
+FramePublisher can hand viewers a URL without opening any port of its
+own - the platform gateway already serves the stream.
+
 Example (flask):
     source = MjpegStream()
     app = Flask(__name__)
@@ -20,18 +26,103 @@ Example (standalone):
     server.start()
     ...
     server.stop()
+
+Example (no own server at all):
+    # inject frames into the platform's sub stream, then:
+    url = platform_stream_url("sub", host="192.168.1.10", token=jwt)
 """
 
 from __future__ import annotations
 
+import os
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Iterator
 
 from .media import Frame
 
 BOUNDARY = b"frame"  # multipart boundary token
+
+#: Environment variable consulted when ``host`` is not passed explicitly to
+#: platform_stream_url(). Nothing injects it yet - set it in the app
+#: container or shell when the SDK runs somewhere that needs a non-default
+#: host (the SDK itself talks to the daemon over a local socket and never
+#: learns the device's external address).
+WEB_HOST_ENV = "AIPC_WEB_HOST"
+
+#: Path the platform gateway serves encoded camera streams on (WebSocket,
+#: proxied to platform-api; the web console's player consumes the same URL).
+H264_WS_PATH = "/api/v1/h264"
+
+
+def platform_stream_url(
+    stream_id: str = "sub",
+    host: str | None = None,
+    scheme: str | None = None,
+    token: str | None = None,
+) -> str:
+    """Compose the WebSocket URL of a platform camera stream.
+
+    The platform gateway (HTTPS on 443) already reverse-proxies encoded
+    camera streams at ``/api/v1/h264/{stream_id}``; the web console plays
+    this URL. Apps that publish frames via
+    :class:`~neoruntime_ipc_sdk.injection.FramePublisher` (REPLACE or
+    OVERLAY) can hand this URL to any viewer instead of running their own
+    MJPEG server.
+
+    Args:
+        stream_id: Platform stream name (``main`` / ``sub`` / ``third``).
+        host: Device host, optionally with a port (``"192.168.1.10"``,
+            ``"localhost:8080"``). Full origins (``"https://..."``) are
+            accepted - the scheme is mapped to ws/wss. Resolved from the
+            ``AIPC_WEB_HOST`` environment variable when omitted, else
+            ``localhost``.
+        scheme: ``"wss"`` (default - the TLS gateway) or ``"ws"`` for a
+            plain-HTTP face (e.g. platform-api directly on
+            ``localhost:8080``). An explicit value overrides any scheme
+            inferred from a full-origin ``host``.
+        token: Auth token appended as ``?token=...`` - network access to
+            ``/api/v1`` requires one (the console passes its JWT here).
+
+    Returns:
+        The stream URL, e.g. ``wss://192.168.1.10/api/v1/h264/sub``.
+
+    Raises:
+        ValueError: If ``stream_id`` is empty.
+    """
+    stream = stream_id.strip("/")
+    if not stream:
+        raise ValueError("stream_id must be a non-empty stream name")
+
+    if host is None:
+        host = os.getenv(WEB_HOST_ENV) or "localhost"
+    host = host.strip().rstrip("/")
+
+    # a full-origin host carries its own scheme prefix: always strip it,
+    # and let it pick the scheme when the caller did not pass one
+    # (http -> ws, https/wss -> wss)
+    lower = host.lower()
+    if lower.startswith(("https://", "wss://")):
+        host = host.partition("://")[2]
+        inferred = "wss"
+    elif lower.startswith(("http://", "ws://")):
+        host = host.partition("://")[2]
+        inferred = "ws"
+    else:
+        inferred = None
+    if scheme is None:
+        scheme = inferred or "wss"
+
+    url = f"{scheme}://{host}{H264_WS_PATH}/{stream}"
+    if token:
+        # quote_via=quote -> %20 for spaces (matches the console's
+        # encodeURIComponent) and keeps a literal '+' in a JWT unambiguous
+        url += "?" + urllib.parse.urlencode(
+            {"token": token}, quote_via=urllib.parse.quote
+        )
+    return url
 
 
 class MjpegStream:

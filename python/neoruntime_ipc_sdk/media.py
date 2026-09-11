@@ -52,6 +52,8 @@ from .frame import (  # noqa: F401
     _PACKED_FORMATS,
     _YUV_FORMATS,
     PIXEL_FORMAT_NAMES,
+    FRAME_FLAG_DPM_BAKED,
+    FRAME_FLAG_OVERLAY_BAKED,
     Frame,
     FrameHandle,
     PixelFormat,

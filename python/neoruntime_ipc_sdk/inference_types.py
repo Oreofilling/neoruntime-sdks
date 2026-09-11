@@ -137,6 +137,10 @@ class InferenceResult:
     queue_time_us: int = 0
     hw_infer_time_us: int = 0  # Pure NPU hardware latency (microseconds), 0 if unavailable
     status_message: str = ""  # Diagnostic: "simulation" if no frame source
+    # Result skew: result-ready minus frame capture, in microseconds —
+    # server-computed on the device clock (same domain as timestamp_ns).
+    # 0 means "not measured" (failed inference or an older server).
+    skew_us: int = 0
 
     def has_person(self) -> bool:
         return any(obj.label == "person" for obj in self.objects)

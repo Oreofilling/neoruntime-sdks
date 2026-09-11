@@ -8,8 +8,9 @@ import asyncio
 import logging
 import queue
 import threading
+import time
 from concurrent.futures import Future
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator, TYPE_CHECKING
 
 import grpc
 import numpy as np
@@ -39,7 +40,62 @@ from .inference_types import (  # noqa: F401 — re-exported for API compat
 )
 from .proto import inference_pb2, inference_pb2_grpc
 
+if TYPE_CHECKING:
+    from .dsp import DspClient
+    from .frame import Frame, FrameHandle
+
 logger = logging.getLogger(__name__)
+
+
+class _SubscribeIterator:
+    """Consumer-side iterator over a stream-infer subscription.
+
+    Wraps the generator that bridges the async server stream so the pump
+    thread can update the ``dropped`` tally (generators reject attribute
+    assignment) while the consumer reads it as a plain int.
+    """
+
+    def __init__(self, gen: Iterator[tuple[int, InferenceResult]]) -> None:
+        self._gen = gen
+        self.dropped = 0
+        # End-to-end result latency (result timestamp → local receive), ms.
+        # ``avg`` is an EMA (alpha 0.1); both stay 0.0 when the server does
+        # not stamp result timestamps.
+        self.last_latency_ms = 0.0
+        self.avg_latency_ms = 0.0
+        # Result skew (result-ready − frame capture, µs), server-computed
+        # on the device clock so it is immune to host/device clock skew.
+        # ``avg`` is an EMA (alpha 0.1); both stay 0 when the server does
+        # not report skew (older server, or failed inferences).
+        self.last_skew_us = 0
+        self.avg_skew_us = 0.0
+        # Cross-thread cancel hooks, installed by the wrapped generator once
+        # the pump task exists (empty before the first next()).
+        self._cancel_hooks: list[Callable[[], None]] = []
+
+    def __iter__(self) -> _SubscribeIterator:
+        return self
+
+    def __next__(self) -> tuple[int, InferenceResult]:
+        return next(self._gen)
+
+    def close(self) -> None:
+        self._gen.close()
+
+    def cancel(self) -> None:
+        """Stop the subscription from any thread.
+
+        Unlike ``close()`` (only valid on the consuming thread), this is
+        safe to call from any thread: it cancels the pump task and offers
+        the terminal sentinel so a consumer blocked in ``next()`` wakes
+        immediately and the generator exits. Idempotent; a no-op before
+        the first ``next()`` (nothing has started yet).
+        """
+        for hook in list(self._cancel_hooks):
+            hook()
+
+    def throw(self, typ, val=None, tb=None):
+        return self._gen.throw(typ, val, tb)
 
 
 class InferenceClient(GenAiMixin):
@@ -70,6 +126,9 @@ class InferenceClient(GenAiMixin):
         # a futex, NOT a sched_yield busy-poll, eliminating the sync-CQ spin.
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread: threading.Thread | None = None
+        # Lazily-created DspClient for zero-copy frame inference
+        # (``infer(frame, ...)``); closed by close().
+        self._dsp: DspClient | None = None
 
     def _get_default_endpoint(self) -> str:
         import os
@@ -126,6 +185,9 @@ class InferenceClient(GenAiMixin):
         return self.channel is not None
 
     def close(self) -> None:
+        if self._dsp is not None:
+            self._dsp.close()
+            self._dsp = None
         if self.channel:
             asyncio.run_coroutine_threadsafe(self.channel.close(), self._loop).result(timeout=5)
             self.channel = None
@@ -158,18 +220,83 @@ class InferenceClient(GenAiMixin):
     def _parse_infer_response(self, response: inference_pb2.InferResponse) -> InferenceResult:
         return _parse_infer_response(response)
 
+    def _frame_input_tensor(self, image: Any) -> inference_pb2.Tensor | None:
+        """Zero-copy input path: import a Frame/FrameHandle as Tensor.buffer_id.
+
+        Returns None for array inputs (the caller falls back to the bytes
+        path). The frame's dma-bufs are imported via DSP_IMPORT; ai-runtime
+        resolves the id against the daemon buffer registry, so the pixels
+        never cross a socket. The tensor carries the import id — the caller
+        MUST release it via :meth:`_release_input` when the RPC settles.
+        """
+        from .frame import Frame, FrameHandle
+
+        if isinstance(image, FrameHandle):
+            handle = image
+        elif isinstance(image, Frame):
+            handle = image.handle
+            if handle is None:
+                raise ValueError(
+                    "frame carries no dma-buf handle — subscribe/receive with "
+                    "keep_fd=True, or pass the pixel array directly"
+                )
+        else:
+            return None
+
+        if handle.closed:
+            raise ValueError(
+                "frame handle is closed — its dma-bufs are gone; keep the "
+                "Frame/FrameHandle alive across the call"
+            )
+        if handle.format != "NV12":
+            # ai-runtime's registry-side repack only knows tight NV12
+            raise ValueError(
+                f"zero-copy inference supports NV12 frames only "
+                f"(got {handle.format or 'unknown format'})"
+            )
+
+        if self._dsp is None:
+            from .dsp import DspClient
+
+            self._dsp = DspClient()
+        buffer_id = self._dsp.import_frame(handle)
+        return inference_pb2.Tensor(
+            buffer_id=buffer_id,
+            dtype=inference_pb2.UINT8,
+            shape=[handle.height * 3 // 2, handle.width],
+        )
+
+    def _release_input(self, buffer_id: int) -> None:
+        """Free an imported frame buffer after its Infer RPC settled."""
+        if self._dsp is None:
+            return
+        try:
+            self._dsp.release_buffer(buffer_id)
+        except Exception:
+            # Best-effort: the daemon's lease watchdog reaps unreleased ids
+            logger.debug("buffer release after infer failed", exc_info=True)
+
     def infer(
         self,
-        image: np.ndarray,
+        image: Any,
         model_id: str,
         timeout_ms: int = 5000,
         priority: int = 4,
         session_id: str = "",
     ) -> InferenceResult:
+        """Run one inference.
+
+        ``image`` is an ndarray (pixels shipped as bytes) or a
+        keep-fd ``Frame``/``FrameHandle`` (NV12 only): the frame's
+        dma-bufs are imported and referenced by buffer id, so no pixel
+        copy crosses the transport.
+        """
         if self.stub is None:
             self.connect()
 
-        tensor = self._numpy_to_tensor(image, "input")
+        tensor = self._frame_input_tensor(image)
+        if tensor is None:
+            tensor = self._numpy_to_tensor(image, "input")
 
         request = inference_pb2.InferRequest(
             model_id=model_id,
@@ -179,10 +306,14 @@ class InferenceClient(GenAiMixin):
             session_id=session_id,
         )
 
-        fut = asyncio.run_coroutine_threadsafe(self._infer_async(request, timeout_ms), self._loop)
-        # +5s slack covers NPU cold start / HEF context init; the gRPC deadline
-        # itself is timeout_ms/1000.
-        response = fut.result(timeout=timeout_ms / 1000 + 5)
+        try:
+            fut = asyncio.run_coroutine_threadsafe(self._infer_async(request, timeout_ms), self._loop)
+            # +5s slack covers NPU cold start / HEF context init; the gRPC deadline
+            # itself is timeout_ms/1000.
+            response = fut.result(timeout=timeout_ms / 1000 + 5)
+        finally:
+            if tensor.buffer_id:
+                self._release_input(tensor.buffer_id)
 
         if not response.status.success:
             raise RuntimeError(f"Inference failed: {response.status.message}")
@@ -206,7 +337,7 @@ class InferenceClient(GenAiMixin):
 
     def infer_async(
         self,
-        image: np.ndarray,
+        image: Any,
         model_id: str,
         timeout_ms: int = 5000,
         priority: int = 4,
@@ -216,6 +347,10 @@ class InferenceClient(GenAiMixin):
         to a parsed InferenceResult. The caller MUST call fut.result(timeout=...)
         to obtain the result (or propagate the error).
 
+        ``image`` may be an ndarray or a keep-fd NV12 Frame/FrameHandle
+        (zero-copy buffer-id input, same as :meth:`infer`); the import is
+        released when the RPC settles.
+
         Enables depth-N pipelines: submit frame N+1 while still awaiting frame N
         so the NPU stays busy across the host-side gap between jobs. Schedules
         onto the same background asyncio loop infer() already uses. The existing
@@ -224,7 +359,10 @@ class InferenceClient(GenAiMixin):
         if self.stub is None:
             self.connect()
 
-        tensor = self._numpy_to_tensor(image, "input")
+        tensor = self._frame_input_tensor(image)
+        if tensor is None:
+            tensor = self._numpy_to_tensor(image, "input")
+
         request = inference_pb2.InferRequest(
             model_id=model_id,
             inputs=[tensor],
@@ -232,9 +370,19 @@ class InferenceClient(GenAiMixin):
             priority=priority,
             session_id=session_id,
         )
-        return asyncio.run_coroutine_threadsafe(
-            self._infer_full_async(request, timeout_ms), self._loop
-        )
+
+        if not tensor.buffer_id:
+            return asyncio.run_coroutine_threadsafe(
+                self._infer_full_async(request, timeout_ms), self._loop
+            )
+
+        async def _infer_and_release():
+            try:
+                return await self._infer_full_async(request, timeout_ms)
+            finally:
+                self._release_input(tensor.buffer_id)
+
+        return asyncio.run_coroutine_threadsafe(_infer_and_release(), self._loop)
 
     def infer_batch(
         self, items: list[BatchInferItem], timeout_ms: int = 10000
@@ -369,122 +517,200 @@ class InferenceClient(GenAiMixin):
         session_id: str = "",
         raw_output_only: bool = False,
         max_consecutive_failures: int | None = 10,
+        queue_size: int | None = 100,
     ) -> Iterator[tuple[int, InferenceResult]]:
         """Yield (frame_sequence, InferenceResult) for a camera stream subscription.
 
         Failed frames are skipped with a warning. If ``max_consecutive_failures``
         frames fail in a row (default 10), a RuntimeError is raised instead of
         yielding nothing forever. Pass 0 or None to disable the limit.
+
+        ``queue_size`` bounds the client-side result queue. A consumer slower
+        than the stream drops its *oldest* queued results (the newest always
+        gets through); each drop is counted on the returned iterator's
+        ``dropped`` attribute and reported in a throttled warning — instead
+        of the queue growing memory without bound. Pass 0 or None for an
+        unbounded queue. A stream error is the queue's one terminal item
+        (offered exactly once, after every result) so backpressure can
+        delay but never drop it: the consumer always sees the exception.
         """
-        if self.stub is None:
-            self.connect()
+        gen_ref: list[_SubscribeIterator] = []
 
-        request = inference_pb2.StreamInferRequest(
-            model_id=model,
-            stream_id=stream,
-            fps_limit=fps,
-            session_id=session_id,
-            raw_output_only=raw_output_only,
-        )
+        def _gen() -> Iterator[tuple[int, InferenceResult]]:
+            gen = gen_ref[0]
+            if self.stub is None:
+                self.connect()
 
-        # Bridge the async server-stream to a sync generator via a queue. The
-        # caller blocks on q.get() (a futex), not a sync-CQ spin.
-        q: queue.Queue[Any] = queue.Queue()
-        SENTINEL = object()
+            request = inference_pb2.StreamInferRequest(
+                model_id=model,
+                stream_id=stream,
+                fps_limit=fps,
+                session_id=session_id,
+                raw_output_only=raw_output_only,
+            )
 
-        async def _pump():
-            call = self.stub.StreamInfer(request)
+            # Bridge the async server-stream to a sync generator via a queue. The
+            # caller blocks on q.get() (a futex), not a sync-CQ spin.
+            q: queue.Queue[Any] = (
+                queue.Queue(maxsize=queue_size) if queue_size else queue.Queue()
+            )
+            SENTINEL = object()
+
+            def _offer(item: Any) -> None:
+                # put_nowait with drop-oldest overflow. The one terminal
+                # item (a stream error, or the SENTINEL) is offered exactly
+                # once, last, and nothing follows it — so it can evict a
+                # queued result but can never be evicted itself.
+                while True:
+                    try:
+                        q.put_nowait(item)
+                        return
+                    except queue.Full:
+                        try:
+                            q.get_nowait()
+                            gen.dropped += 1
+                            if gen.dropped == 1 or gen.dropped % 10 == 0:
+                                logger.warning(
+                                    "subscribe(stream=%r, model=%r): consumer behind; "
+                                    "dropped %d queued results",
+                                    stream,
+                                    model,
+                                    gen.dropped,
+                                )
+                        except queue.Empty:
+                            pass  # consumer drained between put and get; retry
+
+            async def _pump():
+                call = self.stub.StreamInfer(request)
+                terminal: Any = SENTINEL
+                try:
+                    async for response in call:
+                        _offer(response)
+                except asyncio.CancelledError:
+                    cancel = getattr(call, "cancel", None)
+                    if cancel:
+                        cancel()
+                    raise  # terminal stays SENTINEL: the consumer ends normally
+                except Exception as e:
+                    terminal = e  # the error becomes the one terminal item
+                finally:
+                    _offer(terminal)
+
+            pump_future = asyncio.run_coroutine_threadsafe(_pump(), self._loop)
+
+            # Cross-thread cancel(): stop the pump and deliver the terminal
+            # sentinel so a consumer blocked in q.get() wakes immediately.
+            # queue.Queue is thread-safe; concurrent.futures cancel() is
+            # thread-safe; a second SENTINEL after the generator returned is
+            # just an unread queue item.
+            def _cancel_hook() -> None:
+                if not pump_future.done():
+                    pump_future.cancel()
+                _offer(SENTINEL)
+
+            gen._cancel_hooks.append(_cancel_hook)
+
+            consecutive_failures = 0
             try:
-                async for response in call:
-                    q.put(response)
-            except asyncio.CancelledError:
-                cancel = getattr(call, "cancel", None)
-                if cancel:
-                    cancel()
-                raise
-            except Exception as e:
-                q.put(e)
+                while True:
+                    item = q.get()
+                    if item is SENTINEL:
+                        return
+                    if isinstance(item, Exception):
+                        raise item
+                    response = item
+
+                    recv_ns = time.time_ns()
+                    latency_ms = (recv_ns - response.timestamp_ns) / 1e6
+                    if 0.0 < latency_ms < 60_000.0:  # sane window (same-host clock)
+                        gen.last_latency_ms = latency_ms
+                        if gen.avg_latency_ms == 0.0:
+                            gen.avg_latency_ms = latency_ms
+                        else:
+                            gen.avg_latency_ms += 0.1 * (latency_ms - gen.avg_latency_ms)
+
+                    # Skew comes precomputed from the server (device clock on
+                    # both stamps), so it is valid regardless of any
+                    # host/device clock offset that limits latency_ms above.
+                    skew_us = getattr(response, "skew_us", 0)
+                    if skew_us > 0:
+                        gen.last_skew_us = skew_us
+                        if gen.avg_skew_us == 0.0:
+                            gen.avg_skew_us = float(skew_us)
+                        else:
+                            gen.avg_skew_us += 0.1 * (skew_us - gen.avg_skew_us)
+
+                    if not response.status.success:
+                        consecutive_failures += 1
+                        if consecutive_failures == 1 or consecutive_failures % 10 == 0:
+                            logger.warning(
+                                "subscribe(stream=%r, model=%r): inference failed for frame %d "
+                                "(%d consecutive): %s",
+                                stream,
+                                model,
+                                response.frame_sequence,
+                                consecutive_failures,
+                                response.status.message,
+                            )
+                        if (
+                            max_consecutive_failures
+                            and consecutive_failures >= max_consecutive_failures
+                        ):
+                            raise RuntimeError(
+                                f"Stream inference failed {consecutive_failures} consecutive times "
+                                f"(stream={stream!r}, model={model!r}, "
+                                f"last frame={response.frame_sequence}): "
+                                f"{response.status.message!r}"
+                            )
+                        continue
+                    consecutive_failures = 0
+
+                    objects = []
+                    classifications = []
+                    landmarks = []
+                    masks = []
+                    ocr_lines = []
+                    embeddings = []
+                    depth_maps = []
+
+                    if response.HasField("post_result"):
+                        (
+                            objects,
+                            classifications,
+                            landmarks,
+                            masks,
+                            ocr_lines,
+                            embeddings,
+                            depth_maps,
+                        ) = self._parse_post_result(response.post_result)
+
+                    raw_outputs = None
+                    if response.outputs:
+                        raw_outputs = [self._tensor_to_numpy(t) for t in response.outputs]
+
+                    result = InferenceResult(
+                        frame_sequence=response.frame_sequence,
+                        timestamp_ns=response.timestamp_ns,
+                        objects=objects,
+                        classifications=classifications,
+                        landmarks=landmarks,
+                        masks=masks,
+                        ocr_lines=ocr_lines,
+                        embeddings=embeddings,
+                        depth_maps=depth_maps,
+                        raw_outputs=raw_outputs,
+                        status_message=response.status.message,
+                        skew_us=getattr(response, "skew_us", 0),
+                    )
+
+                    yield response.frame_sequence, result
             finally:
-                q.put(SENTINEL)
+                if not pump_future.done():
+                    pump_future.cancel()
 
-        pump_future = asyncio.run_coroutine_threadsafe(_pump(), self._loop)
-
-        consecutive_failures = 0
-        try:
-            while True:
-                item = q.get()
-                if item is SENTINEL:
-                    return
-                if isinstance(item, Exception):
-                    raise item
-                response = item
-
-                if not response.status.success:
-                    consecutive_failures += 1
-                    if consecutive_failures == 1 or consecutive_failures % 10 == 0:
-                        logger.warning(
-                            "subscribe(stream=%r, model=%r): inference failed for frame %d "
-                            "(%d consecutive): %s",
-                            stream,
-                            model,
-                            response.frame_sequence,
-                            consecutive_failures,
-                            response.status.message,
-                        )
-                    if (
-                        max_consecutive_failures
-                        and consecutive_failures >= max_consecutive_failures
-                    ):
-                        raise RuntimeError(
-                            f"Stream inference failed {consecutive_failures} consecutive times "
-                            f"(stream={stream!r}, model={model!r}, "
-                            f"last frame={response.frame_sequence}): "
-                            f"{response.status.message!r}"
-                        )
-                    continue
-                consecutive_failures = 0
-
-                objects = []
-                classifications = []
-                landmarks = []
-                masks = []
-                ocr_lines = []
-                embeddings = []
-                depth_maps = []
-
-                if response.HasField("post_result"):
-                    (
-                        objects,
-                        classifications,
-                        landmarks,
-                        masks,
-                        ocr_lines,
-                        embeddings,
-                        depth_maps,
-                    ) = self._parse_post_result(response.post_result)
-
-                raw_outputs = None
-                if response.outputs:
-                    raw_outputs = [self._tensor_to_numpy(t) for t in response.outputs]
-
-                result = InferenceResult(
-                    frame_sequence=response.frame_sequence,
-                    timestamp_ns=response.timestamp_ns,
-                    objects=objects,
-                    classifications=classifications,
-                    landmarks=landmarks,
-                    masks=masks,
-                    ocr_lines=ocr_lines,
-                    embeddings=embeddings,
-                    depth_maps=depth_maps,
-                    raw_outputs=raw_outputs,
-                    status_message=response.status.message,
-                )
-
-                yield response.frame_sequence, result
-        finally:
-            if not pump_future.done():
-                pump_future.cancel()
+        it = _SubscribeIterator(_gen())
+        gen_ref.append(it)
+        return it
 
     def register_model(
         self,
@@ -572,10 +798,21 @@ class InferenceClient(GenAiMixin):
                     model_path=m.model_path,
                     version=m.version,
                     inputs=[
-                        {"shape": list(i.shape), "dtype": i.dtype, "name": i.name} for i in m.inputs
+                        {
+                            "shape": list(i.shape),
+                            "dtype": i.dtype,
+                            "name": i.name,
+                            "layout": i.layout,
+                        }
+                        for i in m.inputs
                     ],
                     outputs=[
-                        {"shape": list(o.shape), "dtype": o.dtype, "name": o.name}
+                        {
+                            "shape": list(o.shape),
+                            "dtype": o.dtype,
+                            "name": o.name,
+                            "layout": o.layout,
+                        }
                         for o in m.outputs
                     ],
                     estimated_tops=m.estimated_tops,
@@ -597,14 +834,53 @@ class InferenceClient(GenAiMixin):
             return None
 
         return ModelInfo(
-            model_id=response.model_id, model_path=response.model_path, version=response.version
+            model_id=response.model_id,
+            model_path=response.model_path,
+            version=response.version,
+            inputs=[
+                {
+                    "shape": list(i.shape),
+                    "dtype": i.dtype,
+                    "name": i.name,
+                    "layout": i.layout,
+                }
+                for i in response.inputs
+            ],
+            outputs=[
+                {
+                    "shape": list(o.shape),
+                    "dtype": o.dtype,
+                    "name": o.name,
+                    "layout": o.layout,
+                }
+                for o in response.outputs
+            ],
+            estimated_tops=response.estimated_tops,
+            estimated_memory=response.estimated_memory,
+            load_timestamp=response.load_timestamp,
         )
 
-    def get_stats(self) -> dict[str, Any]:
+    def get_stats(self, sampling_window_ms: int | None = None) -> dict[str, Any]:
+        """System and per-model stats.
+
+        ``sampling_window_ms`` bounds the blocking HAL sampling window
+        behind device/CPU/DSP utilization (they are measured, not read —
+        the call blocks roughly this long). ``None`` sends the
+        server-default request (500 ms); the server clamps explicit
+        values to [1, 5000]. Cheap periodic snapshots should ask for a
+        small window (1-50 ms).
+        """
         if self.stub is None:
             self.connect()
 
-        response = self._invoke(self.stub.GetStats, inference_pb2.Empty(), result_timeout=30)
+        if sampling_window_ms is None:
+            request: Any = inference_pb2.Empty()
+        else:
+            request = inference_pb2.GetStatsRequest(
+                sampling_window_ms=max(1, min(5000, int(sampling_window_ms)))
+            )
+
+        response = self._invoke(self.stub.GetStats, request, result_timeout=30)
 
         return {
             "device_utilization": response.device_utilization,
@@ -624,6 +900,11 @@ class InferenceClient(GenAiMixin):
                     "current_qps": s.current_qps,
                     "queue_depth": s.queue_depth,
                     "hw_fps": getattr(s, "hw_fps", 0),
+                    # Stream-infer skew aggregates (µs); 0 when the model has
+                    # never run on a stream or the server predates the fields.
+                    "avg_skew_us": getattr(s, "avg_skew_us", 0),
+                    "max_skew_us": getattr(s, "max_skew_us", 0),
+                    "skew_samples": getattr(s, "skew_samples", 0),
                 }
                 for s in response.model_stats
             ],

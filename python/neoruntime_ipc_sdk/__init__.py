@@ -26,6 +26,7 @@ from .accel import (
     RouteDecision,
     RoutePolicy,
     get_default_router,
+    set_route_policy,
 )
 from .app import (
     AppClient,
@@ -49,6 +50,8 @@ from .camera import (
     EnvStatus,
     HardwareStatus,
     InfraredStatus,
+    InjectionResult,
+    InjectionStatus,
     IrPreset,
     ISPConfig,
     PipelineStreamConfig,
@@ -74,6 +77,7 @@ from .device import (
     DeviceStatus,
     IrCutMode,
 )
+from .diagnostics import diagnostics
 from .draw import (
     draw_boxes,
     draw_detections,
@@ -107,10 +111,13 @@ from .inference import (
     OcrLine,
     SegmentationMask,
 )
+from .injection import FramePublisher
 from .media import (
     EncodedFrame,
     EncodedStreamClient,
     FdMediaClient,
+    FRAME_FLAG_DPM_BAKED,
+    FRAME_FLAG_OVERLAY_BAKED,
     Frame,
     FrameHandle,
     PixelFormat,
@@ -120,17 +127,27 @@ from .overlay import (
     OverlayClient,
     OverlayConfig,
 )
+from .pipeline import InferencePipeline, PipelineResult
 from .plugin import PluginDiscovery, PluginEndpoint, PluginServer
-from .postprocess import nms
+from .postprocess import (
+    Postprocessor,
+    YoloV5Postprocessor,
+    YoloV8Postprocessor,
+    nms,
+)
+from .preprocess import PreprocessMeta, Preprocessor
 from .recording import (
     HlsWriter,
     PrerollBuffer,
     TsWriter,
 )
+from .runner import PipelineRunner
+from .stream_pipeline import StreamPipeline, StreamPipelineStatus
 from .web import (
     MjpegServer,
     MjpegStream,
     mjpeg_wsgi_app,
+    platform_stream_url,
 )
 
 __all__ = [
@@ -150,10 +167,14 @@ __all__ = [
     "OcrLine",
     "Embedding",
     "DepthMap",
+    # Injection (frame output)
+    "FramePublisher",
     # Media
     "FdMediaClient",
     "Frame",
     "FrameHandle",
+    "FRAME_FLAG_DPM_BAKED",
+    "FRAME_FLAG_OVERLAY_BAKED",
     "StreamInfo",
     "PixelFormat",
     "EncodedFrame",
@@ -184,17 +205,31 @@ __all__ = [
     "bgr_to_nv12",
     "nv12_resize",
     "nms",
+    "Postprocessor",
+    "YoloV5Postprocessor",
+    "YoloV8Postprocessor",
+    # Preprocessing & pipeline (client-side pre/post)
+    "Preprocessor",
+    "PreprocessMeta",
+    "InferencePipeline",
+    "PipelineResult",
+    "PipelineRunner",
+    # Whole pipeline (platform-scheduled)
+    "StreamPipeline",
+    "StreamPipelineStatus",
     "AccelRouter",
     "RoutePolicy",
     "RouteDecision",
     "DegradationRecord",
     "HardwareUnavailable",
     "get_default_router",
+    "set_route_policy",
     "TsWriter",
     "HlsWriter",
     "PrerollBuffer",
     "MjpegStream",
     "mjpeg_wsgi_app",
+    "platform_stream_url",
     "MjpegServer",
     # DSP offload
     "DspClient",
@@ -202,6 +237,7 @@ __all__ = [
     "DspError",
     # Config & Plugin
     "Config",
+    "diagnostics",
     "PluginDiscovery",
     "PluginServer",
     "PluginEndpoint",
@@ -233,6 +269,8 @@ __all__ = [
     "EnvStatus",
     # Imaging / infrared / privacy mask (camera)
     "InfraredStatus",
+    "InjectionResult",
+    "InjectionStatus",
     "IrPreset",
     "PrivacyMaskSettings",
 ]

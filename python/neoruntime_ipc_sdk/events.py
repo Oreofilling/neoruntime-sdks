@@ -5,6 +5,7 @@ Event Bus Client
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -14,6 +15,8 @@ import grpc  # noqa: F401 — tests patch events.grpc.insecure_channel
 
 from ._transport import GrpcClient
 from .proto import event_pb2, event_pb2_grpc
+
+logger = logging.getLogger(__name__)
 
 
 def _json_default(o: Any) -> Any:
@@ -222,9 +225,11 @@ class EventClient(GrpcClient):
                     try:
                         callback(event)
                     except Exception:
-                        pass
-            except grpc.RpcError:
-                pass
+                        logger.exception("on_event(%r): callback error", topic)
+            except grpc.RpcError as exc:
+                # The stream ended (service restart, closed channel). The
+                # thread exits — log it so silent disconnection is visible.
+                logger.warning("on_event(%r): subscription stream ended (%s)", topic, exc)
 
         thread = threading.Thread(target=_subscribe_thread, daemon=True)
         thread.start()
