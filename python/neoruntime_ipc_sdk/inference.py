@@ -10,7 +10,7 @@ import queue
 import threading
 import time
 from concurrent.futures import Future
-from typing import Any, Callable, Iterator, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Iterator
 
 import grpc
 import numpy as np
@@ -42,7 +42,6 @@ from .proto import inference_pb2, inference_pb2_grpc
 
 if TYPE_CHECKING:
     from .dsp import DspClient
-    from .frame import Frame, FrameHandle
 
 logger = logging.getLogger(__name__)
 

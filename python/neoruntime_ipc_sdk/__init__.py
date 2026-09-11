@@ -113,11 +113,11 @@ from .inference import (
 )
 from .injection import FramePublisher
 from .media import (
+    FRAME_FLAG_DPM_BAKED,
+    FRAME_FLAG_OVERLAY_BAKED,
     EncodedFrame,
     EncodedStreamClient,
     FdMediaClient,
-    FRAME_FLAG_DPM_BAKED,
-    FRAME_FLAG_OVERLAY_BAKED,
     Frame,
     FrameHandle,
     PixelFormat,
@@ -235,6 +235,7 @@ __all__ = [
     "DspClient",
     "DspBufferPool",
     "DspError",
+    "PendingDspJob",
     # Config & Plugin
     "Config",
     "diagnostics",

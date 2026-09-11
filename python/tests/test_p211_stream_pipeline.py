@@ -15,6 +15,7 @@ Contract under test:
   - Annotate errors are counted and non-fatal; the loop keeps going.
   - stop() is idempotent, joins the worker, clears boxes (and static
     polygons when any were set), and closes only the clients it created.
+    Safe to call from ``on_result``: the self-join is skipped.
 """
 
 import queue
@@ -271,6 +272,26 @@ class TestStartAndLifecycle:
     def test_results_before_start_raises(self):
         with pytest.raises(RuntimeError):
             StreamPipeline("third", "m").results()
+
+    def test_stop_from_on_result_clears_boxes_without_self_join(self):
+        # stop() from the hook runs on the worker thread: the self-join
+        # must be skipped (pre-fix: "cannot join current thread" was
+        # recorded in last_error and the box-clearing never ran) and the
+        # clear annotate still happens.
+        inf, ov = _FakeInferenceClient(), _FakeOverlayClient()
+        p = StreamPipeline("third", "m", inference=inf, overlay=ov)
+
+        def stop_and_drop(result):
+            p.stop()
+            return None  # dropped: nothing drawn after the clear
+
+        p.on_result = stop_and_drop
+        p.start()
+        inf.push(1, _result(1, [_obj()]))
+        assert _wait_until(lambda: not p.status().running), "worker did not stop"
+        assert p.status().last_error == ""
+        assert ("annotate", "third", [], None, None) in ov.calls
+        assert list(p.results()) == []  # dropped result; _STOP terminates
 
 
 class TestProcessing:

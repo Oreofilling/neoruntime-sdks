@@ -9,6 +9,7 @@ the buffer crosses as a DSP-registry id, never as a raw fd number).
 
 from __future__ import annotations
 
+import logging
 from itertools import repeat
 
 import numpy as np
@@ -18,6 +19,8 @@ from .camera_types import InjectionResult
 from .dsp import DspClient
 
 __all__ = ["FramePublisher"]
+
+logger = logging.getLogger(__name__)
 
 _MODES = ("replace", "overlay")
 
@@ -159,6 +162,10 @@ class FramePublisher:
         self._rgb_pool = None
         self._nv12_stage = None
         self._closed = False
+        # Lifecycle bookkeeping for __exit__'s best-effort EOS: whether
+        # any frame went out, and whether an EOS has been sent already.
+        self._published_any = False
+        self._eos_sent = False
 
     # -- geometry -----------------------------------------------------------
 
@@ -213,6 +220,7 @@ class FramePublisher:
         slot = self._slot
         self._slot = (slot + 1) % self._pool_depth
         self._pool.write(slot, arr)
+        self._published_any = True
         return self._camera.push_frame(
             buffer_id=self._pool.buffer_id(slot),
             width=self._width,
@@ -270,6 +278,7 @@ class FramePublisher:
                 slot = self._slot
                 self._slot = (slot + 1) % self._pool_depth
                 self._pool.write(slot, arr)
+                self._published_any = True
                 yield {
                     "buffer_id": self._pool.buffer_id(slot),
                     "width": self._width,
@@ -291,6 +300,7 @@ class FramePublisher:
                     "end_of_stream": True,
                     "session_id": self._session_id,
                 }
+                self._eos_sent = True
 
         return self._camera.push_frame_stream(_requests(), timeout_s=timeout_s)
 
@@ -336,6 +346,7 @@ class FramePublisher:
         if not self._dsp.last_used_hw:
             # CPU fallback computed pixels without touching the pool.
             self._nv12_stage.write(0, out)
+        self._published_any = True
         return self._camera.push_frame(
             buffer_id=self._nv12_stage.buffer_id(0),
             width=w,
@@ -354,7 +365,9 @@ class FramePublisher:
         """Flush the injection session (``buffer_id`` 0 + end_of_stream).
 
         The daemon drops the session and its queue; the pure ISP path
-        restores at the next IDR.
+        restores at the next IDR. Sent automatically — best effort — by
+        the context-manager exit when frames were published and no EOS
+        went out; failure there is a warning, not an error.
         """
         if self._closed:
             raise RuntimeError("FramePublisher is closed")
@@ -366,6 +379,7 @@ class FramePublisher:
             end_of_stream=True,
             session_id=self._session_id,
         )
+        self._eos_sent = True
 
     # -- conversion ---------------------------------------------------------
 
@@ -401,7 +415,12 @@ class FramePublisher:
     # -- lifecycle ----------------------------------------------------------
 
     def close(self) -> None:
-        """Release the buffer pools (idempotent; does not send EOS)."""
+        """Release the buffer pools (idempotent; sends no EOS itself).
+
+        The context-manager exit sends a best-effort EOS first when frames
+        were published without one; a bare ``close()`` never does —
+        callers needing explicit control call :meth:`publish_eos`.
+        """
         if not self._closed:
             self._closed = True
             self._pool.release()
@@ -410,9 +429,22 @@ class FramePublisher:
             if self._nv12_stage is not None:
                 self._nv12_stage.release()
 
-    def __enter__(self) -> "FramePublisher":
+    def __enter__(self) -> FramePublisher:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
+        # Best-effort EOS: the daemon keeps a clean half-closed session
+        # open, so a with-block that published frames but never sent EOS
+        # would hold the session (and its queue) until the connection
+        # drops. A failure here is a warning — the pools release anyway.
+        if not self._closed and self._published_any and not self._eos_sent:
+            try:
+                self.publish_eos()
+            except Exception:
+                logger.warning(
+                    "FramePublisher.__exit__: best-effort EOS failed; the "
+                    "injection session stays open until the connection drops",
+                    exc_info=True,
+                )
         self.close()
         return False

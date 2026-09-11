@@ -308,11 +308,11 @@ class SharedImportPool:
 
     def __init__(
         self,
-        client: "DspClient",
+        client: DspClient,
         width: int,
         height: int,
         ids: Sequence[int],
-        maps: Sequence["mmap.mmap"],
+        maps: Sequence[mmap.mmap],
         fds: Sequence[int],
     ):
         self._client = client
@@ -417,7 +417,7 @@ class PendingDspJob:
 
     def __init__(
         self,
-        client: "DspClient",
+        client: DspClient,
         reads: Sequence[tuple[DspBufferPool, int]],
         job_id: int | None,
         owns: Sequence[object],
@@ -461,7 +461,7 @@ class PendingDspJob:
         self._state = self._DONE
         return True
 
-    def wait_result(self, timeout_s: float | None = None) -> "PendingDspJob":
+    def wait_result(self, timeout_s: float | None = None) -> PendingDspJob:
         """Block until the job completes, the result staying device-side.
 
         A timed-out job raises but stays pending in the daemon — re-wait

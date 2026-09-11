@@ -53,7 +53,14 @@ _STOP = object()
 
 @dataclass(frozen=True)
 class StreamPipelineStatus:
-    """Point-in-time health snapshot from :meth:`StreamPipeline.status`."""
+    """Point-in-time health snapshot from :meth:`StreamPipeline.status`.
+
+    ``results_seen`` counts every result the worker accepted from the
+    subscription, *before* the ``on_result`` hook runs — results the hook
+    dropped or replaced are included. ``last_latency_ms``/``avg_latency_ms``
+    likewise time every accepted result, including ones later dropped by
+    the hook.
+    """
 
     running: bool
     results_seen: int
@@ -176,7 +183,7 @@ class StreamPipeline:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self) -> "StreamPipeline":
+    def start(self) -> StreamPipeline:
         """Subscribe, apply overlay config / static zones, start drawing."""
         with self._lock:
             if self._started:
@@ -209,6 +216,9 @@ class StreamPipeline:
 
         Idempotent, and a no-op before ``start()``. The worker is joined
         first so the box-clearing annotate cannot race a final result.
+        Safe to call from ``on_result`` (i.e. from the worker thread
+        itself): the self-join is skipped and the teardown below runs on
+        the caller's thread.
         """
         with self._lock:
             if not self._started or self._stopped:
@@ -221,7 +231,7 @@ class StreamPipeline:
             except Exception:  # noqa: BLE001 — best-effort wake-up
                 logger.debug("cancel() during stop failed", exc_info=True)
         thread = self._thread
-        if thread is not None:
+        if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=5)
             if thread.is_alive():
                 logger.error(
@@ -256,7 +266,7 @@ class StreamPipeline:
 
         self._thread = None
 
-    def __enter__(self) -> "StreamPipeline":
+    def __enter__(self) -> StreamPipeline:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
