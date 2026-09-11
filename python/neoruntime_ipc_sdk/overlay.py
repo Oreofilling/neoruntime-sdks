@@ -324,10 +324,6 @@ class OverlayClient(GrpcClient):
             # zone polygons ride independently of the boxes channel
             oc.annotate(stream, polygons=[{"points": ZONE, "label": "yard"}])
         """
-        if ttl_ms is not None and (
-            isinstance(ttl_ms, bool) or not isinstance(ttl_ms, int) or ttl_ms <= 0
-        ):
-            raise ValueError(f"ttl_ms must be a positive int, got {ttl_ms!r}")
         payload: dict = {}
         if detections is not None:
             items = [_detection_dict(d) for d in detections]
@@ -409,9 +405,17 @@ class OverlayClient(GrpcClient):
         frame_sequence: int | None = None,
         stream_epoch: int | None = None,
     ) -> str:
+        # Single choke point for every publish path (annotate,
+        # annotate_result): the daemon parses result_ttl_ms as an
+        # unsigned int, so a negative or non-int value must fail HERE,
+        # not wrap to a never-expiring layer on the wire.
+        if ttl_ms is not None and (
+            isinstance(ttl_ms, bool) or not isinstance(ttl_ms, int) or ttl_ms <= 0
+        ):
+            raise ValueError(f"ttl_ms must be a positive int, got {ttl_ms!r}")
         metadata = {"stream_id": stream_id}
         if ttl_ms is not None:
-            metadata["result_ttl_ms"] = str(int(ttl_ms))  # metadata is dict[str, str]
+            metadata["result_ttl_ms"] = str(ttl_ms)  # metadata is dict[str, str]
         if session_id:  # truthy only — None and "" are untagged, never a session named ""
             metadata["session_id"] = session_id
         # Frame-binding params ride metadata, never payload — the daemon's

@@ -273,6 +273,15 @@ class TestStartAndLifecycle:
         with pytest.raises(RuntimeError):
             StreamPipeline("third", "m").results()
 
+    def test_invalid_ttl_rejected_at_construction(self):
+        # A bad ttl_ms would otherwise surface only as annotate_errors
+        # inside the worker thread (non-fatal counters): boxes silently
+        # never drawn. Fail it at construction instead.
+        for bad in (0, -5, "soon", 50.5, True):
+            with pytest.raises(ValueError):
+                StreamPipeline("third", "m", ttl_ms=bad)
+        StreamPipeline("third", "m", ttl_ms=100)  # positive int passes
+
     def test_stop_from_on_result_clears_boxes_without_self_join(self):
         # stop() from the hook runs on the worker thread: the self-join
         # must be skipped (pre-fix: "cannot join current thread" was
