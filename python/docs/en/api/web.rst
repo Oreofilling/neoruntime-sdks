@@ -28,6 +28,11 @@ mjpeg_wsgi_app
 
 .. autofunction:: neoruntime_ipc_sdk.mjpeg_wsgi_app
 
+platform_stream_url
+-------------------
+
+.. autofunction:: neoruntime_ipc_sdk.platform_stream_url
+
 Usage Examples
 --------------
 
@@ -86,3 +91,27 @@ Low-latency latest-frame reads
    newer = stream.wait_new(seq, timeout=1.0)
    if newer is not None:
        send_to_client(newer)
+
+Zero-server preview (reuse the platform stream URL)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # After the app injects content into a platform stream via
+   # FramePublisher (REPLACE or OVERLAY), it needs no server of its
+   # own: the platform gateway already reverse-proxies the encoded
+   # stream at /api/v1/h264/{stream_id}, and the web console's player
+   # consumes that very URL.
+   import os
+   from neoruntime_ipc_sdk import FramePublisher, platform_stream_url
+
+   with FramePublisher(camera, dsp, stream_id="sub") as pub:
+       pub.publish(frame)
+       # host defaults to the AIPC_WEB_HOST env var, then localhost
+       url = platform_stream_url("sub", host="192.168.1.10", token=jwt)
+       # 'wss://192.168.1.10/api/v1/h264/sub?token=...'
+       pub.publish_eos()   # back to the pure ISP path (next IDR)
+
+   # token is required: /api/v1 over the network is authed (the same
+   # JWT the console uses). Full origins work as host - an http(s)://
+   # prefix maps to ws(s).

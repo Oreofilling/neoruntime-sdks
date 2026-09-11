@@ -1,9 +1,11 @@
 # Proposal: Web Stream URL Negotiation (`GetWebStreamUrl`)
 
-Status: draft — daemon-side contract proposal, no code yet
+Status: P0 SHIPPED 2026-09-11 as an SDK-side helper — no RPC built (see
+"P0 outcome" below); P1/P2 remain future daemon-side work
 Target service: app-manager (`aipc.app.AppManager`) — or camera-daemon;
-see open question below
-SDK layer affected: Python + C++ (`web.py` MJPEG helpers' platform twin)
+see open question below (only relevant to P1/P2 now)
+SDK layer affected: Python shipped (`web.py` `platform_stream_url`);
+C++ twin not yet
 
 ## Motivation (the app developer's problem)
 
@@ -104,6 +106,15 @@ page_src = app_client.register_web_url(path="/", expose_in_console=True)
 One call replaces container port exposure for the common
 "app page with live video" case.
 
+P0 shipped as a different, RPC-free surface (see "P0 outcome"):
+
+```python
+from neoruntime_ipc_sdk import platform_stream_url
+
+url = platform_stream_url("sub", host="192.168.1.10", token=jwt)
+# wss://192.168.1.10/api/v1/h264/sub?token=...
+```
+
 ## Risks and open questions
 
 1. **Which service owns it?** Video originates from camera-daemon, but
@@ -120,13 +131,44 @@ One call replaces container port exposure for the common
 
 ## Phased rollout
 
-1. **P0**: `GetWebStreamUrl` returning the console's existing HLS URL
-   for `main`/`sub`, unsigned, no ttl. Apps stop hard-coding.
+1. **P0** — SHIPPED, delivered differently than drafted (see "P0
+   outcome"): a pure SDK composer instead of `GetWebStreamUrl`. Apps
+   stop hard-coding.
 2. **P1**: signed URLs with ttl; `accepted` negotiation incl. MJPEG
    fallback served by the platform; `expose_in_console` on
    `RegisterWebUrl`.
 3. **P2**: app-defined streams (composed via `frame-injection.md`)
    become addressable the same way.
+
+## P0 outcome (2026-09-11): SDK composer, no RPC
+
+Investigating the shipped platform before building the RPC collapsed
+P0 to a client-side helper, `web.py: platform_stream_url()`:
+
+- **The endpoint already exists.** The gateway (nginx, TLS on 443)
+  reverse-proxies encoded camera streams at
+  `/api/v1/h264/{stream_id}` (WebSocket) to platform-api; the web
+  console's player consumes exactly this URL. With `FramePublisher`
+  (frame-injection) landed, app content flows through platform
+  streams — an app publishing REPLACE/OVERLAY frames needs **no port
+  of its own** to be browser-visible.
+- **An RPC adds no information.** The server cannot know its own
+  external host (multi-interface devices), so host must come from
+  caller context regardless; the path is deterministic and now
+  test-covered as the contract (SDK 0.7.4, 20 offline tests). Rig
+  probes confirmed the auth face: 401 without token, 404 unknown
+  path, 301 plain-80 — matching the console's
+  `?token=` + wss behavior the helper mirrors.
+- **Helper semantics**: `platform_stream_url(stream_id, host=None,
+  scheme=None, token=None)`; host defaults to `$AIPC_WEB_HOST` env
+  then `localhost` (nothing injects the env yet — documented
+  convention); full-origin hosts are accepted with scheme mapped
+  http→ws / https,wss→wss; tokens are %-encoded with `%20` for
+  spaces (mirrors the console's `encodeURIComponent`).
+
+The RPC shape above stays as the draft for P1 (signed ttl URLs,
+accept negotiation, `expose_in_console`) and P2 (app-defined stream
+addressing), where server-side work is genuinely required.
 
 ## Relationship to other proposals
 
