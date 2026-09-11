@@ -113,10 +113,11 @@ class T02CameraStatus(PerfTestCase):
 class T03DeviceEventStream(PerfTestCase):
     """subscribe_events arrival gaps — read-only, drained off-thread.
 
-    Device events are sparse and spontaneous (no publisher to drive);
-    the drain thread collects arrival timestamps for a fixed window
-    while the main thread sleeps, so a quiet bus yields "0 events",
-    which is a measurement, not a failure. The blocking iterator lives
+    Device events are threshold-gated, not pushed per sample (the
+    device-control poller samples light/SoC-temp every ~2s and only
+    emits on a crossing: light delta >=50mV or >=5%, temp >=85C /
+    clear <=80C). In a quiet scene 0 events in the window is the
+    expected measurement, not a failure. The blocking iterator lives
     on a daemon thread — the per-test alarm would otherwise fire while
     the main thread waits on a blocked iterator.
     """
@@ -153,7 +154,8 @@ class T03DeviceEventStream(PerfTestCase):
                       event_types=sorted(set(types))[:10])
         if not arrivals:
             self.record["outcome_note"] = (
-                "no spontaneous device events in the window (quiet bus)")
+                "no threshold crossings in the window (light hysteresis "
+                "and temp band both quiet)")
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ with the other ``*_hw`` methods, the straight-alpha renderer, and the
 accel-router registration of ``draw_detections``.
 """
 
+import mmap
 import os
 import socket
 import struct
@@ -294,6 +295,101 @@ class TestMemfdTransport:
         )
         with pytest.raises(DspError, match="import rejected"):
             client._import_memfd(b"\x00" * 1024, 16, 16, "argb", 64)
+
+
+# ------------------------------------------------- shared import ring --
+class _RingCapturingSock(FakeSock):
+    """FakeSock snapshotting every SCM_RIGHTS fd across a multi-import ring."""
+
+    def sendmsg(self, buffers, ancdata, flags=0, address=None):
+        (fd,) = struct.unpack("i", ancdata[0][2])
+        if not hasattr(self, "fds"):
+            self.fds = []
+        self.fds.append(fd)
+        super().sendmsg(buffers, ancdata, flags, address)
+
+
+def _wire_import_ring(monkeypatch, ids, fail_at=None):
+    """Wire a DspClient with scripted import responses, one per slot.
+
+    ``ids`` are the expected import ids; ``fail_at`` makes every response
+    from that slot index on a rejection (code -1).
+    """
+    client = DspClient()
+    sock = _RingCapturingSock()
+    client._sock = sock
+    chunks = []
+    for i, bid in enumerate(ids):
+        code = 0 if fail_at is None or i < fail_at else -1
+        resp = struct.pack("<IIi4xq", 11, 24, code, bid)
+        chunks += [resp[:8], resp[8:]]
+    monkeypatch.setattr(dsp_module, "_recvmsg_with_fds", chunked_recv(chunks))
+    return client, sock
+
+
+class TestSharedImportRing:
+    def test_ring_imports_shared_writable_slots(self, monkeypatch):
+        client, sock = _wire_import_ring(monkeypatch, [777, 778, 779])
+        pool = client.import_shared_buffers(16, 16, "argb", 3, timeout_s=1.0)
+
+        assert pool.count == 3
+        assert [pool.buffer_id(i) for i in range(3)] == [777, 778, 779]
+        assert pool.strides == (64,)  # single ARGB plane, w*4
+        for payload, _anc in sock.sent:
+            assert payload == import_request_bytes(
+                16, 16, _HAL_PIXEL_FORMAT["argb"], 1, [64, 0, 0], [1024, 0, 0]
+            )
+        # the ring keeps its memfds: an outside mapping of the same fd
+        # observes the write — these are the exact pages the daemon maps
+        pool.write(1, np.full((16, 16, 4), 0xA5, dtype=np.uint8))
+        outside = mmap.mmap(sock.fds[1], 16 * 16 * 4)
+        try:
+            assert outside[:4] == b"\xa5\xa5\xa5\xa5"
+        finally:
+            outside.close()
+
+    def test_write_shape_checked(self, monkeypatch):
+        client, _ = _wire_import_ring(monkeypatch, [777])
+        pool = client.import_shared_buffers(16, 16, "argb", 1, timeout_s=1.0)
+        with pytest.raises(DspError, match="uint8"):
+            pool.write(0, np.zeros((16, 16, 4), dtype=np.uint16))
+        with pytest.raises(DspError, match=r"16, 16, 4"):
+            pool.write(0, np.zeros((16, 16, 3), dtype=np.uint8))
+
+    def test_release_returns_each_import_and_closes_pages(self, monkeypatch):
+        client, sock = _wire_import_ring(monkeypatch, [777, 778])
+        client._send_release = mock.Mock()
+        pool = client.import_shared_buffers(16, 16, "argb", 2, timeout_s=1.0)
+        fd0 = sock.fds[0]
+
+        pool.release()
+        pool.release()  # idempotent
+
+        assert [c.args[0] for c in client._send_release.call_args_list] == [777, 778]
+        with pytest.raises(OSError):
+            os.fstat(fd0)  # the SDK's memfd copy is closed
+        with pytest.raises(ValueError):
+            pool._maps[0][:1]  # shared mapping closed — no dangling writes
+
+    def test_mid_ring_failure_releases_earlier_imports(self, monkeypatch):
+        client, sock = _wire_import_ring(monkeypatch, [777, 778, 779], fail_at=1)
+        client._send_release = mock.Mock()
+        with pytest.raises(DspError, match="import rejected"):
+            client.import_shared_buffers(16, 16, "argb", 3, timeout_s=1.0)
+        # the surviving first import is returned, nothing else imported
+        assert [c.args[0] for c in client._send_release.call_args_list] == [777]
+        assert len(sock.fds) == 2
+        for fd in sock.fds:  # both memfds closed — leak-free constructor
+            with pytest.raises(OSError):
+                os.fstat(fd)
+
+    def test_non_argb_and_bad_count_rejected_before_wire(self, monkeypatch):
+        client, sock = _wire_import_ring(monkeypatch, [777])
+        with pytest.raises(DspError, match="ARGB32 only"):
+            client.import_shared_buffers(16, 16, "nv12", 2)
+        with pytest.raises(DspError, match="count"):
+            client.import_shared_buffers(16, 16, "argb", 0)
+        assert sock.sent == []  # nothing crossed the wire
 
 
 # ------------------------------------------------------------- validation --

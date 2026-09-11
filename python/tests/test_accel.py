@@ -178,3 +178,30 @@ class TestDefaultRouter:
         r = get_default_router()
         assert r.run("nms", np.zeros((0, 4)), np.zeros((0,))) == []
         assert r.health()["ops"]["nms"]["backend"] == "software"
+
+
+class TestSetRoutePolicy:
+    def test_string_and_enum_set_the_default_policy(self):
+        from neoruntime_ipc_sdk import set_route_policy as top_level
+        from neoruntime_ipc_sdk.accel import set_route_policy
+
+        router = get_default_router()
+        original = router._policy
+        try:
+            set_route_policy("software_only")
+            assert router._policy is RoutePolicy.SOFTWARE_ONLY
+            top_level(RoutePolicy.HARDWARE_ONLY)  # exported at package level too
+            assert router._policy is RoutePolicy.HARDWARE_ONLY
+        finally:
+            set_route_policy(original)  # don't leak policy into other tests
+
+    def test_policy_change_is_visible_in_health(self):
+        from neoruntime_ipc_sdk.accel import set_route_policy
+
+        router = get_default_router()
+        original = router._policy
+        try:
+            set_route_policy(RoutePolicy.SOFTWARE_ONLY)
+            assert router.health()["policy"] == "software_only"
+        finally:
+            set_route_policy(original)
