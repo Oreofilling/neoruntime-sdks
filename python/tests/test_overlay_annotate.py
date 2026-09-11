@@ -316,6 +316,24 @@ class TestAnnotateTtl:
             client.annotate("main", [], ttl_ms=-5)
         with pytest.raises(ValueError):
             client.annotate("main", [], ttl_ms="soon")
+        with pytest.raises(ValueError):
+            client.annotate("main", [], ttl_ms=True)
+
+    def test_invalid_ttl_rejected_on_annotate_result_non_objects_path(self, client):
+        # classifications/landmarks/empty results bypass annotate() and
+        # publish directly — the choke point in _publish_overlay_event
+        # must catch them too (pre-fix, -5 went out as "-5" and the
+        # daemon's unsigned parse wrapped it to a never-expiring layer).
+        with_classif = _result(
+            classifications=[Classification(type="cat", class_id=1, label="cat",
+                                            confidence=0.9)]
+        )
+        empty = _result()
+        for bad in (0, -5, "soon", 50.5, True):
+            with pytest.raises(ValueError):
+                client.annotate_result("main", with_classif, ttl_ms=bad)
+            with pytest.raises(ValueError):
+                client.annotate_result("main", empty, ttl_ms=bad)
 
 
 class TestLifecycle:

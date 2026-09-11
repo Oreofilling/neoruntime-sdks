@@ -93,8 +93,9 @@ class StreamPipeline:
             clean; results still flow to :meth:`results`.
         overlay_config: optional :class:`OverlayConfig` applied at start
             (labels, colors, strict frame-lock, ...).
-        ttl_ms: per-event validity override forwarded to every annotate
-            call; omitted = the daemon derives it from the stream fps.
+        ttl_ms: positive int, per-event validity override forwarded to
+            every annotate call; omitted = the daemon derives it from
+            the stream fps.
         min_score: draw only detections with ``score >= min_score``.
         labels: draw only these labels (``None`` = all). Filtering
             affects *drawing only* — :meth:`results` yields the full
@@ -143,6 +144,10 @@ class StreamPipeline:
             raise ValueError(
                 f"result_queue_size must be >= 1, got {result_queue_size!r}"
             )
+        if ttl_ms is not None and (
+            isinstance(ttl_ms, bool) or not isinstance(ttl_ms, int) or ttl_ms <= 0
+        ):
+            raise ValueError(f"ttl_ms must be a positive int, got {ttl_ms!r}")
         self.stream = stream
         self.model = model
         self.fps = fps
