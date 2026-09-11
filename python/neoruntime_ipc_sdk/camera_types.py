@@ -10,6 +10,8 @@ __all__ = [
     "EnvStatus",
     "HardwareStatus",
     "InfraredStatus",
+    "InjectionResult",
+    "InjectionStatus",
     "IrPreset",
     "ISPConfig",
     "PipelineStreamConfig",
@@ -53,6 +55,38 @@ class EncoderReconfigResult:
 
 
 @dataclass
+class InjectionResult:
+    """Result of one CameraClient.push_frame call (PushFrameResponse)."""
+
+    success: bool
+    message: str
+    error_code: int = 0
+    injected_frame_id: int = 0
+    # PushFrameStream only: frames accepted before the stream returned
+    # (0 for unary PushFrame).
+    accepted_frame_count: int = 0
+    # Lifecycle session tag echoed by the daemon (P2-13): correlation
+    # and observability only — ownership is fd-anchored daemon-side.
+    session_id: str = ""
+
+
+@dataclass
+class InjectionStatus:
+    """Snapshot of the daemon-side injection session (GetInjectionStatus)."""
+
+    success: bool
+    message: str
+    active: bool = False
+    mode: str = "replace"  # "replace" (P0) | "overlay" (P1, DSP blend)
+    frames_injected: int = 0
+    frames_dropped: int = 0  # drop-oldest overflow, never backpressure
+    queue_depth: int = 0
+    # Latest non-empty lifecycle tag of the live session (P2-13); empty
+    # when the session is untagged or closed.
+    session_id: str = ""
+
+
+@dataclass
 class StreamStatus:
     stream_id: str
     status: str
@@ -63,6 +97,34 @@ class StreamStatus:
     fps: int
     bitrate_bps: int
     gop: int
+    # Unified drop/throughput observability (wire fields 13-23). All
+    # default to 0 and stay 0 when the layer is absent (publisher
+    # disabled, stream never through the overlay bake site) or the
+    # server predates the fields — the response shape is stable.
+    # Publisher side (packets keyed by seq, assigned at enqueue):
+    packets_published: int = 0      # packets assigned a seq (== last_packet_seq)
+    queue_overflow_drops: int = 0   # shallow-queue evictions before send
+    client_send_drops: int = 0      # per-client non-blocking send skips
+    client_send_failures: int = 0   # per-client hard send failures (client dropped)
+    client_disconnects: int = 0     # subscribers lost via control-poll EOF/ERR
+    last_packet_seq: int = 0        # newest seq assigned (0 = none yet)
+    publisher_clients: int = 0      # connected encoded-stream subscribers
+    # Overlay bake side (frames shipped clean when no fresh result):
+    bake_skips: int = 0             # frames shipped clean: no result / TTL expired
+    strict_locked: int = 0          # strict-gate draws that waited and matched
+    strict_degraded: int = 0        # strict-gate frames degraded (cap/hopeless)
+    strict_skips: int = 0           # strict-gate frames with no result at all
+    # Behavior decoupling + frame sync (wire fields 24-28). stream_epoch is
+    # the stream generation counter — ReconfigureEncoder / full transform
+    # reinit bumps it and purges held layers; an app pinning overlay events
+    # to an epoch taken from an earlier snapshot learns of the restart by
+    # comparing, instead of publishing silently-rejected overlays. 0 = the
+    # server predates the fields (epoch is never 0 on a current daemon).
+    stream_epoch: int = 0           # stream generation (restart bumps)
+    overlay_layer_count: int = 0    # overlay layers currently held for the stream
+    overlay_late_commands: int = 0  # app overlay events rejected: frame already passed
+    overlay_epoch_rejects: int = 0  # app overlay events rejected: stale stream_epoch
+    overlay_no_binding_drops: int = 0  # platform result events dropped: no binding
 
 
 @dataclass
