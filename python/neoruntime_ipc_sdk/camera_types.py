@@ -88,6 +88,17 @@ class InjectionStatus:
 
 @dataclass
 class StreamStatus:
+    """One display stream from :meth:`CameraClient.get_stream_status`.
+
+    Fields come in four groups, in declaration order — identity & encode
+    geometry (``stream_id``..``gop``); encoded-stream fan-out
+    observability (``packets_published``..``publisher_clients``);
+    overlay bake / strict frame-lock counters
+    (``bake_skips``..``strict_skips``); behavior decoupling & frame-sync
+    state (``stream_epoch``..``overlay_no_binding_drops``). Per-field
+    semantics in the inline comments of each group.
+    """
+
     stream_id: str
     status: str
     has_encoder: bool

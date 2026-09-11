@@ -36,6 +36,10 @@ from .frame import Frame
 
 __all__ = ["PreprocessMeta", "Preprocessor"]
 
+# Formats _to_color actually handles; validated at construction so an
+# unsupported hint fails immediately instead of on the first frame.
+_SOURCE_FORMATS = frozenset({"NV12", "RGB", "BGR", "GRAY8"})
+
 # DataType enum values from proto/ai-runtime/inference.proto (the parsed
 # ModelInfo dicts carry the raw enum int; accept strings too).
 _DTYPE_ENUM_TO_STR = {
@@ -97,7 +101,10 @@ def _infer_source_format(arr: np.ndarray, hint: str | None) -> str:
         if channels == 1:
             return "GRAY8"
         if channels == 4:
-            return "RGBA"
+            raise ValueError(
+                "4-channel (RGBA) arrays are not supported — strip alpha "
+                "first (e.g. arr[:, :, :3]) and pass the RGB array"
+            )
     if arr.ndim == 2:
         raise ValueError(
             "2D arrays are ambiguous (NV12 vs GRAY8) — pass "
@@ -153,7 +160,8 @@ class Preprocessor:
             (case-insensitive).
         source_format: format hint for ndarray inputs (``"NV12"`` /
             ``"GRAY8"`` / ``"RGB"`` / ``"BGR"``); 2D arrays require it.
-            Case-insensitive.
+            Case-insensitive. 4-channel (RGBA) arrays are rejected —
+            strip alpha (``arr[:, :, :3]``) first.
     """
 
     def __init__(
@@ -178,6 +186,11 @@ class Preprocessor:
             raise ValueError(f"unsupported resize_mode: {resize_mode!r}")
         if layout not in ("NHWC", "NCHW"):
             raise ValueError(f"layout must be 'NHWC' or 'NCHW', got {layout!r}")
+        if source_format is not None and source_format not in _SOURCE_FORMATS:
+            raise ValueError(
+                f"source_format must be one of {sorted(_SOURCE_FORMATS)}, "
+                f"got {source_format!r}"
+            )
         self.size = size
         self.color = color
         self.resize_mode = resize_mode

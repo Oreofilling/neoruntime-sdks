@@ -32,6 +32,16 @@ class TestValidation:
         with pytest.raises(ValueError, match="NV12.*GRAY8"):
             Preprocessor(size=(64, 64))(np.zeros((12, 8), np.uint8))
 
+    def test_unsupported_source_format_rejected_at_construction(self):
+        with pytest.raises(ValueError, match="source_format"):
+            Preprocessor(size=(64, 64), source_format="YUYV")
+
+    def test_rgba_array_rejected_with_strip_alpha_hint(self):
+        # 4-channel input used to pass validation and blow up much later
+        # in _to_color; now it fails fast at the first call.
+        with pytest.raises(ValueError, match="RGBA"):
+            Preprocessor(size=(64, 64))(np.zeros((48, 64, 4), np.uint8))
+
 
 class TestCall:
     def test_letterbox_geometry_matches_transform(self):

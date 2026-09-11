@@ -442,6 +442,63 @@ class TestFramePublisherLifecycle:
             pub.publish(np.zeros((720 * 3 // 2, 1280), dtype=np.uint8))
         assert pool.release_count == 1
 
+    def _frame(self, pub):
+        return np.zeros((pub.height * 3 // 2, pub.width), dtype=np.uint8)
+
+    def test_exit_sends_best_effort_eos_after_publishing(self):
+        # A with-block that published frames but never sent EOS: __exit__
+        # flushes the session — a clean half-close would keep it open
+        # (daemon contract) until the connection drops.
+        pub, pool = self._pub()
+        with pub:
+            pub.publish(self._frame(pub))
+        pushes = pub._camera.pushes
+        assert len(pushes) == 2  # frame push + auto EOS
+        eos = pushes[-1]
+        assert eos["buffer_id"] == 0
+        assert eos["end_of_stream"] is True
+        assert pool.release_count == 1
+
+    def test_exit_sends_no_eos_when_never_published(self):
+        pub, _ = self._pub()
+        with pub:
+            pass
+        assert pub._camera.pushes == []
+
+    def test_exit_does_not_resend_eos_after_explicit_publish_eos(self):
+        pub, _ = self._pub()
+        with pub:
+            pub.publish(self._frame(pub))
+            pub.publish_eos()
+        assert len(pub._camera.pushes) == 2  # frame + explicit EOS, no third
+
+    def test_exit_does_not_resend_eos_after_publish_stream_end_with_eos(self):
+        pub, _ = self._pub()
+        with pub:
+            pub.publish_stream([self._frame(pub), self._frame(pub)],
+                               end_with_eos=True)
+        assert pub._camera.pushes == []  # no unary auto-EOS on top
+        assert pub._camera.stream_pushes[-1]["end_of_stream"] is True
+
+    def test_exit_survives_eos_failure(self, caplog):
+        # A failing EOS is a warning, never an exception out of the
+        # with-block; the pools still release.
+        pub, pool = self._pub()
+        cam = pub._camera
+        original_push = cam.push_frame
+
+        def push_failing_eos(**kwargs):
+            if kwargs.get("end_of_stream"):
+                raise RuntimeError("connection gone")
+            return original_push(**kwargs)
+
+        cam.push_frame = push_failing_eos
+        with pub:
+            pub.publish(self._frame(pub))
+        assert pool.release_count == 1
+        assert pub._closed
+        assert "best-effort EOS failed" in caplog.text
+
 
 class TestPipDest:
     def test_four_corners(self):
