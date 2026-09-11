@@ -19,6 +19,8 @@ from .camera_types import (  # noqa: F401 — re-exported for API compat
     EnvStatus,
     HardwareStatus,
     InfraredStatus,
+    InjectionResult,
+    InjectionStatus,
     IrPreset,
     ISPConfig,
     PipelineStreamConfig,
@@ -30,6 +32,54 @@ from .camera_types import (  # noqa: F401 — re-exported for API compat
 from .proto import camera_pb2, camera_pb2_grpc
 
 logger = logging.getLogger("neoruntime_ipc_sdk.camera")
+
+_PIP_CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
+
+
+def pip_dest(
+    frame_w: int,
+    frame_h: int,
+    inset_w: int,
+    inset_h: int,
+    corner: str = "bottom-right",
+    margin: int = 16,
+) -> tuple[int, int]:
+    """Position a picture-in-picture inset for ``mode="overlay"`` pushes.
+
+    Returns ``(dest_x, dest_y)`` placing a ``inset_w``×``inset_h`` inset
+    inside a ``frame_w``×``frame_h`` stream frame, ``margin`` pixels from
+    the chosen ``corner`` (one of ``"top-left"`` / ``"top-right"`` /
+    ``"bottom-left"`` / ``"bottom-right"``). Coordinates are rounded down
+    to even values — NV12 chroma is 2×2 subsampled, so an odd offset
+    would misalign the inset's color plane against its luma.
+
+    Raises ``ValueError`` for an unknown corner, non-positive inset
+    dims, negative margin, or an inset that does not fit with its
+    margin. Typical use::
+
+        x, y = pip_dest(1920, 1080, 480, 270, "bottom-right", 32)
+        cam.push_frame(bid, 480, 270, stride, mode="overlay",
+                       stream_id="main", dest_x=x, dest_y=y)
+    """
+    if corner not in _PIP_CORNERS:
+        raise ValueError(
+            f"corner must be one of {_PIP_CORNERS}, got {corner!r}"
+        )
+    if inset_w <= 0 or inset_h <= 0:
+        raise ValueError(
+            f"inset dims must be positive, got {inset_w}x{inset_h}"
+        )
+    if margin < 0:
+        raise ValueError(f"margin must be >= 0, got {margin}")
+    if inset_w + margin > frame_w or inset_h + margin > frame_h:
+        raise ValueError(
+            f"inset {inset_w}x{inset_h} + margin {margin} does not fit "
+            f"inside {frame_w}x{frame_h}"
+        )
+    x = margin if corner.endswith("left") else frame_w - margin - inset_w
+    y = margin if corner.startswith("top") else frame_h - margin - inset_h
+    # Even alignment: NV12 UV plane is 2x2 subsampled per luma sample.
+    return (x & ~1, y & ~1)
 
 
 class CameraClient(GrpcClient):
@@ -579,9 +629,11 @@ class CameraClient(GrpcClient):
 
     # -- Stream management --
 
-    def get_stream_status(self) -> list[StreamStatus]:
+    def get_stream_status(self, timeout_s: float | None = None) -> list[StreamStatus]:
+        """List live streams with encoder state; ``timeout_s`` bounds the RPC
+        (``None`` waits indefinitely, gRPC's default)."""
         stub = self._connect()
-        resp = stub.GetStreamStatus(camera_pb2.GetStreamStatusRequest())
+        resp = stub.GetStreamStatus(camera_pb2.GetStreamStatusRequest(), timeout=timeout_s)
         return [
             StreamStatus(
                 stream_id=s.stream_id,
@@ -593,9 +645,200 @@ class CameraClient(GrpcClient):
                 fps=s.fps,
                 bitrate_bps=s.bitrate_bps,
                 gop=s.gop,
+                packets_published=s.packets_published,
+                queue_overflow_drops=s.queue_overflow_drops,
+                client_send_drops=s.client_send_drops,
+                client_send_failures=s.client_send_failures,
+                client_disconnects=s.client_disconnects,
+                last_packet_seq=s.last_packet_seq,
+                publisher_clients=s.publisher_clients,
+                bake_skips=s.bake_skips,
+                strict_locked=s.strict_locked,
+                strict_degraded=s.strict_degraded,
+                strict_skips=s.strict_skips,
+                stream_epoch=s.stream_epoch,
+                overlay_layer_count=s.overlay_layer_count,
+                overlay_late_commands=s.overlay_late_commands,
+                overlay_epoch_rejects=s.overlay_epoch_rejects,
+                overlay_no_binding_drops=s.overlay_no_binding_drops,
             )
             for s in resp.streams
         ]
+
+    # -- app frame injection (PushFrame P0) --------------------------------
+
+    _INJECT_MODES = {
+        "replace": camera_pb2.INJECT_REPLACE,
+        "overlay": camera_pb2.INJECT_OVERLAY,
+    }
+
+    def push_frame(
+        self,
+        buffer_id: int,
+        width: int,
+        height: int,
+        stride: int,
+        mode: str = "replace",
+        pts_ns: int = 0,
+        dest_x: int = 0,
+        dest_y: int = 0,
+        stream_id: str = "",
+        end_of_stream: bool = False,
+        session_id: str = "",
+        timeout_s: float | None = None,
+    ) -> InjectionResult:
+        """Push one frame into the daemon's encoder feed (PushFrame).
+
+        ``buffer_id`` must be a DSP-registry buffer id (see
+        :class:`DspBufferPool.buffer_id` / :meth:`DspClient.import_frame`) —
+        a raw fd number never crosses gRPC. The registered buffer's
+        geometry must equal ``width``/``height``.
+
+        Modes (P2):
+
+        * ``"replace"`` — full-frame NV12 content copy over one stream's
+          encode output. ``stream_id`` empty keeps the P0 semantics (any
+          stream whose encode dims match); an explicit ``stream_id``
+          targets that stream and requires dims equal to its encode
+          resolution.
+        * ``"overlay"`` — compose on top of the live stream. Requires
+          ``stream_id``. ``dest_x``/``dest_y`` (even, NV12 chroma
+          alignment) position the inset. NV12 insets paste opaquely;
+          ARGB32 insets alpha-blend on the CPU.
+
+        ``pts_ns`` paces the bake (device CLOCK_MONOTONIC domain, same
+        clock as frame timestamps): 0 = due immediately; a future value
+        holds the frame until the encoder frontier passes it, and a newer
+        due frame supersedes (drops) older due frames for the same
+        target. ``end_of_stream=True`` (``buffer_id`` 0) flushes the
+        session and restores the ISP path at the next IDR.
+
+        ``session_id`` tags the injection session (P2-13 lifecycle):
+        correlation and observability only — the daemon anchors the
+        session on the buffer owner's UDS connection and closes it on
+        that client's disconnect regardless of the tag.
+        """
+        try:
+            mode_enum = self._INJECT_MODES[mode]
+        except KeyError:
+            raise ValueError(
+                f"mode must be one of {sorted(self._INJECT_MODES)}, got {mode!r}"
+            ) from None
+        stub = self._connect()
+        resp = stub.PushFrame(
+            camera_pb2.PushFrameRequest(
+                buffer_id=buffer_id,
+                width=width,
+                height=height,
+                stride=stride,
+                mode=mode_enum,
+                pts_ns=pts_ns,
+                dest_x=dest_x,
+                dest_y=dest_y,
+                stream_id=stream_id,
+                end_of_stream=end_of_stream,
+                session_id=session_id,
+            ),
+            timeout=timeout_s,
+        )
+        result = InjectionResult(
+            success=resp.success,
+            message=resp.message,
+            error_code=resp.error_code,
+            injected_frame_id=resp.injected_frame_id,
+            session_id=resp.session_id,
+        )
+        if not result.success:
+            raise RuntimeError(
+                f"PushFrame failed: {result.message} "
+                f"(error_code={result.error_code})"
+            )
+        return result
+
+    def push_frame_stream(
+        self,
+        frames,
+        timeout_s: float | None = None,
+    ) -> InjectionResult:
+        """Push a run of frames over one client-streaming RPC
+        (PushFrameStream).
+
+        ``frames`` is an iterable (or generator) of keyword dicts, each
+        accepted by :meth:`push_frame` — e.g.
+        ``{"buffer_id": bid, "width": w, "height": h, "stride": s,
+        "mode": "overlay", "stream_id": "main", "dest_x": 64,
+        "dest_y": 64}``. A dict with ``end_of_stream=True`` closes the
+        injection session server-side before the RPC returns; omitting
+        any EOS dict ends the stream with a clean half-close that LEAVES
+        the session open (close later via
+        :meth:`~neoruntime_ipc_sdk.camera.CameraClient.stop_injection`).
+
+        Per-request semantics are identical to unary :meth:`push_frame`;
+        the first server-side rejection ends the stream and is re-raised
+        here as ``RuntimeError`` (the accepted-frame count at that point
+        rides the exception text). A ``session_id`` key in any request
+        dict tags the session (P2-13) — the daemon records the latest
+        non-empty tag and echoes it on the response.
+
+        Returns an :class:`~neoruntime_ipc_sdk.camera_types.InjectionResult`
+        whose ``accepted_frame_count`` reports how many frames the daemon
+        accepted before the stream ended.
+        """
+        stub = self._connect()
+
+        def _requests():
+            for f in frames:
+                kw = dict(f)
+                mode = kw.pop("mode", "replace")
+                try:
+                    mode_enum = self._INJECT_MODES[mode]
+                except KeyError:
+                    raise ValueError(
+                        f"mode must be one of {sorted(self._INJECT_MODES)},"
+                        f" got {mode!r}"
+                    ) from None
+                yield camera_pb2.PushFrameRequest(mode=mode_enum, **kw)
+
+        resp = stub.PushFrameStream(_requests(), timeout=timeout_s)
+        result = InjectionResult(
+            success=resp.success,
+            message=resp.message,
+            error_code=resp.error_code,
+            accepted_frame_count=resp.accepted_frame_count,
+            session_id=resp.session_id,
+        )
+        if not result.success:
+            raise RuntimeError(
+                f"PushFrameStream failed after {result.accepted_frame_count} "
+                f"accepted frame(s): {result.message} "
+                f"(error_code={result.error_code})"
+            )
+        return result
+
+    def injection_status(self, timeout_s: float | None = None) -> InjectionStatus:
+        """Injection session snapshot: active, mode, counters, queue depth,
+        and the live session's lifecycle tag (empty when untagged/closed)."""
+        stub = self._connect()
+        resp = stub.GetInjectionStatus(camera_pb2.Empty(), timeout=timeout_s)
+        if not resp.success:
+            raise RuntimeError(f"GetInjectionStatus failed: {resp.message}")
+        return InjectionStatus(
+            success=True,
+            message=resp.message,
+            active=resp.active,
+            mode="overlay" if resp.mode == camera_pb2.INJECT_OVERLAY else "replace",
+            frames_injected=resp.frames_injected,
+            frames_dropped=resp.frames_dropped,
+            queue_depth=resp.queue_depth,
+            session_id=resp.session_id,
+        )
+
+    def stop_injection(self, timeout_s: float | None = None) -> None:
+        """Close the injection session and restore the ISP path (next IDR)."""
+        stub = self._connect()
+        resp = stub.StopInjection(camera_pb2.Empty(), timeout=timeout_s)
+        if not resp.success:
+            raise RuntimeError(f"StopInjection failed: {resp.message}")
 
     def add_stream(
         self,
