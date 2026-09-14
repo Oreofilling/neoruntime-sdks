@@ -51,6 +51,9 @@ AREA_TITLES = OrderedDict([
     ("perf-events", "P3 事件"),
     ("perf-device", "P4 设备面"),
     ("perf-soak", "P5 长稳"),
+    ("perf-overlay", "P6 AI overlay 烘焙"),
+    ("perf-injection", "P7 帧注入与写租约"),
+    ("perf-events-hub", "P8 事件扇出/device hub/并发"),
 ])
 
 
@@ -152,8 +155,14 @@ def stream_table(rows) -> list[str]:
 
 
 def split_records(cases, area: str):
-    """(latency, stream) rows for one perf area."""
-    latency, stream = [], []
+    """(latency, stream, other) rows for one perf area.
+
+    ``other`` carries perf records that are neither a sampled call
+    latency (``unit == "ms"``) nor a stream window (``frames``) —
+    counter deltas, gates, fanout/mixed-load matrices. They render in
+    a compact key-value table instead of vanishing from the report.
+    """
+    latency, stream, other = [], [], []
     for case, label, rec in perf_records(cases):
         if case.get("area") != area:
             continue
@@ -161,7 +170,9 @@ def split_records(cases, area: str):
             latency.append((label, rec))
         elif "frames" in rec:
             stream.append((label, rec))
-    return latency, stream
+        else:
+            other.append((label, rec))
+    return latency, stream, other
 
 
 def ab_section(cases) -> list[str]:
@@ -341,19 +352,25 @@ def main() -> int:
     ]
 
     for area, title in AREA_TITLES.items():
-        latency, stream = split_records(cases, area)
+        latency, stream, other = split_records(cases, area)
         extra = []
         if area == "perf-media":
             extra = ab_section(cases)
         elif area == "perf-soak":
             extra = soak_section(cases)
-        if not (latency or stream or extra):
+        if not (latency or stream or other or extra):
             continue
         lines += ["", f"## {title}", ""]
         if latency:
             lines += latency_table(latency) + [""]
         if stream:
             lines += stream_table(stream) + [""]
+        if other:
+            lines += ["### 定量记录(门/计数器/矩阵)", "",
+                      "| 记录 | 内容 |", "|---|---|"]
+            for label, rec in other:
+                lines.append(f"| `{scrub(label)}` | {scrub(rec)} |")
+            lines += [""]
         lines += extra
 
     if FINDINGS:

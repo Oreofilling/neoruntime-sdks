@@ -118,7 +118,10 @@ if [ "$MODE" = perf ]; then
              test_61_perf_media_accel 900
              test_62_perf_events 600
              test_63_perf_device 600
-             test_64_perf_soak 2400)
+             test_64_perf_soak 2400
+             test_65_perf_overlay 900
+             test_66_perf_injection 1800
+             test_67_perf_events_hub 1500)
     REPORT_JSON=device-perf-report.json
 else
     MODULES=(test_10_env_survey 300
