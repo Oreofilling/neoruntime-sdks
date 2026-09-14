@@ -14,13 +14,16 @@ engaged — see T03AccelAB for what the ratio then means.
 
 from __future__ import annotations
 
+import threading
+import time
 import unittest
 
-from neoruntime_ipc_sdk import FdMediaClient
+from neoruntime_ipc_sdk import EncodedStreamClient, FdMediaClient
 from neoruntime_ipc_sdk import accel
 from neoruntime_ipc_sdk.color import rgb_to_nv12 as _rgb_to_nv12_direct
 
-from perf_common import PerfTestCase, software_only_accel
+from perf_common import (STREAM_S, PerfTestCase, arrival_stats,
+                         software_only_accel)
 
 # Ops sampled in the A/B. encode_jpeg takes an RGB array; the NV12 ops
 # take (nv12, geometry). draw_detections needs live detections and is
@@ -188,6 +191,67 @@ class T03AccelAB(PerfTestCase):
             note="ratio≈1.0: both sides ran the same software leg "
                  "(routing decision only); ratio>1: hardware-routed leg "
                  "engaged and was slower than software (see T02 routes)")
+
+
+class T04EncodedStream(PerfTestCase):
+    """B2 regression gate: passive encoded-stream window, no load.
+
+    One subscriber per stream (main + sub) for STREAM_S seconds; the
+    30fps contract for main is asserted (0 dropped frames, inter-
+    arrival max ≤ 2 frame periods = 63.9ms). Sub is record-only — its
+    nominal rate differs, so only its gap shape is reported.
+    """
+
+    area = "perf-media"
+    timeout_s = STREAM_S + 120
+
+    @staticmethod
+    def _collect(stream_id: str, out: dict, window_s: float):
+        enc = EncodedStreamClient(stream_id=stream_id)
+        times: list[float] = []
+        seqs: list[int] = []
+        deadline = time.monotonic() + window_s
+        try:
+            for frame in enc.subscribe():
+                times.append(time.monotonic())
+                seqs.append(frame.seq if frame.seq is not None else -1)
+                if time.monotonic() >= deadline:
+                    break
+        finally:
+            enc.close()
+        out[stream_id] = (seqs, times)
+
+    def test_01_passive_window(self):
+        self.mark("encoded main/sub passive window: fps, drops, gaps")
+        out: dict[str, tuple] = {}
+        threads = [threading.Thread(target=self._collect,
+                                    args=(sid, out, STREAM_S), daemon=True)
+                   for sid in ("main", "sub")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=STREAM_S + 60)
+
+        stats = {}
+        for sid, (seqs, times) in out.items():
+            duration = times[-1] - times[0] if len(times) > 1 else STREAM_S
+            stats[sid] = arrival_stats(seqs, times, duration)
+        self.evidence(**{f"perf:encoded_{sid}": rec
+                         for sid, rec in stats.items()})
+
+        main = stats.get("main")
+        self.assertIsNotNone(main, "encoded main stream produced no frames")
+        self.assertGreater(main["frames"], 0, "encoded main window empty")
+        self.assertIsNotNone(
+            main["drops"],
+            "encoded main exposes no frame seq — drop gate unenforceable")
+        self.assertEqual(main["drops"], 0,
+                         f"main dropped {main['drops']} frames at no load")
+        self.assertIsNotNone(main["gap_max"], "no gaps computed for main")
+        self.assertLessEqual(
+            main["gap_max"], 63.9,
+            f"main inter-arrival max {main['gap_max']}ms exceeds the "
+            "2-frame-period bound (63.9ms @30fps)")
 
 
 if __name__ == "__main__":
