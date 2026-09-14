@@ -81,6 +81,14 @@ message ModelRegisterRequest {
   // decode them itself. Distinguishes "package forgot the type" (rejected)
   // from "package chose raw output" (allowed).
   bool raw_output_only = 16;
+
+  // NPU batch execution. When >1 the HAL inference session is configured with
+  // this batch (HailoRT set_batch_size) and InferBatch groups consecutive
+  // same-model items into single NPU jobs — one InferJob runs B frames
+  // through the array in parallel instead of B serialized jobs. The HEF must
+  // support the batch (configure() fails otherwise). Single-frame Infer on a
+  // batch>1 model is rejected: use InferBatch, or register a batch-1 variant.
+  uint32 batch_size = 17;
 }
 
 message ModelRegisterResponse {
@@ -102,6 +110,7 @@ message ModelInfo {
   uint64 load_timestamp = 12;
   string owner_id = 13;         // Used during UnregisterModel to specify the caller's identity
   bool transient = 14;          // True for app-bundled models (see ModelRegisterRequest.transient)
+  uint32 batch_size = 15;       // NPU batch the session is configured with (1 = single-frame)
 }
 
 message ModelListResponse {

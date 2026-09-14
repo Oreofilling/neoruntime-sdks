@@ -389,7 +389,11 @@ class InferenceClient(GenAiMixin):
         """Submit multiple model inferences in a single batch RPC.
 
         ai-runtime runs them in parallel on the NPU via shared VDevice
-        ROUND_ROBIN scheduling, returning all results together.
+        ROUND_ROBIN scheduling, returning all results together. For models
+        registered with batch_size=B, consecutive same-model items are
+        further aggregated into single NPU jobs (B frames through the array
+        in parallel per job); a partial tail chunk is padded with the last
+        item's image and the padded results are discarded server-side.
 
         Args:
             items: List of (image, model_id, ...) tuples.
@@ -720,7 +724,17 @@ class InferenceClient(GenAiMixin):
         model_variant: str | None = None,
         inputs: list[dict] | None = None,
         outputs: list[dict] | None = None,
+        batch_size: int = 1,
     ) -> str:
+        """Register a model with ai-runtime.
+
+        Args:
+            batch_size: NPU batch for the session (>1 requires a batch-capable
+                HEF; registration fails otherwise). Batched models must use
+                infer_batch(): consecutive same-model items are aggregated into
+                a single NPU job, so B frames traverse the array in parallel.
+                Single-image infer() is rejected for batch>1 models.
+        """
         if self.stub is None:
             self.connect()
 
@@ -734,6 +748,8 @@ class InferenceClient(GenAiMixin):
             request.model_type = model_type
         if model_variant:
             request.model_variant = model_variant
+        if batch_size > 1:
+            request.batch_size = batch_size
 
         if inputs:
             for inp in inputs:
@@ -817,6 +833,7 @@ class InferenceClient(GenAiMixin):
                     estimated_tops=m.estimated_tops,
                     estimated_memory=m.estimated_memory,
                     load_timestamp=m.load_timestamp,
+                    batch_size=m.batch_size,
                 )
             )
 
@@ -857,6 +874,7 @@ class InferenceClient(GenAiMixin):
             estimated_tops=response.estimated_tops,
             estimated_memory=response.estimated_memory,
             load_timestamp=response.load_timestamp,
+            batch_size=response.batch_size,
         )
 
     def get_stats(self, sampling_window_ms: int | None = None) -> dict[str, Any]:
