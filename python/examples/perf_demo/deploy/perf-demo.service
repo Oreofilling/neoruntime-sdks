@@ -1,0 +1,24 @@
+[Unit]
+Description=AIPC perf-demo (dual-chain inference showcase)
+Documentation=examples/perf_demo in the neoruntime-ipc-sdk repository
+# The demo subscribes inference results and pushes frames back through
+# camera-daemon; starting before it just means a fast reconnect loop.
+After=camera-daemon.service ai-runtime.service
+Wants=ai-runtime.service
+Requires=camera-daemon.service
+
+[Service]
+Type=simple
+WorkingDirectory=@APP_DIR@
+ExecStart=@PYTHON@ @APP_DIR@/app.py --model-path @MODEL_PATH@ @EXTRA_ARGS@
+# The app tears down cleanly on SIGTERM (publish_eos + overlay disable +
+# model unregister); SIGKILL recovery is covered by the daemon's
+# session-end sweep. Restart=always is the demo's outer safety net.
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=perf-demo
+
+[Install]
+WantedBy=multi-user.target
