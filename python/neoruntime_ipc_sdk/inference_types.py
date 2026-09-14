@@ -162,6 +162,7 @@ class ModelInfo:
     estimated_tops: float = 0.0
     estimated_memory: int = 0
     load_timestamp: int = 0
+    batch_size: int = 1
 
 
 @dataclass
