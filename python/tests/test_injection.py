@@ -260,16 +260,25 @@ class FakeDsp:
 
 
 class FakeCamera:
-    def __init__(self, streams, results=None, stream_result=None):
+    def __init__(self, streams, results=None, stream_result=None, statuses=None):
         self.streams = streams
         self.results = list(results or [])
         self.stream_result = stream_result
+        self.statuses = list(statuses or [])
+        self.status_calls = 0
         self.pushes = []
         self.stream_pushes = None
         self.stream_timeouts = None
 
     def get_stream_status(self, timeout_s=None):
         return self.streams
+
+    def injection_status(self, timeout_s=None):
+        self.status_calls += 1
+        if self.statuses:
+            return self.statuses.pop(0)
+        # Default: a daemon predating the write-lease protocol.
+        return InjectionStatus(success=True, message="OK")
 
     def push_frame(self, **kwargs):
         self.pushes.append(kwargs)
@@ -306,7 +315,7 @@ class TestFramePublisherGeometry:
         pool = FakePool(1280, 720, 2)
         dsp = FakeDsp(pool)
         cam = FakeCamera([_stream()])
-        pub = FramePublisher(cam, dsp, stream_id="sub")
+        pub = FramePublisher(cam, dsp, stream_id="sub", pool_depth=2)
 
         assert (pub.width, pub.height) == (1280, 720)
         assert dsp.alloc_args == (1280, 720, "nv12", 2)
@@ -345,7 +354,11 @@ class TestFramePublisherPublish:
         pool = FakePool(1280, 720, depth)
         dsp = FakeDsp(pool)
         cam = FakeCamera([_stream()], results=results)
-        return FramePublisher(cam, dsp, stream_id="sub"), cam, pool
+        return (
+            FramePublisher(cam, dsp, stream_id="sub", pool_depth=depth),
+            cam,
+            pool,
+        )
 
     @staticmethod
     def _frame(pub):
@@ -412,7 +425,9 @@ class TestFramePublisherLifecycle:
     def _pub(self):
         pool = FakePool(1280, 720, 2)
         cam = FakeCamera([_stream()])
-        pub = FramePublisher(cam, FakeDsp(pool), stream_id="sub")
+        pub = FramePublisher(
+            cam, FakeDsp(pool), stream_id="sub", pool_depth=2
+        )
         return pub, pool
 
     def test_publish_eos(self):
@@ -605,7 +620,8 @@ class TestFramePublisherOverlayGeometry:
         pool = FakePool(320, 180, 2)
         dsp = self._dsp(pool)
         pub = FramePublisher(
-            FakeCamera([_stream()]), dsp, stream_id="sub", mode="overlay"
+            FakeCamera([_stream()]), dsp, stream_id="sub", mode="overlay",
+            pool_depth=2,
         )
         assert (pub.width, pub.height) == (320, 180)  # 1280/4, 720/4
         assert dsp.alloc_args == (320, 180, "nv12", 2)
@@ -617,7 +633,7 @@ class TestFramePublisherOverlayGeometry:
         dsp = self._dsp(pool)
         pub = FramePublisher(
             FakeCamera([_stream()]), dsp, stream_id="sub",
-            mode="overlay", inset=(480, 270), dest=(64, 96),
+            mode="overlay", inset=(480, 270), dest=(64, 96), pool_depth=2,
         )
         assert (pub.width, pub.height) == (480, 270)
         assert pub.dest == (64, 96)
@@ -629,7 +645,7 @@ class TestFramePublisherOverlayGeometry:
         dsp = self._dsp(pool)
         FramePublisher(
             FakeCamera([_stream()]), dsp, stream_id="sub",
-            mode="overlay", fmt="argb", inset=(480, 270),
+            mode="overlay", fmt="argb", inset=(480, 270), pool_depth=2,
         )
         assert dsp.import_args == (480, 270, "argb", 2)
         assert dsp.allocs == []  # no doomed dma-buf pool was requested
@@ -678,6 +694,7 @@ class TestFramePublisherOverlayPublish:
         pub = FramePublisher(
             cam, FakeDsp(pool), stream_id="sub",
             mode="overlay", fmt=fmt, inset=(480, 270), dest=(64, 96),
+            pool_depth=depth,
         )
         return pub, cam, pool
 
@@ -787,7 +804,7 @@ class TestFramePublisherPublishRgb:
         stage = FakePool(1280, 720, 1)
         cam = FakeCamera([_stream()])
         dsp = FakeDsp(pool, rgb_pool, stage)
-        pub = FramePublisher(cam, dsp, stream_id="sub")
+        pub = FramePublisher(cam, dsp, stream_id="sub", pool_depth=2)
         return pub, cam, dsp, rgb_pool, stage
 
     def test_hw_path_pushes_stage_buffer(self):
@@ -836,7 +853,7 @@ class TestFramePublisherPublishRgb:
         pool = FakePool(480, 270, 2)
         pub = FramePublisher(
             FakeCamera([_stream()]), FakeDsp(pool), stream_id="sub",
-            mode="overlay", inset=(480, 270),
+            mode="overlay", inset=(480, 270), pool_depth=2,
         )
         with pytest.raises(RuntimeError, match="REPLACE"):
             pub.publish_rgb(np.zeros((270, 480, 3), dtype=np.uint8))
@@ -951,21 +968,25 @@ class TestFramePublisherSessionTag:
     def test_publish_forwards_session_id(self):
         pool = FakePool(1280, 720, 2)
         cam = FakeCamera([_stream()])
-        pub = FramePublisher(cam, FakeDsp(pool), session_id="sess-A")
+        pub = FramePublisher(
+            cam, FakeDsp(pool), session_id="sess-A", pool_depth=2
+        )
         pub.publish(self._frame())
         assert cam.pushes[0]["session_id"] == "sess-A"
 
     def test_publish_default_is_untagged(self):
         pool = FakePool(1280, 720, 2)
         cam = FakeCamera([_stream()])
-        pub = FramePublisher(cam, FakeDsp(pool))
+        pub = FramePublisher(cam, FakeDsp(pool), pool_depth=2)
         pub.publish(self._frame())
         assert cam.pushes[0]["session_id"] == ""
 
     def test_publish_stream_tags_every_request_including_eos(self):
         pool = FakePool(1280, 720, 2)
         cam = FakeCamera([_stream()])
-        pub = FramePublisher(cam, FakeDsp(pool), session_id="sess-A")
+        pub = FramePublisher(
+            cam, FakeDsp(pool), session_id="sess-A", pool_depth=2
+        )
         pub.publish_stream([self._frame(), self._frame()], end_with_eos=True)
         # 2 frames + the EOS request, all carrying the publisher's tag
         assert len(cam.stream_pushes) == 3
@@ -976,14 +997,194 @@ class TestFramePublisherSessionTag:
             FakePool(1280, 720, 2), FakePool(1280, 720, 1), FakePool(1280, 720, 1)
         )
         cam = FakeCamera([_stream()])
-        pub = FramePublisher(cam, dsp, session_id="sess-B")
+        pub = FramePublisher(cam, dsp, session_id="sess-B", pool_depth=2)
         pub.publish_rgb(np.zeros((720, 1280, 3), dtype=np.uint8))
         assert cam.pushes[0]["session_id"] == "sess-B"
 
     def test_publish_eos_carries_session_id(self):
         pool = FakePool(1280, 720, 2)
         cam = FakeCamera([_stream()])
-        pub = FramePublisher(cam, FakeDsp(pool), session_id="sess-A")
+        pub = FramePublisher(
+            cam, FakeDsp(pool), session_id="sess-A", pool_depth=2
+        )
         pub.publish_eos()
         assert cam.pushes[0]["end_of_stream"] is True
         assert cam.pushes[0]["session_id"] == "sess-A"
+
+
+def _lease_result(ids, n):
+    return InjectionResult(
+        success=True,
+        message="ok",
+        injected_frame_id=n,
+        in_flight_buffer_ids=tuple(ids),
+    )
+
+
+def _lease_status(ids=(), reports=True):
+    return InjectionStatus(
+        success=True,
+        message="OK",
+        reports_in_flight_buffers=reports,
+        in_flight_buffer_ids=tuple(ids),
+    )
+
+
+class TestFramePublisherLease:
+    """Fix-1 write-lease: a daemon reporting in_flight_buffer_ids gets
+    slot-level backpressure — busy slots are skipped, freed ones rotate
+    back in, exhaustion raises instead of tearing, and legacy daemons
+    keep the blind rotation."""
+
+    @staticmethod
+    def _frame(pub):
+        return np.zeros((pub.height * 3 // 2, pub.width), dtype=np.uint8)
+
+    def _pub(self, results=None, statuses=None, depth=2, **kw):
+        pool = FakePool(1280, 720, depth)
+        cam = FakeCamera(
+            [_stream()], results=results, statuses=statuses
+        )
+        pub = FramePublisher(
+            cam, FakeDsp(pool), stream_id="sub", pool_depth=depth, **kw
+        )
+        return pub, cam, pool
+
+    def test_capability_probe_enables_lease(self):
+        pub, cam, _ = self._pub(statuses=[_lease_status()])
+        assert pub.lease_mode is True
+        assert cam.status_calls == 1  # the ctor probe
+
+    def test_legacy_daemon_falls_back_with_warning(self, caplog):
+        # Default fake status: reports_in_flight_buffers=False.
+        pub, _, _ = self._pub()
+        assert pub.lease_mode is False
+        assert "write-lease" in caplog.text
+
+    def test_lease_publish_skips_busy_and_recycles_released(self):
+        ids = (100, 101)
+        results = [
+            _lease_result((100,), 1),   # slot 0 queued
+            _lease_result((100, 101), 2),  # both slots busy
+            _lease_result((101, 100), 3),  # slot 0 recycled, 1 still held
+        ]
+        statuses = [
+            _lease_status(),            # ctor probe
+            _lease_status((101,)),      # poll during publish #3: 100 released
+        ]
+        pub, cam, pool = self._pub(results=results, statuses=statuses)
+
+        f = self._frame(pub)
+        pub.publish(f)
+        pub.publish(f)
+        pub.publish(f)
+
+        slots = [i for i, _ in pool.writes]
+        assert slots == [0, 1, 0]  # never rewrote the busy slot 1
+        pushed = [p["buffer_id"] for p in cam.pushes]
+        assert pushed == [100, 101, 100]
+        assert cam.status_calls == 2  # probe + one poll
+
+    def test_lease_exhaustion_raises_without_tearing(self):
+        ids = (100, 101)
+        results = [
+            _lease_result((100,), 1),
+            _lease_result((100, 101), 2),
+        ]
+        # No further statuses queued: the poll defaults to a legacy
+        # response (reports=False) which never clears the busy set.
+        pub, cam, pool = self._pub(
+            results=results, statuses=[_lease_status()], lease_timeout_s=0.05
+        )
+
+        f = self._frame(pub)
+        pub.publish(f)
+        pub.publish(f)
+        with pytest.raises(RuntimeError, match="no free pool slot"):
+            pub.publish(f)
+        # The third frame never wrote and never pushed — no torn pixels.
+        assert [i for i, _ in pool.writes] == [0, 1]
+        assert len(cam.pushes) == 2
+
+    def test_legacy_rotation_ignores_lease_snapshots(self):
+        # Old daemon: results still carry in_flight lists, but the
+        # publisher (reports=False) rotates blindly — documented legacy
+        # behavior, pace at stream rate.
+        results = [
+            _lease_result((100,), 1),
+            _lease_result((100, 101), 2),
+            _lease_result((100, 101), 3),
+        ]
+        pub, _, pool = self._pub(results=results)
+        f = self._frame(pub)
+        pub.publish(f)
+        pub.publish(f)
+        pub.publish(f)
+        assert [i for i, _ in pool.writes] == [0, 1, 0]
+
+    def test_lease_publish_stream_paces_generator_via_status(self):
+        # Client-streaming has no per-frame acks: the generator's
+        # _acquire_slot polls GetInjectionStatus, which frees slot 0
+        # before the third frame is written.
+        statuses = [
+            _lease_status(),            # ctor probe
+            _lease_status((101,)),      # frees 100 mid-stream
+        ]
+        pool = FakePool(1280, 720, 2)
+        cam = FakeCamera([_stream()], statuses=statuses)
+        pub = FramePublisher(
+            cam, FakeDsp(pool), stream_id="sub", pool_depth=2
+        )
+        f = np.zeros((720 * 3 // 2, 1280), dtype=np.uint8)
+        pub.publish_stream([f, f, f])
+        assert [i for i, _ in pool.writes] == [0, 1, 0]
+        assert [r["buffer_id"] for r in cam.stream_pushes] == [100, 101, 100]
+        assert cam.status_calls == 2
+
+    def test_lease_publish_rgb_waits_for_staging_then_times_out(self):
+        pool = FakePool(1280, 720, 2)
+        rgb_pool = FakePool(1280, 720, 1)
+        stage = FakePool(1280, 720, 1)
+        stage_id = stage.ids[0]
+        results = [
+            _lease_result((stage_id,), 1),  # 1st rgb push holds the stage
+        ]
+        statuses = [
+            _lease_status(),            # ctor probe
+            # No further statuses: the 2nd call's poll never frees.
+        ]
+        cam = FakeCamera([_stream()], results=results, statuses=statuses)
+        dsp = FakeDsp(pool, rgb_pool, stage)
+        pub = FramePublisher(
+            cam, dsp, stream_id="sub", pool_depth=2, lease_timeout_s=0.05
+        )
+        rgb = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+        pub.publish_rgb(rgb)  # allocates staging, pushes once
+        with pytest.raises(RuntimeError, match="no free pool slot"):
+            pub.publish_rgb(rgb)  # stage still leased -> bounded raise
+        assert len(dsp.convert_calls) == 1  # never re-staged over it
+        assert len(cam.pushes) == 1
+
+    def test_lease_publish_rgb_proceeds_when_stage_released(self):
+        pool = FakePool(1280, 720, 2)
+        rgb_pool = FakePool(1280, 720, 1)
+        stage = FakePool(1280, 720, 1)
+        stage_id = stage.ids[0]
+        results = [
+            _lease_result((stage_id,), 1),
+            _lease_result((stage_id,), 2),
+        ]
+        statuses = [
+            _lease_status(),            # ctor probe
+            _lease_status(),            # poll: stage released
+        ]
+        cam = FakeCamera([_stream()], results=results, statuses=statuses)
+        dsp = FakeDsp(pool, rgb_pool, stage)
+        pub = FramePublisher(cam, dsp, stream_id="sub", pool_depth=2)
+        rgb = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+        pub.publish_rgb(rgb)
+        pub.publish_rgb(rgb)
+        assert len(dsp.convert_calls) == 2
+        assert len(cam.pushes) == 2

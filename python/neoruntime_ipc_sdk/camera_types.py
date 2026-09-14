@@ -68,6 +68,12 @@ class InjectionResult:
     # Lifecycle session tag echoed by the daemon (P2-13): correlation
     # and observability only — ownership is fd-anchored daemon-side.
     session_id: str = ""
+    # Write-lease snapshot (Fix-1): registry ids the daemon may still
+    # read at response time (queued + mid-bake). A pool slot is safe to
+    # rewrite only when its id is absent. Empty on daemons predating the
+    # lease protocol — check InjectionStatus.reports_in_flight_buffers
+    # before trusting it as exhaustive.
+    in_flight_buffer_ids: tuple[int, ...] = ()
 
 
 @dataclass
@@ -84,6 +90,13 @@ class InjectionStatus:
     # Latest non-empty lifecycle tag of the live session (P2-13); empty
     # when the session is untagged or closed.
     session_id: str = ""
+    # Write-lease snapshot (Fix-1), same semantics as
+    # InjectionResult.in_flight_buffer_ids.
+    in_flight_buffer_ids: tuple[int, ...] = ()
+    # Capability flag: True only on daemons that report the write-lease
+    # set. False => old daemon; the in_flight lists are absent and the
+    # FramePublisher lease logic stays in its legacy depth-paced mode.
+    reports_in_flight_buffers: bool = False
 
 
 @dataclass

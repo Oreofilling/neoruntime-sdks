@@ -747,6 +747,7 @@ class CameraClient(GrpcClient):
             error_code=resp.error_code,
             injected_frame_id=resp.injected_frame_id,
             session_id=resp.session_id,
+            in_flight_buffer_ids=tuple(resp.in_flight_buffer_ids),
         )
         if not result.success:
             raise RuntimeError(
@@ -806,6 +807,10 @@ class CameraClient(GrpcClient):
             error_code=resp.error_code,
             accepted_frame_count=resp.accepted_frame_count,
             session_id=resp.session_id,
+            # Final-response snapshot only (client-streaming has no
+            # per-frame acks): a lease-aware FramePublisher paces its
+            # generator on injection_status() polling instead.
+            in_flight_buffer_ids=tuple(resp.in_flight_buffer_ids),
         )
         if not result.success:
             raise RuntimeError(
@@ -817,7 +822,9 @@ class CameraClient(GrpcClient):
 
     def injection_status(self, timeout_s: float | None = None) -> InjectionStatus:
         """Injection session snapshot: active, mode, counters, queue depth,
-        and the live session's lifecycle tag (empty when untagged/closed)."""
+        the live session's lifecycle tag (empty when untagged/closed), and
+        the write-lease set (``in_flight_buffer_ids`` +
+        ``reports_in_flight_buffers``; Fix-1)."""
         stub = self._connect()
         resp = stub.GetInjectionStatus(camera_pb2.Empty(), timeout=timeout_s)
         if not resp.success:
@@ -831,6 +838,8 @@ class CameraClient(GrpcClient):
             frames_dropped=resp.frames_dropped,
             queue_depth=resp.queue_depth,
             session_id=resp.session_id,
+            in_flight_buffer_ids=tuple(resp.in_flight_buffer_ids),
+            reports_in_flight_buffers=resp.reports_in_flight_buffers,
         )
 
     def stop_injection(self, timeout_s: float | None = None) -> None:

@@ -1127,23 +1127,25 @@ class PushFrameRequest(_message.Message):
     def __init__(self, buffer_id: _Optional[int] = ..., width: _Optional[int] = ..., height: _Optional[int] = ..., stride: _Optional[int] = ..., mode: _Optional[_Union[InjectionMode, str]] = ..., pts_ns: _Optional[int] = ..., dest_x: _Optional[int] = ..., dest_y: _Optional[int] = ..., end_of_stream: bool = ..., stream_id: _Optional[str] = ..., session_id: _Optional[str] = ...) -> None: ...
 
 class PushFrameResponse(_message.Message):
-    __slots__ = ("success", "message", "error_code", "injected_frame_id", "accepted_frame_count", "session_id")
+    __slots__ = ("success", "message", "error_code", "injected_frame_id", "accepted_frame_count", "session_id", "in_flight_buffer_ids")
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
     ERROR_CODE_FIELD_NUMBER: _ClassVar[int]
     INJECTED_FRAME_ID_FIELD_NUMBER: _ClassVar[int]
     ACCEPTED_FRAME_COUNT_FIELD_NUMBER: _ClassVar[int]
     SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    IN_FLIGHT_BUFFER_IDS_FIELD_NUMBER: _ClassVar[int]
     success: bool
     message: str
     error_code: int
     injected_frame_id: int
     accepted_frame_count: int
     session_id: str
-    def __init__(self, success: bool = ..., message: _Optional[str] = ..., error_code: _Optional[int] = ..., injected_frame_id: _Optional[int] = ..., accepted_frame_count: _Optional[int] = ..., session_id: _Optional[str] = ...) -> None: ...
+    in_flight_buffer_ids: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, success: bool = ..., message: _Optional[str] = ..., error_code: _Optional[int] = ..., injected_frame_id: _Optional[int] = ..., accepted_frame_count: _Optional[int] = ..., session_id: _Optional[str] = ..., in_flight_buffer_ids: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class InjectionStatusResponse(_message.Message):
-    __slots__ = ("success", "message", "active", "mode", "frames_injected", "frames_dropped", "queue_depth", "session_id")
+    __slots__ = ("success", "message", "active", "mode", "frames_injected", "frames_dropped", "queue_depth", "session_id", "in_flight_buffer_ids", "reports_in_flight_buffers")
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
     ACTIVE_FIELD_NUMBER: _ClassVar[int]
@@ -1152,6 +1154,8 @@ class InjectionStatusResponse(_message.Message):
     FRAMES_DROPPED_FIELD_NUMBER: _ClassVar[int]
     QUEUE_DEPTH_FIELD_NUMBER: _ClassVar[int]
     SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    IN_FLIGHT_BUFFER_IDS_FIELD_NUMBER: _ClassVar[int]
+    REPORTS_IN_FLIGHT_BUFFERS_FIELD_NUMBER: _ClassVar[int]
     success: bool
     message: str
     active: bool
@@ -1160,4 +1164,6 @@ class InjectionStatusResponse(_message.Message):
     frames_dropped: int
     queue_depth: int
     session_id: str
-    def __init__(self, success: bool = ..., message: _Optional[str] = ..., active: bool = ..., mode: _Optional[_Union[InjectionMode, str]] = ..., frames_injected: _Optional[int] = ..., frames_dropped: _Optional[int] = ..., queue_depth: _Optional[int] = ..., session_id: _Optional[str] = ...) -> None: ...
+    in_flight_buffer_ids: _containers.RepeatedScalarFieldContainer[int]
+    reports_in_flight_buffers: bool
+    def __init__(self, success: bool = ..., message: _Optional[str] = ..., active: bool = ..., mode: _Optional[_Union[InjectionMode, str]] = ..., frames_injected: _Optional[int] = ..., frames_dropped: _Optional[int] = ..., queue_depth: _Optional[int] = ..., session_id: _Optional[str] = ..., in_flight_buffer_ids: _Optional[_Iterable[int]] = ..., reports_in_flight_buffers: _Optional[bool] = ...) -> None: ...
