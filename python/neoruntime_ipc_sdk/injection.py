@@ -10,6 +10,7 @@ the buffer crosses as a DSP-registry id, never as a raw fd number).
 from __future__ import annotations
 
 import logging
+import time
 from itertools import repeat
 
 import numpy as np
@@ -46,7 +47,15 @@ class FramePublisher:
 
     Frames round-robin across a small daemon-side pool: each
     :meth:`publish` writes one slot and pushes that slot's registry id.
-    The daemon-side queue is cap-3 drop-oldest, so publishing never
+    On daemons that report the write-lease set (Fix-1) a slot is
+    rewritten only after the daemon acknowledges it is no longer
+    reading it — every PushFrame response carries the ids still queued
+    or mid-bake, and with all slots busy :meth:`publish` waits for the
+    bake frontier (up to ``lease_timeout_s``) and raises instead of
+    silently tearing pixels. On older daemons the publisher falls back
+    to the legacy blind rotation (a warning is logged once); give such
+    deployments ``pool_depth >= 4`` and publish at stream rate. The
+    daemon-side queue is cap-3 drop-oldest, so publishing never
     backpressures the encoder; overflow shows up in
     :meth:`CameraClient.injection_status` as ``frames_dropped``.
 
@@ -72,13 +81,14 @@ class FramePublisher:
         camera: CameraClient,
         dsp: DspClient,
         stream_id: str = "sub",
-        pool_depth: int = 2,
+        pool_depth: int = 4,
         *,
         mode: str = "replace",
         fmt: str = "nv12",
         inset: tuple[int, int] | None = None,
         dest: tuple[int, int] = (0, 0),
         session_id: str = "",
+        lease_timeout_s: float = 5.0,
     ):
         if pool_depth < 1:
             raise ValueError("pool_depth must be >= 1")
@@ -158,6 +168,28 @@ class FramePublisher:
             self._pool = dsp.alloc_buffers(pool_w, pool_h, fmt, pool_depth)
         self._pool_depth = pool_depth
         self._slot = 0
+        # Write-lease state (Fix-1). A daemon that reports the in-flight
+        # buffer set gets slot-level backpressure: publish waits for the
+        # bake frontier to release a slot instead of blindly rotating
+        # (the 11/22/33 -> 33/22/33 tear of P1-1). The capability probe
+        # is best-effort — any failure (daemon restarting, ancient build)
+        # degrades to the legacy depth-paced rotation with one warning.
+        self._lease_timeout_s = lease_timeout_s
+        self._in_flight: set[int] = set()
+        self._pool_ids = [self._pool.buffer_id(i) for i in range(pool_depth)]
+        self._lease = False
+        try:
+            self._lease = camera.injection_status().reports_in_flight_buffers
+        except Exception:
+            self._lease = False
+        if not self._lease:
+            logger.warning(
+                "FramePublisher(%s): daemon does not report the write-lease "
+                "set; falling back to blind slot rotation — publish at "
+                "stream rate with pool_depth >= 4 or a queued frame may "
+                "bake with newer pixels",
+                stream_id,
+            )
         # Lazily created by publish_rgb (RGB->NV12 staging, REPLACE only).
         self._rgb_pool = None
         self._nv12_stage = None
@@ -197,6 +229,57 @@ class FramePublisher:
         """Paste origin for OVERLAY (always (0, 0) for REPLACE)."""
         return (self._dest_x, self._dest_y)
 
+    # -- write-lease slots (Fix-1) -------------------------------------------
+
+    @property
+    def lease_mode(self) -> bool:
+        """True when the daemon reports the write-lease set (slot-aware
+        publishing); False on legacy daemons (blind rotation)."""
+        return self._lease
+
+    def _refresh_in_flight(self) -> None:
+        """Re-read the daemon's write-lease snapshot (GetInjectionStatus).
+
+        Used only where no fresher source exists: pacing the
+        client-streaming generator (its single response arrives after the
+        last frame) and the initial wait inside :meth:`_acquire_slot`.
+        Unary :meth:`publish` updates from each PushFrame response.
+        """
+        st = self._camera.injection_status()
+        if st.reports_in_flight_buffers:
+            self._in_flight = set(st.in_flight_buffer_ids)
+
+    def _acquire_slot(self, ids: list[int] | None = None) -> int:
+        """Return a pool slot index whose buffer the daemon has released.
+
+        A slot is writable only when its registry id is absent from the
+        daemon's queued+mid-bake set. With every slot busy, poll
+        :meth:`injection_status` — the bake frontier frees slots at
+        stream fps — until one appears or ``lease_timeout_s`` elapses;
+        then raise rather than silently rewriting pixels the daemon may
+        still bake. ``ids`` defaults to the round-robin pool's ids;
+        :meth:`publish_rgb` passes its one-deep NV12 staging id.
+        """
+        if ids is None:
+            ids = self._pool_ids
+        depth = len(ids)
+        deadline = time.monotonic() + self._lease_timeout_s
+        while True:
+            for off in range(depth):
+                slot = (self._slot + off) % depth
+                if ids[slot] not in self._in_flight:
+                    self._slot = (slot + 1) % depth
+                    return slot
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"FramePublisher({self._stream_id!r}): no free pool "
+                    f"slot after {self._lease_timeout_s}s — the daemon "
+                    f"still holds {sorted(self._in_flight) or 'all slots'} "
+                    "in flight; is the encoder feed consuming frames?"
+                )
+            self._refresh_in_flight()
+            time.sleep(0.01)
+
     # -- publish ------------------------------------------------------------
 
     def publish(self, frame, pts_ns: int = 0) -> InjectionResult:
@@ -213,15 +296,23 @@ class FramePublisher:
         ``pts_ns`` paces the bake (device CLOCK_MONOTONIC, the same
         clock as frame timestamps): 0 = due immediately, a future value
         holds the frame until the encoder frontier passes it.
+
+        Lease mode (daemon reporting ``in_flight_buffer_ids``): the slot
+        is chosen among ids the daemon has released and the response's
+        lease snapshot replaces the local in-flight set, so a slot is
+        never rewritten while its pixels may still be queued or mid-bake.
         """
         arr = self._to_pool_array(frame)
         if self._closed:
             raise RuntimeError("FramePublisher is closed")
-        slot = self._slot
-        self._slot = (slot + 1) % self._pool_depth
+        if self._lease:
+            slot = self._acquire_slot()
+        else:
+            slot = self._slot
+            self._slot = (slot + 1) % self._pool_depth
         self._pool.write(slot, arr)
         self._published_any = True
-        return self._camera.push_frame(
+        res = self._camera.push_frame(
             buffer_id=self._pool.buffer_id(slot),
             width=self._width,
             height=self._height,
@@ -234,6 +325,9 @@ class FramePublisher:
             end_of_stream=False,
             session_id=self._session_id,
         )
+        if self._lease:
+            self._in_flight = set(res.in_flight_buffer_ids)
+        return res
 
     def publish_stream(
         self,
@@ -257,10 +351,13 @@ class FramePublisher:
 
         Slots recycle through the same pool as :meth:`publish`: the
         generator writes each frame into the next slot as gRPC pulls
-        it. The daemon-side queue is cap-3 drop-oldest, so pass
-        ``pool_depth >= 4`` if you push faster than the stream bakes —
-        a shallower pool rewrites a slot whose frame may still be
-        queued (the queue then bakes the newer pixels).
+        it. Client-streaming has no per-frame response, so in lease
+        mode the generator blocks on :meth:`_acquire_slot`, whose
+        freshness comes from :meth:`injection_status` polling — the
+        single-RPC efficiency is kept, only the write pace adapts. On
+        legacy daemons pass ``pool_depth >= 4`` and push at stream
+        rate: a shallower pool rewrites a slot whose frame may still
+        be queued (the queue then bakes the newer pixels).
         """
         if self._closed:
             raise RuntimeError("FramePublisher is closed")
@@ -275,8 +372,17 @@ class FramePublisher:
                 except StopIteration:
                     due = 0
                 arr = self._to_pool_array(frame)
-                slot = self._slot
-                self._slot = (slot + 1) % self._pool_depth
+                if self._lease:
+                    slot = self._acquire_slot()
+                    # No per-frame response exists on this transport, so
+                    # the lease is marked locally at yield time (the
+                    # request is on its way to the daemon's queue) and a
+                    # later status poll clears it once the daemon
+                    # reports the id released.
+                    self._in_flight.add(self._pool_ids[slot])
+                else:
+                    slot = self._slot
+                    self._slot = (slot + 1) % self._pool_depth
                 self._pool.write(slot, arr)
                 self._published_any = True
                 yield {
@@ -317,9 +423,11 @@ class FramePublisher:
         result is copied into the staging pool, so the push is always
         well-defined (``dsp.last_used_hw`` records the path taken).
 
-        The staging slot is reused every call: pace at stream rate, or
-        a frame still queued in the daemon bakes with the next frame's
-        pixels (same lease rule as the round-robin pool).
+        The staging slot is reused every call: lease mode blocks until
+        the daemon has released the staging NV12 (the pushed id; the rgb
+        staging is only ever read by the convert itself), legacy mode
+        relies on the caller pacing at stream rate — faster publishing
+        lets a still-queued frame bake with the next frame's pixels.
         """
         if self._mode != "replace":
             raise RuntimeError("publish_rgb targets REPLACE publishers only")
@@ -337,6 +445,8 @@ class FramePublisher:
         if self._rgb_pool is None:
             self._rgb_pool = self._dsp.alloc_buffers(w, h, "rgb24", 1)
             self._nv12_stage = self._dsp.alloc_buffers(w, h, "nv12", 1)
+        elif self._lease:
+            self._acquire_slot([self._nv12_stage.buffer_id(0)])
         out = self._dsp.convert_hw(
             src=arr,
             dst_fmt="nv12",
@@ -347,7 +457,7 @@ class FramePublisher:
             # CPU fallback computed pixels without touching the pool.
             self._nv12_stage.write(0, out)
         self._published_any = True
-        return self._camera.push_frame(
+        res = self._camera.push_frame(
             buffer_id=self._nv12_stage.buffer_id(0),
             width=w,
             height=h,
@@ -360,6 +470,9 @@ class FramePublisher:
             end_of_stream=False,
             session_id=self._session_id,
         )
+        if self._lease:
+            self._in_flight = set(res.in_flight_buffer_ids)
+        return res
 
     def publish_eos(self) -> None:
         """Flush the injection session (``buffer_id`` 0 + end_of_stream).

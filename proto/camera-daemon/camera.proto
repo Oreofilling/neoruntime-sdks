@@ -986,6 +986,12 @@ message PushFrameResponse {
   string session_id = 6;       // echo of the request's session tag ("" when
                                // untagged); PushFrameStream echoes the last
                                // non-empty tag seen on the stream
+  repeated uint64 in_flight_buffer_ids = 7; // write-lease snapshot at response
+                               // time: registry ids the daemon may still read
+                               // (queued + mid-bake). A pool slot is safe to
+                               // rewrite only when its id is absent. Absent
+                               // (empty + reports_in_flight_buffers=false in
+                               // GetInjectionStatus) on old daemons
 }
 
 message InjectionStatusResponse {
@@ -998,4 +1004,9 @@ message InjectionStatusResponse {
   uint32 queue_depth = 7;      // live depth of the inject queue (cap 3)
   string session_id = 8;       // live session's tag (latest non-empty
                                // request tag; "" = untagged or no session)
+  repeated uint64 in_flight_buffer_ids = 9; // same write-lease snapshot as
+                               // PushFrameResponse (queued + mid-bake ids)
+  bool reports_in_flight_buffers = 10; // capability flag: false on daemons
+                               // predating the lease protocol (SDK falls
+                               // back to depth-only pacing guidance)
 }
