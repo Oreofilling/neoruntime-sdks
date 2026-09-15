@@ -28,7 +28,12 @@ import pytest
 from neoruntime_ipc_sdk import accel
 from neoruntime_ipc_sdk.accel import HardwareUnavailable
 from neoruntime_ipc_sdk import dsp as dsp_module
-from neoruntime_ipc_sdk.draw import render_overlay_rgba
+from neoruntime_ipc_sdk.draw import (
+    _LABEL_STRIP,
+    _MIN_OVERLAY_DIM,
+    render_overlay_fragments,
+    render_overlay_rgba,
+)
 from neoruntime_ipc_sdk.dsp import DspBufferPool, DspClient, DspError
 from neoruntime_ipc_sdk.dsp_format import _cpu_blend
 from neoruntime_ipc_sdk.dsp_wire import (
@@ -717,6 +722,102 @@ class TestRenderOverlay:
         delta = np.abs(got.astype(int) - region.astype(int))
         assert delta.max() <= 3
         assert (delta > 0).mean() < 0.5
+
+
+# ---------------------------------------------------- stroke fragments --
+class TestRenderOverlayFragments:
+    def _composite(self, base, overlays):
+        return _cpu_blend(base, "rgb24", overlays)
+
+    def test_composite_parity_with_union_canvas_single_box(self):
+        # fragments must composite to the exact same pixels as the one
+        # union canvas: same rasterizer, same frame coordinates, tiles
+        # the extents without gaps or overlap
+        base = np.full((480, 640, 3), 90, np.uint8)
+        kwargs = dict(labels=["car"], scores=[0.87], colors=[(0, 255, 0)])
+        union, x0, y0 = render_overlay_rgba(640, 480, [(100, 100, 300, 220)], **kwargs)
+        frags = render_overlay_fragments(640, 480, [(100, 100, 300, 220)], **kwargs)
+
+        got = self._composite(base.copy(), frags)
+        want = self._composite(base.copy(), [(union, x0, y0)])
+        assert np.array_equal(got, want)
+
+    def test_composite_parity_with_union_canvas_spread(self):
+        # two far-apart label-less boxes: per-fragment selection must not
+        # leak either box into the other's fragments
+        base = np.full((480, 640, 3), 90, np.uint8)
+        kwargs = dict(labels=[None, None], thickness=3)
+        union, x0, y0 = render_overlay_rgba(
+            640, 480, [(10, 40, 60, 90), (300, 200, 500, 400)], **kwargs)
+        frags = render_overlay_fragments(
+            640, 480, [(10, 40, 60, 90), (300, 200, 500, 400)], **kwargs)
+
+        got = self._composite(base.copy(), frags)
+        want = self._composite(base.copy(), [(union, x0, y0)])
+        assert np.array_equal(got, want)
+
+    def test_polygon_fragment_is_one_canvas_of_own_extents(self):
+        pts = [(50, 60), (120, 60), (120, 140)]
+        frags = render_overlay_fragments(
+            640, 480, polygons=[(pts, (255, 0, 0))], thickness=2)
+        assert len(frags) == 1
+        rgba, x, y = frags[0]
+        assert (x, y) == (50 - 3, 60 - 3)  # no label strip
+        assert rgba.shape == ((140 + 3) - y, (120 + 3) - x, 4)
+        assert rgba[..., 3].max() == 255
+
+    def test_box_with_label_yields_four_stroke_fragments(self):
+        frags = render_overlay_fragments(
+            640, 480, [(100, 100, 300, 220)], labels=["car"], scores=[0.87])
+        assert len(frags) == 4  # caption+top, bottom, left, right
+        t = 2
+        tops = sorted(frags, key=lambda f: f[2])
+        cap, _x, y = tops[0]
+        # caption strip above the top edge, own stroke width across
+        assert cap.shape[0] == _LABEL_STRIP + 2 * (t + 1)
+        assert all(rgba[..., 3].max() > 0 for rgba, _x, _y in frags)
+
+    def test_full_frame_box_pays_stroke_not_area(self):
+        # the scene that motivated fragments: one detection covering the
+        # whole frame. Union canvas ~0.93 MP; fragments must stay a small
+        # fraction of that (render, ARGB repack, wire and blend are all
+        # area-bound)
+        union, _x0, _y0 = render_overlay_rgba(
+            1280, 720, [(4, 4, 1276, 716)], labels=["obj"], scores=[0.9])
+        frags = render_overlay_fragments(
+            1280, 720, [(4, 4, 1276, 716)], labels=["obj"], scores=[0.9])
+        assert union.shape[0] * union.shape[1] > 900_000
+        area = sum(rgba.shape[0] * rgba.shape[1] for rgba, _x, _y in frags)
+        assert area < 0.15 * union.shape[0] * union.shape[1]
+
+    def test_fragments_stay_in_frame_after_floor_and_slide(self):
+        # tiny box at the bottom-right corner: the 16 px floor widens the
+        # canvas past the frame edge, the origin must slide back
+        frags = render_overlay_fragments(
+            640, 480, [(630, 470, 637, 477)], labels=None)
+        assert 1 <= len(frags) <= 4
+        for rgba, x, y in frags:
+            h, w = rgba.shape[:2]
+            assert w >= _MIN_OVERLAY_DIM and h >= _MIN_OVERLAY_DIM
+            assert 0 <= x and x + w <= 640
+            assert 0 <= y and y + h <= 480
+
+    def test_caption_descender_survives_the_height_floor(self):
+        # 'j' descends below the baseline; the 16 px floor must not clip
+        # it — the caption widens the fragment that hosts it
+        frags = render_overlay_fragments(
+            640, 480, [(30, 30, 300, 200)], labels=["jogging"], scores=[0.5])
+        top = min(frags, key=lambda f: f[2])
+        rgba, _x, y = top
+        assert (rgba[..., 3] != 0).any(axis=1).sum() > 12
+
+    def test_no_shapes_raise(self):
+        with pytest.raises(ValueError, match="at least one shape"):
+            render_overlay_fragments(640, 480, [])
+
+    def test_out_of_frame_boxes_raise(self):
+        with pytest.raises(ValueError, match="outside the frame"):
+            render_overlay_fragments(640, 480, [(700, 500, 900, 700)])
 
 
 # ------------------------------------------------------------ router legs --

@@ -83,6 +83,7 @@ from .draw import (
     draw_detections,
     draw_polygons,
     draw_text,
+    render_overlay_fragments,
     render_overlay_rgba,
 )
 from .dsp import (
@@ -199,6 +200,7 @@ __all__ = [
     "draw_detections",
     "draw_polygons",
     "render_overlay_rgba",
+    "render_overlay_fragments",
     # App toolkit: color conversion / NMS / accel routing
     "nv12_to_rgb",
     "nv12_to_bgr",

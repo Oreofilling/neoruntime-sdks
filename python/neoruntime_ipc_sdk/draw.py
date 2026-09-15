@@ -233,6 +233,106 @@ _LABEL_STRIP = 20
 _MIN_OVERLAY_DIM = 16
 
 
+def _text_metrics() -> tuple[int, int, int]:
+    """Caption metrics for the active rasterizer:
+    ``(anchor_offset, canvas_row_floor, rows_below_anchor)`` — cv2
+    anchors text at the baseline (6 px above the box top, floored to
+    canvas row 12, descender ~4 px below), Pillow at the glyph top
+    (12 px above the box top, no floor, ~11 px tall)."""
+    try:
+        import cv2  # noqa: F401
+
+        return 6, 12, 6
+    except ImportError:
+        return 12, 0, 12
+
+
+def _text_row(yi1: int, y0: int, ch: int, offset: int, floor: int,
+              fragment: bool) -> int | None:
+    """Canvas row for a box caption; ``None`` = not this canvas's pixels.
+
+    The single-canvas path (``fragment=False``) keeps the legacy clamps.
+    A fragment canvas anchors the caption to the same frame row instead
+    of clamping it into view — the clamp is what used to spray captions
+    onto bottom/side strips that the caption was never meant for. Only
+    the canvas covering the caption strip gets the text; the ``y0 == 0``
+    floor keeps the near-top-edge degenerate case at parity with the
+    union canvas.
+    """
+    row = yi1 - offset - y0
+    if not fragment:
+        return min(max(row, floor), ch - 2)
+    if y0 == 0:
+        row = max(row, floor)
+    return row if 0 <= row < ch else None
+
+
+def _draw_masks(
+    ch: int, cw: int, x0: int, y0: int, t: int, rects, line_shapes,
+    fragment: bool = False,
+) -> list[np.ndarray]:
+    """Coverage masks for ``rects``/``line_shapes`` on a ``(ch, cw)``
+    canvas whose frame-space origin is ``(x0, y0)`` — the shared
+    rasterizer behind :func:`render_overlay_rgba` and
+    :func:`render_overlay_fragments`."""
+    masks: list[np.ndarray] = []
+    try:
+        import cv2
+
+        for xi1, yi1, xi2, yi2, text in rects:
+            m = np.zeros((ch, cw), np.uint8)
+            # rectangle default LINE_8, matching draw_boxes' hard edges
+            cv2.rectangle(m, (xi1 - x0, yi1 - y0), (xi2 - x0, yi2 - y0), 255, t)
+            if text:
+                ty = _text_row(yi1, y0, ch, 6, 12, fragment)
+                if ty is not None:
+                    cv2.putText(
+                        m, text, (xi1 - x0, ty),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, 255, 1, cv2.LINE_AA,
+                    )
+            masks.append(m)
+        for pts, _col, closed in line_shapes:
+            m = np.zeros((ch, cw), np.uint8)
+            shifted = (pts - np.array([x0, y0], np.int32)).reshape(-1, 1, 2)
+            cv2.polylines(m, [shifted], closed, 255, t)
+            masks.append(m)
+    except ImportError:
+        from PIL import Image, ImageDraw
+
+        for xi1, yi1, xi2, yi2, text in rects:
+            img = Image.new("L", (cw, ch), 0)
+            d = ImageDraw.Draw(img)
+            d.rectangle(
+                [xi1 - x0, yi1 - y0, xi2 - x0, yi2 - y0], outline=255, width=t
+            )
+            if text:
+                ty = _text_row(yi1, y0, ch, 12, 0, fragment)
+                if ty is not None:
+                    d.text((xi1 - x0 + 2, ty), text, fill=255)
+            masks.append(np.array(img))
+        for pts, _col, closed in line_shapes:
+            img = Image.new("L", (cw, ch), 0)
+            d = ImageDraw.Draw(img)
+            xy = [(int(px) - x0, int(py) - y0) for px, py in pts]
+            if closed:
+                xy.append(xy[0])
+            d.line(xy, fill=255, width=t, joint="curve")
+            masks.append(np.array(img))
+    return masks
+
+
+def _colorize(masks, cols, ch: int, cw: int) -> np.ndarray:
+    """Straight-alpha RGBA from coverage masks: color per draw order,
+    alpha the mask union."""
+    rgb = np.zeros((ch, cw, 3), np.uint8)
+    alpha = np.zeros((ch, cw), np.uint8)
+    for m, col in zip(masks, cols):
+        hit = m > 0
+        rgb[hit] = col  # draw order: later shapes overwrite inside overlaps
+        np.maximum(alpha, m, out=alpha)
+    return np.dstack([rgb, alpha])
+
+
 def render_overlay_rgba(
     frame_w: int,
     frame_h: int,
@@ -316,55 +416,173 @@ def render_overlay_rgba(
     cw = max(_MIN_OVERLAY_DIM, x_end - x0)
     ch = max(_MIN_OVERLAY_DIM, y_end - y0)
 
-    masks: list[np.ndarray] = []
-    try:
-        import cv2
+    masks = _draw_masks(ch, cw, x0, y0, t, rects, line_shapes)
+    return _colorize(masks, cols, ch, cw), x0, y0
 
-        for xi1, yi1, xi2, yi2, text in rects:
-            m = np.zeros((ch, cw), np.uint8)
-            # rectangle default LINE_8, matching draw_boxes' hard edges
-            cv2.rectangle(m, (xi1 - x0, yi1 - y0), (xi2 - x0, yi2 - y0), 255, t)
-            if text:
-                ty = min(max(yi1 - 6 - y0, 12), ch - 2)
-                cv2.putText(
-                    m, text, (xi1 - x0, ty),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, 255, 1, cv2.LINE_AA,
-                )
-            masks.append(m)
-        for pts, _col, closed in line_shapes:
-            m = np.zeros((ch, cw), np.uint8)
-            shifted = (pts - np.array([x0, y0], np.int32)).reshape(-1, 1, 2)
-            cv2.polylines(m, [shifted], closed, 255, t)
-            masks.append(m)
-    except ImportError:
-        from PIL import Image, ImageDraw
 
-        for xi1, yi1, xi2, yi2, text in rects:
-            img = Image.new("L", (cw, ch), 0)
-            d = ImageDraw.Draw(img)
-            d.rectangle(
-                [xi1 - x0, yi1 - y0, xi2 - x0, yi2 - y0], outline=255, width=t
-            )
-            if text:
-                ty = min(max(yi1 - 12 - y0, 0), ch - 2)
-                d.text((xi1 - x0 + 2, ty), text, fill=255)
-            masks.append(np.array(img))
-        for pts, _col, closed in line_shapes:
-            img = Image.new("L", (cw, ch), 0)
-            d = ImageDraw.Draw(img)
-            xy = [(int(px) - x0, int(py) - y0) for px, py in pts]
-            if closed:
-                xy.append(xy[0])
-            d.line(xy, fill=255, width=t, joint="curve")
-            masks.append(np.array(img))
+def _overlaps(a, b) -> bool:
+    """Whether two ``(x0, y0, x1, y1)`` half-open rects intersect."""
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
-    rgb = np.zeros((ch, cw, 3), np.uint8)
-    alpha = np.zeros((ch, cw), np.uint8)
-    for m, col in zip(masks, cols):
-        hit = m > 0
-        rgb[hit] = col  # draw order: later shapes overwrite inside overlaps
-        np.maximum(alpha, m, out=alpha)
-    return np.dstack([rgb, alpha]), x0, y0
+
+def render_overlay_fragments(
+    frame_w: int,
+    frame_h: int,
+    boxes: Iterable = (),
+    labels: Sequence[str | None] | None = None,
+    scores: Sequence[float | None] | None = None,
+    colors: Sequence[tuple[int, int, int]] | None = None,
+    thickness: int = 2,
+    polygons: Sequence = (),
+    tracks: Sequence = (),
+) -> list[tuple[np.ndarray, int, int]]:
+    """Render boxes as tight stroke fragments instead of one bbox canvas.
+
+    Same inputs and straight-alpha contract as :func:`render_overlay_rgba`,
+    but returns a *list* of ``(rgba, x, y)`` fragments to spread over one
+    :meth:`DspClient.blend_hw` call (the daemon composites the whole
+    overlay list in a single job, so extra fragments cost only their
+    area). Each box becomes up to four thin canvases — caption+top edge,
+    bottom edge, left edge, right edge — so a box pays for its
+    ``2 * thickness`` stroke perimeter plus its caption strip, not its
+    area: a full-frame 1280x720 box drops from a 0.9 MP canvas (render,
+    RGBA->ARGB repack, wire bytes and blend are all area-bound; ~3.7 MB
+    per frame over the socket) to ~0.06 MP of 16 px strips. Polygons and
+    tracks stay one canvas per shape (that shape's own bbox, not the
+    union of everything).
+
+    Pixels are identical to :func:`render_overlay_rgba` for
+    non-overlapping shapes: every fragment is rasterized by the same
+    backend at the same frame coordinates on a smaller canvas, and the
+    fragments tile the shape extents without gaps or overlap. Two
+    caveats: overlapping shapes composite marginally differently (an AA
+    edge landing on another shape's stroke blends against it instead of
+    taking the union mask), and a caption wider than its box clips at
+    the box extent — call once per detection for exact single-canvas
+    parity.
+
+    Fragment count is the caller's budget: ``blend_hw`` caps one job at
+    64 overlays and each box costs up to four fragments, so past ~15
+    boxes fall back to one canvas per shape (or one shared union
+    canvas) rather than overflowing the batch.
+    """
+    t = max(1, int(thickness))
+    items = [_to_xyxy(b) for b in boxes]
+    lines = [(p, c, True) for p, c in polygons] + [(p, c, False) for p, c in tracks]
+    if not items and not lines:
+        raise ValueError("render_overlay_fragments needs at least one shape")
+    texts = [
+        _format_label(
+            labels[i] if labels and i < len(labels) else None,
+            scores[i] if scores and i < len(scores) else None,
+        )
+        for i in range(len(items))
+    ]
+    cols = [
+        tuple(colors[i]) if colors and i < len(colors) else (0, 255, 0)
+        for i in range(len(items))
+    ]
+    cols += [
+        tuple(c) if c is not None else (0, 255, 0) for _p, c, _closed in lines
+    ]
+    line_shapes = [
+        (_as_points(p), c, closed) for p, c, closed in lines
+    ]
+
+    # per-shape stroke extents, identical formulas to the union canvas —
+    # fragment pixels then equal canvas pixels region for region
+    x_min, y_min, x_max, y_max = int(frame_w), int(frame_h), 0, 0
+    rects = []
+    rect_bboxes = []
+    for (x1, y1, x2, y2), text in zip(items, texts):
+        xi1, yi1, xi2, yi2 = int(x1), int(y1), int(x2), int(y2)
+        rects.append((xi1, yi1, xi2, yi2, text))
+        strip = _LABEL_STRIP if text else 0
+        rect_bboxes.append((xi1 - t - 1, yi1 - t - 1 - strip,
+                            xi2 + t + 1, yi2 + t + 1))
+        x_min = min(x_min, xi1 - t - 1)
+        y_min = min(y_min, yi1 - t - 1 - strip)
+        x_max = max(x_max, xi2 + t + 1)
+        y_max = max(y_max, yi2 + t + 1)
+    line_bboxes = []
+    for pts, _col, _closed in line_shapes:
+        bx0 = int(pts[:, 0].min()) - t - 1
+        by0 = int(pts[:, 1].min()) - t - 1
+        bx1 = int(pts[:, 0].max()) + t + 1
+        by1 = int(pts[:, 1].max()) + t + 1
+        line_bboxes.append((bx0, by0, bx1, by1))
+        x_min = min(x_min, bx0)
+        y_min = min(y_min, by0)
+        x_max = max(x_max, bx1)
+        y_max = max(y_max, by1)
+    ux0, uy0 = max(0, x_min), max(0, y_min)
+    ux1, uy1 = min(int(frame_w), x_max), min(int(frame_h), y_max)
+    if ux1 <= ux0 or uy1 <= uy0:
+        raise ValueError("all shapes lie outside the frame")
+
+    # fragment rects: a box with a caption gets union-wide horizontal
+    # strips (the caption may run past its own box; the union canvas
+    # does not clip it there), a box without one only its stroke extent;
+    # vertical strips are always just the stroke columns
+    frags: list[tuple[int, int, int, int]] = []
+    for (xi1, yi1, xi2, yi2, text), _bb in zip(rects, rect_bboxes):
+        strip = _LABEL_STRIP if text else 0
+        sx0, sx1 = ((ux0, ux1) if text
+                    else (max(ux0, xi1 - t - 1), min(ux1, xi2 + t + 1)))
+        top0 = max(uy0, yi1 - t - 1 - strip)
+        top1 = min(uy1, yi1 + t + 1)
+        bot0 = max(uy0, yi2 - t)
+        bot1 = min(uy1, yi2 + t + 1)
+        lx1 = min(ux1, xi1 + t + 1)
+        rx0 = max(ux0, xi2 - t)
+        if top1 > top0:
+            frags.append((sx0, top0, sx1, top1))
+        if bot1 > bot0:
+            frags.append((sx0, bot0, sx1, bot1))
+        if bot0 > top1:  # side edges between the horizontal strips
+            if lx1 > ux0:
+                frags.append((ux0, top1, lx1, bot0))
+            if ux1 > rx0:
+                frags.append((rx0, top1, ux1, bot0))
+    for bb in line_bboxes:
+        fx0, fy0 = max(ux0, bb[0]), max(uy0, bb[1])
+        fx1, fy1 = min(ux1, bb[2]), min(uy1, bb[3])
+        if fx1 > fx0 and fy1 > fy0:
+            frags.append((fx0, fy0, fx1, fy1))
+
+    m = _text_metrics()
+    out: list[tuple[np.ndarray, int, int]] = []
+    for fx, fy, fx1, fy1 in frags:
+        cw = max(_MIN_OVERLAY_DIM, fx1 - fx)
+        ch = max(_MIN_OVERLAY_DIM, fy1 - fy)
+        # a caption landing in this fragment dictates its height: the
+        # 16 px floor must not clip the descender (the union canvas is
+        # always tall enough; row is stable under the later slide)
+        for xi1c, yi1c, _xi2c, _yi2c, text in rects:
+            if not text:
+                continue
+            row = _text_row(yi1c, fy, ch, m[0], m[1], True)
+            if row is not None:
+                ch = max(ch, row + m[2])
+        # the 16 px floor can push the canvas past the frame's right or
+        # bottom edge — slide the origin back (content offsets follow the
+        # origin, so pixels keep their frame position)
+        fx = max(0, min(fx, int(frame_w) - cw))
+        fy = max(0, min(fy, int(frame_h) - ch))
+        window = (fx, fy, fx + cw, fy + ch)
+        sel_rects = [r for r, bb in zip(rects, rect_bboxes) if _overlaps(bb, window)]
+        sel_lines = [ls for ls, bb in zip(line_shapes, line_bboxes)
+                     if _overlaps(bb, window)]
+        if not sel_rects and not sel_lines:
+            continue  # no visible pixels in this fragment
+        sel_cols = [col for col, bb in zip(cols[:len(rects)], rect_bboxes)
+                    if _overlaps(bb, window)]
+        sel_cols += [col for col, bb in zip(cols[len(rects):], line_bboxes)
+                     if _overlaps(bb, window)]
+        masks = _draw_masks(ch, cw, fx, fy, t, sel_rects, sel_lines,
+                            fragment=True)
+        out.append((_colorize(masks, sel_cols, ch, cw), fx, fy))
+    return out
 
 
 def draw_polygons(
