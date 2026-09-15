@@ -545,9 +545,8 @@ class Frame:
           (The vendor SCALE_AND_CROP picks its own rounding; on device
           it disagreed with the CPU placement by ~21 luma levels.)
 
-        Hot loops should hold a :class:`~neoruntime_ipc_sdk.dsp.DspClient`
-        open and call ``resize_hw`` directly instead of paying this
-        method's per-call client setup.
+        Hot loops pay no per-call client setup here anymore: the DSP arm
+        rides the process-resident client (:func:`accel.shared_dsp_call`).
         """
         handle = self.handle
         if handle is None or handle.closed:
@@ -564,8 +563,9 @@ class Frame:
             HardwareUnavailable,
             RoutePolicy,
             get_default_router,
+            shared_dsp_call,
         )
-        from .dsp import DspClient, DspError  # lazy: dsp imports media
+        from .dsp import DspError  # lazy: dsp imports media
 
         router = get_default_router()
         try:
@@ -576,8 +576,7 @@ class Frame:
             return None
 
         try:
-            with DspClient() as dsp:
-                content = dsp.resize_hw(self, rw, rh, scaling="stretch")
+            content = shared_dsp_call("resize_hw", self, rw, rh, scaling="stretch")
         except DspError as exc:
             logger.debug("DSP resize fast path unavailable (%s); CPU path", exc)
             if router.policy is RoutePolicy.HARDWARE_ONLY:
