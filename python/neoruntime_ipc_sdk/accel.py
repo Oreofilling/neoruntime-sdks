@@ -53,6 +53,7 @@ __all__ = [
     "RouteDecision",
     "RoutePolicy",
     "get_default_router",
+    "shared_dsp_call",
 ]
 
 
@@ -101,14 +102,65 @@ class _Route:
     note: str = ""
 
 
-def _lazy_dsp_client() -> Any:
-    """Connect to the DSP service on first use (raises HardwareUnavailable)."""
-    from .dsp import DspClient  # noqa: PLC0415 — deferred: heavy proto import
+# Process-resident DSP client: one UDS buffer-plane connection and one
+# gRPC job-plane connection for the whole process. The per-call
+# connect/close this replaced dominated short jobs' wall time and
+# re-keyed the daemon's per-process DSP quota on every fresh socket
+# (quota follows the peer pid — P0-4 — so a resident client accrues
+# steady-state budget instead of a fresh 1-second burst each call).
+_dsp_shared: Any | None = None
+_dsp_shared_lock = threading.Lock()
 
+
+def _lazy_dsp_client() -> Any:
+    """Return the DSP client dispatch runs on — the process-resident one.
+
+    Both transports connect lazily on first use and then stay open; a
+    failed call drops the resident (:func:`_dsp_drop_shared`) so the next
+    call reconnects. Tests substitute fakes by patching this factory.
+    """
+    global _dsp_shared  # noqa: PLW0603 — module-level resident cache
+    with _dsp_shared_lock:
+        if _dsp_shared is None:
+            from .dsp import DspClient  # noqa: PLC0415 — deferred: heavy proto import
+
+            _dsp_shared = DspClient()
+        return _dsp_shared
+
+
+def _dsp_drop_shared(client: Any) -> None:
+    """Close and forget the resident client after a failure.
+
+    A client that is not the current resident (a test fake, or one
+    another thread already replaced) is left alone — not ours to close.
+    """
+    global _dsp_shared  # noqa: PLW0603 — module-level resident cache
+    with _dsp_shared_lock:
+        if _dsp_shared is not client:
+            return
+        _dsp_shared = None
     try:
-        return DspClient()
-    except Exception as exc:  # connect failures must degrade, not crash
-        raise HardwareUnavailable(f"DSP service unreachable: {exc}") from exc
+        client.close()
+    except Exception:  # noqa: S110 — cleanup must not mask result/error
+        pass
+
+
+def shared_dsp_call(method: str, *args: Any, **kwargs: Any) -> Any:
+    """Run one DspClient method on the process-resident client.
+
+    The same resident machinery the router legs use, exposed for SDK
+    fast paths that live outside the route table (``Frame.resize``'s DSP
+    arm). On any error the resident client is closed — the next call
+    reconnects — and the original exception propagates so the caller
+    keeps its own fallback policy. The connection is never closed on
+    success.
+    """
+    client = _lazy_dsp_client()
+    try:
+        return getattr(client, method)(*args, **kwargs)
+    except Exception:
+        _dsp_drop_shared(client)
+        raise
 
 
 def _dsp_call(method: str, *args: Any, **kwargs: Any) -> Any:
@@ -118,18 +170,13 @@ def _dsp_call(method: str, *args: Any, **kwargs: Any) -> Any:
     "hardware" label — the router would count the op as hardware and
     never record the degradation. With ``cpu_fallback=False`` the client
     raises instead; the router records the fallback and runs its own
-    software leg exactly once.
+    software leg exactly once. Runs on the process-resident client; a
+    failure drops it so the next call reconnects.
     """
-    client = _lazy_dsp_client()
     try:
-        return getattr(client, method)(*args, **kwargs)
+        return shared_dsp_call(method, *args, **kwargs)
     except Exception as exc:
         raise HardwareUnavailable(f"DSP {method} failed: {exc}") from exc
-    finally:
-        try:
-            client.close()  # fresh client per call — never leak the socket
-        except Exception:  # noqa: S110 — cleanup must not mask result/error
-            pass
 
 
 def _frame_like(src: Any) -> bool:
@@ -531,9 +578,11 @@ def _probe_cv2() -> bool:
 
 def _probe_dsp() -> bool:
     try:
-        _lazy_dsp_client()
+        # a real reachability check, not just "the class constructs":
+        # opening the buffer-plane UDS fails fast when the daemon is down
+        _lazy_dsp_client()._ensure_sock()  # noqa: SLF001 — package-internal probe
         return True
-    except HardwareUnavailable:
+    except Exception:
         return False
 
 
