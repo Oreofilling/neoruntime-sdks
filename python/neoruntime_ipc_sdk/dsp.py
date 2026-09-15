@@ -1675,16 +1675,20 @@ class DspClient(GrpcClient):
         array is returned — the input is never modified.
 
         The base must be NV12 (the vendor op writes NV12 only). Arrays
-        are copied in. Keep-fd Frame/FrameHandle bases are **refused
-        by default** (``zero_copy=False``): the import->1:1
-        RESIZE->BLEND chain has wedged the DSP device-wide until a
-        reboot in the field — twice, under media-heap pressure; a
-        controlled re-test on a healthy heap passed 11/11, so the
-        wedge is state-dependent and the root cause is still open
-        (see docs/proposals/dsp-offload.md P2 record). Pass
-        ``frame.to_array()`` — the array path is the proven one.
-        ``zero_copy=True`` forces the chain for experiments on
-        future firmware; nothing about it is guaranteed today.
+        are copied in. Device-side bases — keep-fd Frame/FrameHandle (an
+        import) or a :class:`DspBufferRef` (its daemon id, *borrowed*:
+        keep the ref alive until the call returns, like any ref source)
+        — are **refused by default** (``zero_copy=False``): the
+        import->1:1 RESIZE->BLEND chain has wedged the DSP device-wide
+        until a reboot in the field — twice, under media-heap pressure;
+        a controlled re-test on a healthy heap passed 11/11 and a
+        4000-run soak saw no wedge, so the risk is state-dependent with
+        the root cause still open (see docs/proposals/dsp-offload.md P2
+        record). Pass ``frame.to_array()``/``ref.read()`` — the array
+        path is the proven one. ``zero_copy=True`` forces the
+        device-side chain (the ref leg skips the import entirely: one
+        in-daemon RESIZE copy, then the blend); nothing about it is
+        guaranteed today.
         Use
         :func:`draw.render_overlay_rgba` to turn detection boxes into a
         minimal overlay canvas, then blend it here; that keeps the
@@ -1692,30 +1696,29 @@ class DspClient(GrpcClient):
         overlays`` megapixels) tight.
 
         Overlays smaller than 16x16 (the daemon floor) are padded with
-        fully transparent pixels to 16 — a semantic no-op. Wire byte
+        fully transparent pixels to 16, and odd overlay heights gain one
+        transparent bottom row (the DSP rejects odd overlay heights
+        outright, -2801 — device-ruled: odd width/x/y pass, only height
+        does not). Both pads are semantic no-ops, but they grow the
+        rect: bounds are enforced on the padded geometry. Wire byte
         order is ARGB32 ([A, R, G, B] per pixel); the RGBA->ARGB pack is
         internal. ``wait=False`` submits the blend (and the keep-fd copy
         leg) without blocking and returns a :class:`PendingDspJob`.
         """
         if fmt is not None and fmt != "nv12":
             raise DspError(f"BLEND base must be nv12 (daemon contract), got {fmt!r}")
-        if isinstance(base, DspBufferRef):
-            raise DspError(
-                "blend_hw does not take a DspBufferRef base yet — the "
-                "device-resident base leg arrives with the keep-fd blend "
-                "(P2-4); blend ref.read() for now"
-            )
         # fmt is nv12 by definition — never leave it to shape inference
         # (a 2D nv12 array would ambiguously infer gray8)
         bw, bh, handle, fmt = _resolve_source(base, "nv12")
         if handle is not None and not zero_copy:
             raise DspError(
-                "blend_hw refuses keep-fd (frame/handle) bases by default: "
-                "the import->resize->blend chain has wedged the DSP "
+                "blend_hw refuses device-side bases (keep-fd "
+                "frame/handle or DspBufferRef) by default: the "
+                "import->resize->blend chain has wedged the DSP "
                 "device-wide until reboot in the field (state-dependent, "
-                "root cause open). Pass frame.to_array() — the array path "
-                "is the proven one — or zero_copy=True to force the chain "
-                "at your own risk."
+                "root cause open). Pass frame.to_array()/ref.read() — "
+                "the array path is the proven one — or zero_copy=True to "
+                "force the chain at your own risk."
             )
         _validate_geometry(bw, bh, fmt, "base")
         if not overlays:
@@ -1723,7 +1726,10 @@ class DspClient(GrpcClient):
         if len(overlays) > _MAX_BATCH:
             raise DspError(f"too many overlays ({len(overlays)}); max is {_MAX_BATCH}")
 
-        # validate + pad overlays to the daemon floor before any wire work
+        # validate + pad overlays before any wire work: the daemon floor
+        # is 16x16 and the DSP blend rejects odd overlay heights (-2801).
+        # Both pads add fully transparent pixels — semantic no-ops — but
+        # they grow the rect, so bounds are enforced on the padded dims.
         prepared: list[tuple[np.ndarray, int, int]] = []
         for i, (rgba, x, y) in enumerate(overlays):
             if rgba.ndim != 3 or rgba.shape[2] != 4 or rgba.dtype != np.uint8:
@@ -1733,18 +1739,27 @@ class DspClient(GrpcClient):
                     f"{getattr(rgba, 'dtype', None)}"
                 )
             oh, ow = rgba.shape[:2]
-            if x < 0 or y < 0 or x + ow > bw or y + oh > bh:
-                raise DspError(
-                    f"overlay {i} ({ow}x{oh} at ({x},{y})) exceeds the "
-                    f"{bw}x{bh} base — clamp or clip before blending"
-                )
+            padded = False
             if ow < _MIN_DIM or oh < _MIN_DIM:
-                # transparent padding composites as a no-op; the rect
-                # references the padded dims
                 canvas = np.zeros((max(oh, _MIN_DIM), max(ow, _MIN_DIM), 4), np.uint8)
                 canvas[:oh, :ow] = rgba
                 rgba = canvas
                 oh, ow = rgba.shape[:2]
+                padded = True
+            if oh % 2:
+                # one transparent bottom row; composites as a no-op.
+                # Odd width/x/y are fine on-device — only height is not.
+                canvas = np.zeros((oh + 1, ow, 4), np.uint8)
+                canvas[:oh] = rgba
+                rgba = canvas
+                oh += 1
+                padded = True
+            if x < 0 or y < 0 or x + ow > bw or y + oh > bh:
+                hint = " (includes transparent padding)" if padded else ""
+                raise DspError(
+                    f"overlay {i} ({ow}x{oh} at ({x},{y})) exceeds the "
+                    f"{bw}x{bh} base{hint} — clamp or clip before blending"
+                )
             _validate_geometry(ow, oh, "argb", f"overlay {i}")
             prepared.append((rgba, x, y))
 
@@ -1755,24 +1770,30 @@ class DspClient(GrpcClient):
                 base_pool = self.alloc_buffers(bw, bh, "nv12", 1)
                 own.append(base_pool)
                 if handle is not None:
-                    # keep-fd base (P2): import the frame zero-copy and let
-                    # the DSP copy it into the pool with a 1:1 RESIZE — the
-                    # blend then composites in place on that copy. The
-                    # daemon rejects imported BLEND *destinations* and the
-                    # camera's dma-bufs must never be written, so the copy
-                    # is the point; it just never crosses the client. The
-                    # RESIZE leg always runs synchronously: execution order
-                    # equals submit order (single daemon worker, one
-                    # priority queue), but a queued-and-never-waited job
-                    # would leak its registry entry — the sync path reaps
+                    # device-side base: a DspBufferRef rides its daemon
+                    # id directly (P2-4 — no import, borrowed like any
+                    # ref source); a keep-fd frame is imported zero-copy
+                    # (P2). Either way the DSP copies it into the pool
+                    # with a 1:1 RESIZE — the blend then composites in
+                    # place on that copy. The daemon rejects imported
+                    # BLEND *destinations* and the camera's dma-bufs
+                    # must never be written, so the copy is the point;
+                    # it just never crosses the client. The RESIZE leg
+                    # always runs synchronously: execution order equals
+                    # submit order (single daemon worker, one priority
+                    # queue), but a queued-and-never-waited job would
+                    # leak its registry entry — the sync path reaps
                     # its own.
-                    imported = _ImportedSource(
-                        self, self._import_source(handle, bw, bh, fmt, timeout_s)
-                    )
-                    own.append(imported)
+                    if isinstance(handle, DspBufferRef):
+                        src = _RefSource(handle)
+                    else:
+                        src = _ImportedSource(
+                            self, self._import_source(handle, bw, bh, fmt, timeout_s)
+                        )
+                        own.append(src)
                     self._submit_job(
                         _OP_RESIZE,
-                        imported.buffer_id(0),
+                        src.buffer_id(0),
                         [base_pool.buffer_id(0)],
                         [],
                         "bilinear",
@@ -1815,10 +1836,10 @@ class DspClient(GrpcClient):
                 except DspError as e:
                     if handle is not None:
                         raise DspError(
-                            "DSP rejected the blend with a zero-copy frame "
+                            "DSP rejected the blend with a device-resident "
                             "base — refusing the silent CPU fallback (the "
-                            "frame holds fds, not pixels; use "
-                            "frame.to_array() to accept the copy)"
+                            "base holds a buffer id, not pixels; use "
+                            "frame.to_array()/ref.read() to accept the copy)"
                         ) from e
                     if not cpu_fallback:
                         raise
