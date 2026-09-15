@@ -135,3 +135,29 @@ class TestFromModel:
         assert pipe.preprocessor.size == (640, 640)  # derived from the fake spec
         out = pipe.run(np.zeros((1080, 1920, 3), np.uint8))
         assert [o.label for o in out.objects] == ["person"]
+
+    def test_nv12_model_auto_passthrough_feeds_infer_the_ref(self, monkeypatch):
+        # P2-6: an NV12-layout model gets the device-resident leg, and the
+        # DspBufferRef the preprocessor returns is the tensor infer receives
+        # (no RGB copy, no read-back).
+        import neoruntime_ipc_sdk.accel as accel
+        from neoruntime_ipc_sdk import Frame
+
+        sentinel = object()
+        monkeypatch.setattr(accel, "shared_dsp_call", lambda *a, **k: sentinel)
+        client = FakeClient(info=ModelInfo(
+            model_id="m", model_path="x.hef", version="1",
+            inputs=[{"shape": [1, 384, 640, 1], "dtype": 0, "name": "in",
+                     "layout": "NV12"}],
+        ))
+        pipe = InferencePipeline.from_model(
+            "m", client=client,
+            postprocessor=YoloV8Postprocessor(labels=["person"], score_threshold=0.3),
+        )
+        assert pipe.preprocessor.nv12_passthrough is True
+
+        frame = Frame(sequence=1, timestamp_ns=0, width=128, height=96,
+                      format="NV12", image=np.zeros((144, 128), np.uint8))
+        out = pipe.run(frame)
+        assert out.tensor is sentinel
+        assert client.infer_calls[0][1] is None  # a ref, not an ndarray
