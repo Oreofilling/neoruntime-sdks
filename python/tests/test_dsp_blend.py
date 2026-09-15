@@ -476,7 +476,7 @@ class TestValidation:
         )
 
         with mock.patch.object(client, "alloc_buffers") as alloc:
-            with pytest.raises(DspError, match="refuses keep-fd"):
+            with pytest.raises(DspError, match="refuses device-side bases"):
                 client.blend_hw(handle, [(rgba_solid(16, 16), 0, 0)])
             alloc.assert_not_called()  # refused before any pool/import work
 
