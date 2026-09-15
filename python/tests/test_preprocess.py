@@ -183,3 +183,242 @@ class TestReviewFixes:
                      format="NV12", image=np.zeros((72, 64), np.uint8))
         tensor, _ = pre(nv12)
         assert tensor.shape == (32, 32, 3)
+
+
+class TestNv12Passthrough:
+    """P2-6: the device-resident NV12 preprocessing leg."""
+
+    @staticmethod
+    def _nv12_frame(w, h, value=128):
+        return Frame(sequence=1, timestamp_ns=0, width=w, height=h,
+                     format="NV12",
+                     image=np.full((h * 3 // 2, w), value, np.uint8))
+
+    @staticmethod
+    def _fake_router(backend="hardware", policy=None):
+        class _Route:
+            def __init__(self, backend):
+                self.backend = backend
+
+        class _Router:
+            def __init__(self):
+                self.policy = policy
+                self.notes = []
+
+            def route(self, op):
+                return _Route(backend)
+
+            def note_degradation(self, op, reason):
+                self.notes.append((op, reason))
+
+        return _Router()
+
+    # -- constructor contract ------------------------------------------------
+
+    def test_requires_stretch(self):
+        # default resize_mode is letterbox; passthrough must refuse it
+        with pytest.raises(ValueError, match="stretch"):
+            Preprocessor(size=(64, 48), nv12_passthrough=True)
+
+    def test_requires_no_normalize(self):
+        with pytest.raises(ValueError, match="normalize"):
+            Preprocessor(size=(64, 48), resize_mode="stretch", normalize=True,
+                         nv12_passthrough=True)
+
+    def test_requires_nhwc(self):
+        with pytest.raises(ValueError, match="packed NV12"):
+            Preprocessor(size=(64, 48), resize_mode="stretch", layout="NCHW",
+                         nv12_passthrough=True)
+
+    # -- from_model auto-enable ----------------------------------------------
+
+    def test_from_model_auto_enables_for_nv12_layout(self):
+        pre = Preprocessor.from_model(
+            TestFromModel._client([1, 384, 640, 1], layout="NV12"), "m"
+        )
+        assert pre.nv12_passthrough is True
+        assert pre.resize_mode == "stretch"
+        assert pre.size == (640, 384) and pre.layout == "NHWC"
+
+    def test_from_model_respects_resize_mode_override(self):
+        # a caller who pinned letterbox keeps the old behaviour
+        pre = Preprocessor.from_model(
+            TestFromModel._client([1, 384, 640, 1], layout="NV12"), "m",
+            resize_mode="letterbox",
+        )
+        assert pre.nv12_passthrough is False
+        assert pre.resize_mode == "letterbox"
+
+    def test_from_model_respects_explicit_passthrough_false(self):
+        pre = Preprocessor.from_model(
+            TestFromModel._client([1, 384, 640, 1], layout="NV12"), "m",
+            nv12_passthrough=False,
+        )
+        assert pre.nv12_passthrough is False
+
+    def test_from_model_no_auto_enable_for_rgb(self):
+        pre = Preprocessor.from_model(TestFromModel._client([1, 640, 640, 3]), "m")
+        assert pre.nv12_passthrough is False
+
+    def test_from_model_no_auto_enable_for_float_dtype(self):
+        # float implies normalize=True, which passthrough cannot serve
+        pre = Preprocessor.from_model(
+            TestFromModel._client([1, 384, 640, 1], dtype=5, layout="NV12"), "m"
+        )
+        assert pre.nv12_passthrough is False and pre.normalize is True
+
+    # -- device leg ------------------------------------------------------------
+
+    def test_device_leg_returns_ref_and_meta(self, monkeypatch):
+        import neoruntime_ipc_sdk.accel as accel
+
+        calls = []
+        sentinel = object()
+
+        def fake_call(method, *args, **kwargs):
+            calls.append((method, args, kwargs))
+            return sentinel
+
+        monkeypatch.setattr(accel, "shared_dsp_call", fake_call)
+        monkeypatch.setattr(
+            accel, "get_default_router", lambda: self._fake_router()
+        )
+
+        pre = Preprocessor(size=(64, 32), resize_mode="stretch",
+                           nv12_passthrough=True)
+        frame = self._nv12_frame(128, 96)
+        tensor, meta = pre(frame)
+
+        assert tensor is sentinel
+        assert len(calls) == 1
+        method, args, kwargs = calls[0]
+        assert method == "resize_hw"
+        assert args == (frame, 64, 32)
+        assert kwargs == {"fmt": "nv12", "scaling": "stretch",
+                          "out": "ref", "cpu_fallback": False}
+        assert meta.color == "NV12" and meta.layout == "NHWC"
+        assert meta.original_size == (128, 96)
+        assert meta.input_size == (64, 32)
+        assert meta.scale == (0.5, 32 / 96) and meta.origin == (0, 0)
+
+    def test_device_leg_composes_prior_transform(self, monkeypatch):
+        import neoruntime_ipc_sdk.accel as accel
+
+        monkeypatch.setattr(
+            accel, "shared_dsp_call", lambda *a, **k: object()
+        )
+        monkeypatch.setattr(
+            accel, "get_default_router", lambda: self._fake_router()
+        )
+
+        # mid already maps (128, 96) -> (64, 48); the leg's meta must map
+        # model coords all the way back to (128, 96)
+        mid = self._nv12_frame(128, 96).resize(64, 48, mode="stretch")
+        pre = Preprocessor(size=(32, 24), resize_mode="stretch",
+                           nv12_passthrough=True)
+        _, meta = pre(mid)
+        assert meta.original_size == (128, 96)
+        assert meta.scale == (32 / 128, 24 / 96)
+
+    # -- identity ---------------------------------------------------------------
+
+    def test_identity_keepfd_frame_returns_source(self):
+        # dummy handle: the identity branch only checks it is set (the
+        # frame itself is what infer's zero-copy path wants)
+        frame = Frame(sequence=1, timestamp_ns=0, width=64, height=48,
+                      format="NV12", image=None, handle=object())
+        pre = Preprocessor(size=(64, 48), resize_mode="stretch",
+                           nv12_passthrough=True)
+        tensor, meta = pre(frame)
+        assert tensor is frame
+        assert meta.scale == (1.0, 1.0) and meta.origin == (0, 0)
+        assert meta.color == "NV12"
+
+    def test_identity_ndarray_returns_array_not_frame(self):
+        # a handle-less Frame is not a valid infer input — the array must
+        # come back out
+        pre = Preprocessor(size=(64, 48), resize_mode="stretch",
+                           nv12_passthrough=True, source_format="NV12")
+        tensor, meta = pre(np.zeros((72, 64), np.uint8))
+        assert isinstance(tensor, np.ndarray) and tensor.shape == (72, 64)
+        assert not hasattr(tensor, "handle")
+
+    def test_identity_inherits_prior_transform(self):
+        pre = Preprocessor(size=(64, 48), resize_mode="stretch",
+                           nv12_passthrough=True)
+        mid = self._nv12_frame(128, 96).resize(64, 48, mode="stretch")
+        tensor, meta = pre(mid)
+        assert isinstance(tensor, np.ndarray) and tensor.shape == (72, 64)
+        assert meta.original_size == (128, 96)
+        assert meta.scale == (0.5, 0.5)
+
+    # -- fallbacks ----------------------------------------------------------------
+
+    def test_non_nv12_source_rejected(self):
+        pre = Preprocessor(size=(64, 48), resize_mode="stretch",
+                           nv12_passthrough=True)
+        with pytest.raises(ValueError, match="NV12"):
+            pre(make_rgb_frame(64, 64))
+
+    def test_dsp_down_falls_back_to_cpu(self, monkeypatch):
+        import neoruntime_ipc_sdk.accel as accel
+        from neoruntime_ipc_sdk.dsp import DspError
+
+        router = self._fake_router()
+
+        def boom(*a, **k):
+            raise DspError("dsp down")
+
+        monkeypatch.setattr(accel, "shared_dsp_call", boom)
+        monkeypatch.setattr(accel, "get_default_router", lambda: router)
+
+        frame = self._nv12_frame(128, 96)
+        pre = Preprocessor(size=(64, 32), resize_mode="stretch",
+                           nv12_passthrough=True)
+        tensor, meta = pre(frame)
+
+        expected = frame.resize(64, 32, mode="stretch").to_array()
+        assert isinstance(tensor, np.ndarray)
+        assert tensor.shape == expected.shape == (48, 64)
+        assert tensor.tobytes() == expected.tobytes()
+        assert meta.color == "NV12"
+        assert meta.original_size == (128, 96) and meta.origin == (0, 0)
+        assert router.notes and router.notes[0][0] == "resize_nv12"
+
+    def test_software_route_takes_cpu_without_calling_dsp(self, monkeypatch):
+        import neoruntime_ipc_sdk.accel as accel
+
+        def must_not_run(*a, **k):
+            raise AssertionError("router said software; DSP must not be called")
+
+        monkeypatch.setattr(accel, "shared_dsp_call", must_not_run)
+        monkeypatch.setattr(
+            accel, "get_default_router", lambda: self._fake_router(backend="software")
+        )
+
+        frame = self._nv12_frame(128, 96)
+        pre = Preprocessor(size=(64, 32), resize_mode="stretch",
+                           nv12_passthrough=True)
+        tensor, meta = pre(frame)
+        expected = frame.resize(64, 32, mode="stretch").to_array()
+        assert tensor.tobytes() == expected.tobytes()
+        assert meta.scale == (0.5, 32 / 96)
+
+    def test_hardware_only_policy_raises(self, monkeypatch):
+        import neoruntime_ipc_sdk.accel as accel
+        from neoruntime_ipc_sdk.accel import HardwareUnavailable, RoutePolicy
+        from neoruntime_ipc_sdk.dsp import DspError
+
+        def boom(*a, **k):
+            raise DspError("dsp down")
+
+        monkeypatch.setattr(accel, "shared_dsp_call", boom)
+        monkeypatch.setattr(
+            accel, "get_default_router",
+            lambda: self._fake_router(policy=RoutePolicy.HARDWARE_ONLY),
+        )
+
+        pre = Preprocessor(size=(64, 32), resize_mode="stretch",
+                           nv12_passthrough=True)
+        with pytest.raises(HardwareUnavailable, match="hardware-only"):
+            pre(self._nv12_frame(128, 96))

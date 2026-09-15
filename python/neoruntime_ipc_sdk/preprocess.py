@@ -162,6 +162,19 @@ class Preprocessor:
             ``"GRAY8"`` / ``"RGB"`` / ``"BGR"``); 2D arrays require it.
             Case-insensitive. 4-channel (RGBA) arrays are rejected —
             strip alpha (``arr[:, :, :3]``) first.
+        nv12_passthrough: keep the frame in NV12 end to end instead of
+            converting to RGB. The resize rides the DSP and its result
+            stays device-side: the returned "tensor" is a
+            :class:`~neoruntime_ipc_sdk.dsp.DspBufferRef` (``infer``
+            sends its buffer_id — no read-back, no 3-channel copy over
+            the wire), or the source itself at identity geometry. Requires
+            ``resize_mode="stretch"``, ``normalize=False`` and
+            ``layout="NHWC"`` (the daemon's letterbox pads green and its
+            crop placement disagrees with the CPU path, so stretch is
+            the only mode both legs place identically); ``color`` is
+            ignored — :attr:`PreprocessMeta.color` reports ``"NV12"``.
+            Sources must already be NV12. :meth:`from_model` enables it
+            automatically for NV12-layout models.
     """
 
     def __init__(
@@ -173,6 +186,7 @@ class Preprocessor:
         normalize: bool = False,
         layout: str = "NHWC",
         source_format: str | None = None,
+        nv12_passthrough: bool = False,
     ):
         # Normalise first, validate after: "rgb"/"Nchw"/"nv12" are all fine.
         color = color.upper()
@@ -191,6 +205,29 @@ class Preprocessor:
                 f"source_format must be one of {sorted(_SOURCE_FORMATS)}, "
                 f"got {source_format!r}"
             )
+        if nv12_passthrough:
+            # The daemon's DSP letterbox pads Y=U=V=0 (green in YUV, not
+            # neutral) and its SCALE_AND_CROP placement disagrees with the
+            # CPU path by ~21 luma levels (see Frame._hw_resize) — stretch
+            # is the only mode both legs place identically, so passthrough
+            # refuses to guess at the others.
+            if resize_mode != "stretch":
+                raise ValueError(
+                    "nv12_passthrough supports resize_mode='stretch' only "
+                    f"(got {resize_mode!r}): the DSP letterbox pads green "
+                    "and its crop placement differs from the CPU path"
+                )
+            if normalize:
+                raise ValueError(
+                    "nv12_passthrough cannot normalize — NV12 HEF models "
+                    "quantise internally; pass normalize=False"
+                )
+            if layout != "NHWC":
+                raise ValueError(
+                    "nv12_passthrough emits packed NV12 planes "
+                    f"(got layout={layout!r}) — there is no channel "
+                    "dimension to transpose"
+                )
         self.size = size
         self.color = color
         self.resize_mode = resize_mode
@@ -198,6 +235,7 @@ class Preprocessor:
         self.normalize = normalize
         self.layout = layout
         self.source_format = source_format
+        self.nv12_passthrough = nv12_passthrough
 
     @classmethod
     def from_model(cls, client: Any, model_id: str, **overrides: Any) -> Preprocessor:
@@ -221,6 +259,18 @@ class Preprocessor:
         normalize = _dtype_str(inp.get("dtype")).startswith("float")
 
         kwargs: dict[str, Any] = dict(size=size, layout=layout, normalize=normalize)
+        if (
+            (inp.get("layout") or "").upper() == "NV12"
+            and not normalize
+            and "nv12_passthrough" not in overrides
+            and "resize_mode" not in overrides
+        ):
+            # NV12-layout model: the RGB path cannot serve it (3-channel
+            # arrays fail the model's byte_size) — route through the
+            # device-resident NV12 leg instead. Callers who pinned
+            # resize_mode keep their choice (and the old behaviour).
+            overrides["nv12_passthrough"] = True
+            overrides["resize_mode"] = "stretch"
         kwargs.update(overrides)
         return cls(**kwargs)
 
@@ -243,6 +293,9 @@ class Preprocessor:
         if self.size is None:
             raise ValueError("no target size — construct via from_model() or pass size=")
         frame = self._as_frame(source)
+
+        if self.nv12_passthrough:
+            return self._nv12_passthrough(frame)  # type: ignore[return-value]
 
         if (frame.width, frame.height) == self.size:
             resized = frame
@@ -283,6 +336,110 @@ class Preprocessor:
             layout=self.layout,
         )
         return arr, meta
+
+    def _nv12_passthrough(self, frame: Frame) -> tuple[Any, PreprocessMeta]:
+        """Device-resident NV12 leg: resize to the model box, no RGB.
+
+        Returns ``(ref, meta)`` where ``ref`` is a
+        :class:`~neoruntime_ipc_sdk.dsp.DspBufferRef` whose pixels never
+        left the device (``infer`` sends its buffer_id), or the source
+        itself at identity geometry. Falls back to the CPU stretch
+        (same geometry, pixels as a packed NV12 array) when the DSP leg
+        is unavailable and the router policy allows it — the fallback
+        contract is the tensor an NV12 model accepts either way.
+        """
+        if frame.format != "NV12":
+            raise ValueError(
+                f"nv12_passthrough needs NV12 sources, got {frame.format!r} "
+                "— drop nv12_passthrough to convert through RGB"
+            )
+        tw, th = self.size
+        sw, sh = frame.width, frame.height
+
+        if (sw, sh) == (tw, th):
+            # Identity: the source already IS the model input. A keep-fd
+            # frame feeds infer's zero-copy path as-is; an array source
+            # must come back as the array (a handle-less Frame is not a
+            # valid infer input). Either way inherit any prior transform
+            # so postprocessing still maps to the ORIGINAL frame.
+            prev = frame.metadata.get("transform")
+            if isinstance(prev, dict) and "scale" in prev and "origin" in prev:
+                original_size, scale, origin = (
+                    prev["src_size"], prev["scale"], prev["origin"]
+                )
+            else:
+                original_size, scale, origin = (tw, th), (1.0, 1.0), (0, 0)
+            tensor = frame if frame.handle is not None else frame.to_array()
+            return tensor, self._passthrough_meta(original_size, scale, origin)
+
+        from .accel import (  # lazy: accel imports frame
+            HardwareUnavailable,
+            RoutePolicy,
+            get_default_router,
+            shared_dsp_call,
+        )
+        from .dsp import DspError  # lazy: dsp imports media
+        from .frame import _compose_transform, _resize_transform
+
+        router = get_default_router()
+        try:
+            wants_hw = router.route("resize_nv12").backend == "hardware"
+        except KeyError:
+            wants_hw = True  # unregistered op: keep the historical attempt
+
+        ref = None
+        if wants_hw:
+            try:
+                ref = shared_dsp_call(
+                    "resize_hw", frame, tw, th,
+                    fmt="nv12", scaling="stretch",
+                    out="ref", cpu_fallback=False,
+                )
+            except DspError as exc:
+                if router.policy is RoutePolicy.HARDWARE_ONLY:
+                    raise HardwareUnavailable(
+                        f"nv12_passthrough: DSP resize failed ({exc}) and "
+                        "the policy is hardware-only — refusing the silent "
+                        "CPU fallback"
+                    ) from exc
+                router.note_degradation(
+                    "resize_nv12", f"nv12_passthrough DSP leg unavailable: {exc}"
+                )
+        if ref is not None:
+            transform = _resize_transform(
+                (sw, sh), (tw, th), "stretch", tw, th, 0, 0
+            )
+            prev = frame.metadata.get("transform")
+            if isinstance(prev, dict) and "scale" in prev and "origin" in prev:
+                transform = _compose_transform(prev, transform)
+            return ref, self._passthrough_meta(
+                transform["src_size"], transform["scale"], transform["origin"]
+            )
+
+        # CPU fallback: same stretch geometry, packed NV12 array out.
+        # (A keep-fd frame still scales on the DSP inside Frame.resize —
+        # this leg only gives up the device-resident output, not the
+        # hardware scale.)
+        resized = frame.resize(tw, th, mode="stretch")
+        transform = resized.metadata["transform"]
+        return resized.to_array(), self._passthrough_meta(
+            transform["src_size"], transform["scale"], transform["origin"]
+        )
+
+    def _passthrough_meta(
+        self,
+        original_size: tuple[int, int],
+        scale: tuple[float, float],
+        origin: tuple[int, int],
+    ) -> PreprocessMeta:
+        return PreprocessMeta(
+            original_size=original_size,
+            input_size=self.size,
+            scale=scale,
+            origin=origin,
+            color="NV12",
+            layout="NHWC",
+        )
 
     def _to_color(self, frame: Frame) -> np.ndarray:
         fmt = frame.format
