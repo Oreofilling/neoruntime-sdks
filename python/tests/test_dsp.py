@@ -875,6 +875,142 @@ class TestBufferRef:
             client.encode_jpeg_hw(ref, quality=85)
 
 
+# ------------------------------------------------------- blend destination (P2-5) --
+class TestBlendDst:
+    """out= destinations for blend_hw: a caller pool slot (the zero-copy
+    publish tail) and the ref form (annotated pixels stay device-side)."""
+
+    def _client(self):
+        client = DspClient()
+        patched_alloc(client)
+        client._stub = RecordingStub()
+        client._send_release = mock.Mock()
+        return client
+
+    @staticmethod
+    def _opaque_overlay():
+        ov = np.zeros((16, 16, 4), np.uint8)
+        ov[..., 3] = 255
+        return ov
+
+    def test_blend_out_pool_ref_base_wire(self):
+        # the publish chain: ref base -> RESIZE into the caller's slot ->
+        # BLEND in place there; no base alloc, no read-back, no release
+        client = self._client()
+        ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                               out="ref")
+        dst = make_pool(client, 32, 16, "nv12", 2, id_base=7777)
+        client._send_release.reset_mock()
+        client._import_source = mock.Mock()
+        client._import_memfd = mock.Mock(return_value=2000)
+
+        out = client.blend_hw(ref, [(self._opaque_overlay(), 0, 0)],
+                              zero_copy=True, out=dst, dst_slot=1)
+
+        assert out is None
+        reqs = client._stub.requests[-2:]
+        assert [r.op for r in reqs] == [
+            camera_pb2.DSP_OP_RESIZE, camera_pb2.DSP_OP_BLEND,
+        ]
+        # copy leg lands in the caller's slot 1 (7778) — not a fresh alloc
+        assert reqs[0].src_buffer_id == 1001
+        assert list(reqs[0].dst_buffer_ids) == [7778]
+        client._import_source.assert_not_called()
+        # blend composites in place on that same slot
+        assert reqs[1].src_buffer_id == 7778
+        assert list(reqs[1].dst_buffer_ids) == [2000]  # overlay memfd
+        # only the overlay import went back; the caller pool is untouched
+        assert [c.args[0] for c in client._send_release.call_args_list] == [2000]
+        assert dst._released is False
+        assert dst.read(1).shape == (16 * 3 // 2, 32)  # slot stays usable
+        ref.release()
+
+    def test_blend_out_pool_array_base_writes_slot(self):
+        client = self._client()
+        dst = make_pool(client, 32, 16, "nv12", 1, id_base=8800)
+        client._import_memfd = mock.Mock(return_value=2000)
+
+        out = client.blend_hw(nv12_array(32, 16),
+                              [(self._opaque_overlay(), 0, 0)], out=dst)
+
+        assert out is None
+        # array base: no RESIZE leg — the pixels were written into the
+        # caller's slot, the blend runs on it
+        reqs = client._stub.requests[-1:]
+        assert reqs[0].op == camera_pb2.DSP_OP_BLEND
+        assert reqs[0].src_buffer_id == 8800
+        assert [c.args[0] for c in client._send_release.call_args_list] == [2000]
+        assert dst.read(0).shape == (16 * 3 // 2, 32)
+
+    def test_blend_out_pool_geometry_and_fmt_mismatch(self):
+        client = self._client()
+        wrong = make_pool(client, 64, 32, "nv12", 1, id_base=8800)
+        with pytest.raises(DspError, match="blend keeps dims"):
+            client.blend_hw(nv12_array(32, 16),
+                            [(self._opaque_overlay(), 0, 0)], out=wrong)
+        rgb = make_pool(client, 32, 16, "rgb24", 1, id_base=8801)
+        with pytest.raises(DspError, match="nv12"):
+            client.blend_hw(nv12_array(32, 16),
+                            [(self._opaque_overlay(), 0, 0)], out=rgb)
+        assert client._stub.requests == []  # refused before any wire work
+
+    def test_blend_out_pool_slot_range(self):
+        client = self._client()
+        dst = make_pool(client, 32, 16, "nv12", 2, id_base=7777)
+        with pytest.raises(DspError, match="outside the dst_pool"):
+            client.blend_hw(nv12_array(32, 16),
+                            [(self._opaque_overlay(), 0, 0)], out=dst,
+                            dst_slot=2)
+
+    def test_blend_out_ref_returns_ref(self):
+        client = self._client()
+        client._import_memfd = mock.Mock(return_value=2000)
+        ref = client.blend_hw(nv12_array(32, 16),
+                              [(self._opaque_overlay(), 0, 0)], out="ref")
+        assert isinstance(ref, DspBufferRef)
+        assert (ref.width, ref.height, ref.fmt) == (32, 16, "nv12")
+        assert ref.buffer_id == 1000  # the blend's own base pool
+        assert ref.read().shape == (16 * 3 // 2, 32)
+        client._send_release.assert_not_called()  # owns it until released
+        ref.release()
+        # base pool + overlay import go back, in own order
+        assert [c.args[0] for c in client._send_release.call_args_list] == \
+            [1000, 2000]
+
+    def test_blend_out_mode_validation(self):
+        client = self._client()
+        base, ov = nv12_array(32, 16), [(self._opaque_overlay(), 0, 0)]
+        with pytest.raises(DspError, match="None, 'ref' or a DspBufferPool"):
+            client.blend_hw(base, ov, out="pool")
+        dst = make_pool(client, 32, 16, "nv12", 1, id_base=7777)
+        with pytest.raises(DspError, match="wait=False"):
+            client.blend_hw(base, ov, out=dst, wait=False)
+        with pytest.raises(DspError, match="wait=False"):
+            client.blend_hw(base, ov, out="ref", wait=False)
+        assert client._stub.requests == []
+
+    def test_blend_out_pool_cpu_fallback_writes_slot(self):
+        # an array base with out=pool must land its pixels in the slot
+        # even when the blend falls back to CPU — the destination
+        # contract holds on every path
+        client = self._client()
+        dst = make_pool(client, 32, 16, "nv12", 1, id_base=8800)
+        client._import_memfd = mock.Mock(return_value=2000)
+        client._submit_job = mock.Mock(
+            side_effect=dsp._DspUnavailable("dsp service down")
+        )
+        base = nv12_array(32, 16, seed=3)
+        overlay = np.zeros((16, 16, 4), np.uint8)
+        overlay[..., 0] = 200  # R
+        overlay[..., 3] = 255  # opaque
+        with pytest.warns(UserWarning, match="CPU fallback"):
+            out = client.blend_hw(base, [(overlay, 0, 0)], out=dst)
+        assert out is None
+        np.testing.assert_array_equal(
+            dst.read(0), dsp._cpu_blend(base, "nv12", [(overlay, 0, 0)])
+        )
+
+
 # -------------------------------------------------- blend overlay prep (P2-4) --
 class TestBlendOverlayPrep:
     """Transparent padding: 16px daemon floor + even-height DSP contract.

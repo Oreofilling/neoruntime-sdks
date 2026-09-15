@@ -147,13 +147,23 @@ def _warn_bgr_convert(src: JobSource) -> None:
         )
 
 
-def _check_out_mode(out: str | None, wait: bool) -> None:
-    """Validate the ``out=`` parameter shared by the sync ``*_hw`` methods."""
-    if out not in (None, "ref"):
-        raise DspError(f"out must be None or 'ref', got {out!r}")
-    if out == "ref" and not wait:
+def _check_out_mode(out: "str | DspBufferPool | None", wait: bool, allow_pool: bool = False) -> None:
+    """Validate the ``out=`` parameter shared by the sync ``*_hw`` methods.
+
+    ``allow_pool`` (blend_hw) additionally accepts a caller-owned
+    :class:`DspBufferPool` as the destination — the result then stays in
+    that pool's ``dst_slot`` instead of coming back here.
+    """
+    if not (
+        out is None
+        or out == "ref"
+        or (allow_pool and isinstance(out, DspBufferPool))
+    ):
+        want = "None, 'ref' or a DspBufferPool" if allow_pool else "None or 'ref'"
+        raise DspError(f"out must be {want}, got {out!r}")
+    if out is not None and not wait:
         raise DspError(
-            "out='ref' is the sync no-read-back form; wait=False already "
+            "out= is the sync no-read-back form; wait=False already "
             "returns a PendingDspJob whose wait_result() keeps the result "
             "device-side"
         )
@@ -1665,7 +1675,9 @@ class DspClient(GrpcClient):
         cpu_fallback: bool = True,
         wait: bool = True,
         zero_copy: bool = False,
-    ) -> np.ndarray | PendingDspJob:
+        out: "str | DspBufferPool | None" = None,
+        dst_slot: int = 0,
+    ) -> np.ndarray | PendingDspJob | DspBufferRef | None:
         """Composite ARGB32 ``overlays`` onto an NV12 ``base`` on the DSP (P1).
 
         ``overlays`` is a sequence of ``(rgba, x, y)`` — an ``(h, w, 4)``
@@ -1704,9 +1716,28 @@ class DspClient(GrpcClient):
         order is ARGB32 ([A, R, G, B] per pixel); the RGBA->ARGB pack is
         internal. ``wait=False`` submits the blend (and the keep-fd copy
         leg) without blocking and returns a :class:`PendingDspJob`.
+
+        ``out=`` picks the destination (sync path only):
+
+        * ``None`` (default) — read the annotated pixels back as an
+          ndarray.
+        * ``"ref"`` — skip the read-back; return a :class:`DspBufferRef`
+          wrapping the annotated buffer (chain its ``buffer_id`` into
+          ``encode_jpeg_hw`` or another ``*_hw`` call, ``read()`` on
+          demand).
+        * a :class:`DspBufferPool` — blend straight into the caller's
+          pool at ``dst_slot`` and return ``None``: no allocation, no
+          read-back, nothing released (the pool stays the caller's).
+          The pool must match the base geometry and be NV12 (blend keeps
+          dims). This is the zero-copy publish tail — a
+          :class:`~neoruntime_ipc_sdk.injection.FramePublisher` pool
+          slot filled here is pushed with ``push_slot`` — and with an
+          array base the CPU fallback (if taken) writes the slot too, so
+          the destination contract holds on every path.
         """
         if fmt is not None and fmt != "nv12":
             raise DspError(f"BLEND base must be nv12 (daemon contract), got {fmt!r}")
+        _check_out_mode(out, wait, allow_pool=True)
         # fmt is nv12 by definition — never leave it to shape inference
         # (a 2D nv12 array would ambiguously infer gray8)
         bw, bh, handle, fmt = _resolve_source(base, "nv12")
@@ -1721,6 +1752,19 @@ class DspClient(GrpcClient):
                 "force the chain at your own risk."
             )
         _validate_geometry(bw, bh, fmt, "base")
+        dst_pool: DspBufferPool | None = out if isinstance(out, DspBufferPool) else None
+        if dst_pool is not None:
+            if (dst_pool.width, dst_pool.height, dst_pool.fmt) != (bw, bh, "nv12"):
+                raise DspError(
+                    f"dst_pool is {dst_pool.width}x{dst_pool.height} "
+                    f"{dst_pool.fmt}, job needs {bw}x{bh} nv12 "
+                    "(blend keeps dims)"
+                )
+            if not 0 <= dst_slot < dst_pool.count:
+                raise DspError(
+                    f"dst_slot {dst_slot} outside the dst_pool's "
+                    f"{dst_pool.count} slots"
+                )
         if not overlays:
             raise DspError("BLEND needs at least one overlay")
         if len(overlays) > _MAX_BATCH:
@@ -1767,8 +1811,15 @@ class DspClient(GrpcClient):
             own: list[object] = []
             handed = False
             try:
-                base_pool = self.alloc_buffers(bw, bh, "nv12", 1)
-                own.append(base_pool)
+                if dst_pool is not None:
+                    # caller-owned destination (P2-5): every leg targets
+                    # this exact slot, so nothing is allocated here, and
+                    # nothing may release it — the pool outlives the call
+                    base_pool, base_slot = dst_pool, dst_slot
+                else:
+                    base_pool = self.alloc_buffers(bw, bh, "nv12", 1)
+                    own.append(base_pool)
+                    base_slot = 0
                 if handle is not None:
                     # device-side base: a DspBufferRef rides its daemon
                     # id directly (P2-4 — no import, borrowed like any
@@ -1794,7 +1845,7 @@ class DspClient(GrpcClient):
                     self._submit_job(
                         _OP_RESIZE,
                         src.buffer_id(0),
-                        [base_pool.buffer_id(0)],
+                        [base_pool.buffer_id(base_slot)],
                         [],
                         "bilinear",
                         "stretch",
@@ -1802,7 +1853,7 @@ class DspClient(GrpcClient):
                         timeout_s,
                     )
                 else:
-                    base_pool.write(0, _as_pixels(base))
+                    base_pool.write(base_slot, _as_pixels(base))
                 # Overlays travel as memfd imports, not pool allocs:
                 # some deployed HALs reject ARGB32 pool allocation
                 # (rc=-2809) while the DSP itself blends ARGB
@@ -1820,7 +1871,7 @@ class DspClient(GrpcClient):
                 try:
                     job_id = self._submit_job(
                         _OP_BLEND,
-                        base_pool.buffer_id(0),
+                        base_pool.buffer_id(base_slot),
                         [s.buffer_id(0) for s in ov_srcs],
                         [  # placement rect: (x, y, w, h, dst repeats w, h)
                             (x, y, rgba.shape[1], rgba.shape[0],
@@ -1850,14 +1901,23 @@ class DspClient(GrpcClient):
                         stacklevel=3,
                     )
                     self.last_used_hw = False
-                    return _cpu_blend(_as_pixels(base), fmt, prepared)
+                    return self._blend_or_write_dst(
+                        dst_pool, dst_slot,
+                        _cpu_blend(_as_pixels(base), fmt, prepared))
                 self.last_used_hw = True
                 if not wait:
                     handed = True
                     return PendingDspJob(
-                        self, [(base_pool, 0)], job_id, own, timeout_s
+                        self, [(base_pool, base_slot)], job_id, own, timeout_s
                     )
-                return base_pool.read(0)  # blend ran in place on the copy
+                if dst_pool is not None:
+                    # the annotated pixels ARE the caller's pool slot —
+                    # device-resident by construction, nothing to return
+                    return None
+                if out == "ref":
+                    handed = True
+                    return DspBufferRef(self, base_pool, base_slot, own)
+                return base_pool.read(base_slot)  # blend ran in place on the copy
             finally:
                 if not handed:
                     self._release_owned(own)
@@ -1877,7 +1937,27 @@ class DspClient(GrpcClient):
                 stacklevel=3,
             )
             self.last_used_hw = False
-            return _cpu_blend(_as_pixels(base), fmt, prepared)
+            return self._blend_or_write_dst(
+                dst_pool, dst_slot, _cpu_blend(_as_pixels(base), fmt, prepared))
+
+    @staticmethod
+    def _blend_or_write_dst(
+        dst_pool: "DspBufferPool | None", dst_slot: int, blended: np.ndarray
+    ) -> np.ndarray | None:
+        """blend_hw fallback tail: keep the ``out=pool`` contract on CPU.
+
+        The hardware legs land the pixels in the caller's pool slot by
+        construction; a CPU fallback must too, or a pool-destination
+        caller would get an ndarray it promised not to receive and a
+        slot that never updated. Array bases are the only ones that
+        reach a fallback (device-side bases raise above), and their
+        pixels are right here — one ``pool.write`` restores the
+        contract.
+        """
+        if dst_pool is None:
+            return blended
+        dst_pool.write(dst_slot, blended)
+        return None
 
     def encode_jpeg_hw(
         self,

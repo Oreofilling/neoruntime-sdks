@@ -1188,3 +1188,85 @@ class TestFramePublisherLease:
         pub.publish_rgb(rgb)
         assert len(dsp.convert_calls) == 2
         assert len(cam.pushes) == 2
+
+
+class TestFramePublisherZeroCopy:
+    """P2-5 device-side chain: the pool is exposed for DSP writes, a slot
+    can be reserved lease-aware, and push_slot publishes by id with no
+    client-side write."""
+
+    def _pub(self, results=None, statuses=None, depth=2):
+        pool = FakePool(1280, 720, depth)
+        cam = FakeCamera([_stream()], results=results, statuses=statuses)
+        pub = FramePublisher(
+            cam, FakeDsp(pool), stream_id="sub", pool_depth=depth
+        )
+        return pub, cam, pool
+
+    def test_pool_property_exposes_the_publish_pool(self):
+        pub, _, pool = self._pub()
+        assert pub.pool is pool
+        pub.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            pub.pool
+
+    def test_acquire_push_chain_skips_in_flight_slot(self):
+        results = [
+            _lease_result((100,), 1),  # pushing slot 0 puts it in flight
+        ]
+        statuses = [_lease_status()]  # ctor probe enables lease mode
+        pub, cam, pool = self._pub(results=results, statuses=statuses)
+        assert pub.lease_mode is True
+
+        assert pub.acquire_slot() == 0  # nothing in flight yet
+        pub.push_slot(0)                # response leases id 100 (slot 0)
+        assert pub.acquire_slot() == 1  # the busy slot is skipped
+        assert pool.writes == []        # no client-side pixels anywhere
+
+    def test_acquire_slot_legacy_rotates_blindly(self):
+        pub, _, _ = self._pub()
+        assert pub.lease_mode is False
+        assert [pub.acquire_slot() for _ in range(3)] == [0, 1, 0]
+
+    def test_push_slot_pushes_by_id_without_write(self):
+        pub, cam, pool = self._pub()
+        res = pub.push_slot(pub.acquire_slot(), pts_ns=77)
+        assert res.success
+        assert pool.writes == []
+        push = cam.pushes[0]
+        assert push["buffer_id"] == pool.ids[0]
+        assert push["pts_ns"] == 77
+        assert (push["width"], push["height"]) == (1280, 720)
+        assert push["end_of_stream"] is False
+
+    def test_push_slot_request_matches_publish_except_the_write(self):
+        pub, cam, pool = self._pub()
+        f = np.zeros((720 * 3 // 2, 1280), dtype=np.uint8)
+        pub.publish(f)  # writes slot 0, pushes id 100
+        pub.push_slot(1)
+        assert len(pool.writes) == 1  # publish wrote; push_slot did not
+        a, b = cam.pushes[0], cam.pushes[1]
+        stripped = [
+            {k: v for k, v in p.items() if k != "buffer_id"} for p in (a, b)
+        ]
+        assert stripped[0] == stripped[1]
+        assert (a["buffer_id"], b["buffer_id"]) == (100, 101)
+
+    def test_push_slot_updates_lease_set_and_published_any(self):
+        results = [_lease_result((100,), 1)]
+        statuses = [_lease_status()]
+        pub, _, _ = self._pub(results=results, statuses=statuses)
+        assert pub._in_flight == set()
+        pub.push_slot(0)
+        assert pub._in_flight == {100}
+        assert pub._published_any is True
+
+    def test_push_slot_rejects_out_of_range_and_closed(self):
+        pub, _, _ = self._pub()
+        with pytest.raises(ValueError, match="outside the pool"):
+            pub.push_slot(2)
+        pub.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            pub.push_slot(0)
+        with pytest.raises(RuntimeError, match="closed"):
+            pub.acquire_slot()

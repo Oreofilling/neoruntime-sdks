@@ -17,7 +17,7 @@ import numpy as np
 
 from .camera import CameraClient
 from .camera_types import InjectionResult
-from .dsp import DspClient
+from .dsp import DspBufferPool, DspClient
 
 __all__ = ["FramePublisher"]
 
@@ -312,6 +312,15 @@ class FramePublisher:
             self._slot = (slot + 1) % self._pool_depth
         self._pool.write(slot, arr)
         self._published_any = True
+        return self._push(slot, pts_ns)
+
+    def _push(self, slot: int, pts_ns: int) -> InjectionResult:
+        """Push one written pool slot by id and absorb the lease snapshot.
+
+        The shared tail of :meth:`publish` (slot written client-side)
+        and :meth:`push_slot` (slot written on the DSP): the buffer
+        crosses as its DSP-registry id, never as bytes.
+        """
         res = self._camera.push_frame(
             buffer_id=self._pool.buffer_id(slot),
             width=self._width,
@@ -328,6 +337,63 @@ class FramePublisher:
         if self._lease:
             self._in_flight = set(res.in_flight_buffer_ids)
         return res
+
+    # -- zero-copy chain (P2-5) ----------------------------------------------
+
+    @property
+    def pool(self) -> DspBufferPool:
+        """The publisher's daemon-side pool — the slots PushFrame accepts.
+
+        Exposed for device-side chains: a DSP job can write this pool
+        directly (``dsp.blend_hw(..., out=pub.pool, dst_slot=slot)``)
+        and the frame is publishable without a single client-side pixel.
+        The pool dies with the publisher — :meth:`close` releases it —
+        so hold the publisher open for as long as any writer targets it.
+        """
+        if self._closed:
+            raise RuntimeError("FramePublisher is closed")
+        return self._pool
+
+    def acquire_slot(self) -> int:
+        """Reserve one pool slot for a device-side write.
+
+        The lease-aware half of the zero-copy chain: on daemons
+        reporting the write-lease set the returned slot's buffer id is
+        absent from the queued+mid-bake in-flight set — the same rule
+        :meth:`publish` applies before writing — so a DSP job may
+        safely target it. Legacy daemons get the blind rotation; the
+        caller owns the pacing there. The reservation is client-side
+        bookkeeping only: the daemon learns the slot is in flight from
+        the subsequent :meth:`push_slot` response, so push the slot
+        promptly — an acquired-but-never-pushed slot is invisible to the
+        lease set and may be handed out again.
+        """
+        if self._closed:
+            raise RuntimeError("FramePublisher is closed")
+        if self._lease:
+            return self._acquire_slot()
+        slot = self._slot
+        self._slot = (slot + 1) % self._pool_depth
+        return slot
+
+    def push_slot(self, slot: int, pts_ns: int = 0) -> InjectionResult:
+        """Push one already-written pool slot by id (no client write).
+
+        The zero-copy publish tail: the slot's pixels were produced on
+        the DSP straight into :attr:`pool` (``blend_hw(...,
+        out=self.pool, dst_slot=slot)`` — or any ``*_hw`` call taking
+        it as ``dst_pool``), so publishing is only the PushFrame RPC.
+        The request is byte-identical to :meth:`publish`'s; only the
+        write is skipped, and the lease snapshot updates the same way.
+        """
+        if self._closed:
+            raise RuntimeError("FramePublisher is closed")
+        if not 0 <= slot < self._pool_depth:
+            raise ValueError(
+                f"slot {slot} outside the pool's {self._pool_depth} slots"
+            )
+        self._published_any = True
+        return self._push(slot, pts_ns)
 
     def publish_stream(
         self,
