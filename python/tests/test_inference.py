@@ -974,3 +974,134 @@ class TestInferWithFrame:
             assert len(request.inputs[0].data) > 0
         finally:
             _stop_fake_loop(client, thread)
+
+
+class _FakeRefPool:
+    """Minimal DspBufferPool stand-in: geometry + id + release flag."""
+
+    def __init__(self, width=640, height=384, fmt="nv12", buf_id=1001):
+        self.width = width
+        self.height = height
+        self.fmt = fmt
+        self._released = False
+        self._buf_id = buf_id
+
+    def buffer_id(self, index):
+        return self._buf_id
+
+    def read(self, index):
+        return np.zeros((self.height * 3 // 2, self.width), dtype=np.uint8)
+
+    def release(self):
+        self._released = True
+
+
+def _dsp_ref(width=640, height=384, fmt="nv12", buf_id=1001):
+    from neoruntime_ipc_sdk.dsp import DspBufferRef
+
+    return DspBufferRef(
+        client=Mock(), pool=_FakeRefPool(width, height, fmt, buf_id),
+        index=0, owns=[],
+    )
+
+
+class TestInferWithRef:
+    """infer()/infer_async() with device-resident DspBufferRef inputs.
+
+    The ref's daemon id rides Tensor.buffer_id like the frame path, but
+    it is *borrowed*: no DSP_IMPORT happens and the id must NOT be
+    released after the RPC — the buffer belongs to the ref's caller.
+    """
+
+    def _client(self, stub):
+        client, thread = _client_with_fake_loop()
+        client.stub = stub
+        dsp = Mock()
+        dsp.import_frame.return_value = 777
+        client._dsp = dsp
+        return client, thread, dsp
+
+    def test_ref_rides_buffer_id_without_import_or_release(self):
+        from neoruntime_ipc_sdk.proto import inference_pb2
+
+        client, thread, dsp = self._client(_FakeInferStub())
+        ref = _dsp_ref(width=640, height=384, buf_id=1001)
+        try:
+            result = client.infer(ref, "yolov8n")
+
+            assert isinstance(result, InferenceResult)
+            # the ref's own daemon id, sent directly — nothing imported
+            dsp.import_frame.assert_not_called()
+
+            (request,) = client.stub.requests
+            tensor = request.inputs[0]
+            assert tensor.buffer_id == 1001
+            assert tensor.dtype == inference_pb2.UINT8
+            assert list(tensor.shape) == [384 * 3 // 2, 640]
+            assert tensor.data == b""  # no pixels on the wire
+
+            # borrowed id: the inference client must not detach the
+            # caller's buffer, and the ref stays alive for its owner
+            dsp.release_buffer.assert_not_called()
+            assert ref.released is False
+        finally:
+            _stop_fake_loop(client, thread)
+
+    def test_released_ref_rejected(self):
+        client, thread, dsp = self._client(_FakeInferStub())
+        ref = _dsp_ref()
+        ref.release()
+        try:
+            with pytest.raises(ValueError, match="released"):
+                client.infer(ref, "yolov8n")
+
+            assert client.stub.requests == []  # no RPC went out
+            dsp.import_frame.assert_not_called()
+            dsp.release_buffer.assert_not_called()
+        finally:
+            _stop_fake_loop(client, thread)
+
+    def test_non_nv12_ref_rejected(self):
+        client, thread, dsp = self._client(_FakeInferStub())
+        ref = _dsp_ref(fmt="rgb")
+        try:
+            with pytest.raises(ValueError, match="NV12"):
+                client.infer(ref, "yolov8n")
+
+            assert client.stub.requests == []
+            dsp.import_frame.assert_not_called()
+        finally:
+            _stop_fake_loop(client, thread)
+
+    def test_pool_released_underneath_ref_raises(self):
+        # A live ref whose pool was freed: buffer_id access fails loudly
+        # before any RPC can reference a dangling buffer.
+        from neoruntime_ipc_sdk.dsp import DspError
+
+        client, thread, dsp = self._client(_FakeInferStub())
+        ref = _dsp_ref()
+        ref._pool._released = True
+        try:
+            with pytest.raises(DspError, match="pool was released"):
+                client.infer(ref, "yolov8n")
+
+            assert client.stub.requests == []
+        finally:
+            _stop_fake_loop(client, thread)
+
+    def test_infer_async_ref_takes_plain_path_no_release(self):
+        # No release wrapper is needed for a borrowed id: the future
+        # resolves like the array fast path and nothing is released.
+        client, thread, dsp = self._client(_FakeInferStub())
+        ref = _dsp_ref(buf_id=4242)
+        try:
+            fut = client.infer_async(ref, "yolov8n")
+            result = fut.result(timeout=2)
+
+            assert isinstance(result, InferenceResult)
+            (request,) = client.stub.requests
+            assert request.inputs[0].buffer_id == 4242
+            dsp.release_buffer.assert_not_called()
+            assert ref.released is False
+        finally:
+            _stop_fake_loop(client, thread)
