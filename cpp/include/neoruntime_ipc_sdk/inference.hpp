@@ -278,6 +278,10 @@ public:
 
     // ---- Statistics ----
     InferenceSystemStats get_stats();
+    // sampling_window_ms bounds the blocking HAL sampling window behind the
+    // utilization figures (0 = server default; the server clamps explicit
+    // values to [1, 5000] ms).
+    InferenceSystemStats get_stats(std::uint32_t sampling_window_ms);
 
     // ---- Sessions ----
     std::string create_session(const std::string& session_id,
