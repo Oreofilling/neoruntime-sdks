@@ -19,6 +19,7 @@ from neoruntime_ipc_sdk import dsp
 from neoruntime_ipc_sdk.dsp import (
     DSP_SERVICE_UNAVAILABLE,
     DspBufferPool,
+    DspBufferRef,
     DspClient,
     DspError,
     alloc_request_bytes,
@@ -659,3 +660,154 @@ class TestImportExchange:
         monkeypatch.setattr(dsp, "_recvmsg_with_fds", stall)
         with pytest.raises(DspError, match="DSP_IMPORT"):
             client._import_source(make_handle(64, 32), 64, 32, "nv12")
+
+
+# --------------------------------------------------------- out="ref" (P2-2) --
+class TestBufferRef:
+    """Device-resident sync results: DspBufferRef out/ref-source wiring."""
+
+    def _ref_client(self):
+        client = DspClient()
+        patched_alloc(client)
+        client._stub = RecordingStub()
+        client._send_release = mock.Mock()
+        return client
+
+    def test_resize_out_ref_returns_ref_without_readback_release(self):
+        client = self._ref_client()
+        ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                               out="ref")
+        assert isinstance(ref, DspBufferRef)
+        assert (ref.width, ref.height, ref.fmt) == (32, 16, "nv12")
+        # dst pool id (src alloc'd first: 1000 src, 1001 dst)
+        assert ref.buffer_id == 1001
+        # alive ref owns its buffers — nothing released yet
+        client._send_release.assert_not_called()
+        assert ref.released is False
+
+    def test_ref_read_matches_sync_shape_and_release_frees_all(self):
+        client = self._ref_client()
+        ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                               out="ref")
+        arr = ref.read()
+        assert arr.shape == (16 * 3 // 2, 32) and arr.dtype == np.uint8
+        ref.release()
+        # both the temp src pool and the dst pool go back to the daemon
+        assert [c.args[0] for c in client._send_release.call_args_list] \
+            == [1000, 1001]
+        ref.release()  # idempotent
+        assert len(client._send_release.call_args_list) == 2
+        with pytest.raises(DspError, match="released"):
+            ref.read()
+        with pytest.raises(DspError, match="released"):
+            ref.buffer_id
+
+    def test_ref_is_context_manager(self):
+        client = self._ref_client()
+        with client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                              out="ref") as ref:
+            assert ref.buffer_id == 1001
+        assert ref.released is True
+        assert len(client._send_release.call_args_list) == 2
+
+    def test_ref_as_source_uses_id_without_import_or_copy_in(self):
+        client = self._ref_client()
+        ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                               out="ref")
+        client._send_release.reset_mock()
+        client._import_source = mock.Mock()
+
+        small = client.resize_hw(ref, 16, 16)  # ref consumed as plain src
+
+        req = client._stub.requests[-1]
+        assert req.src_buffer_id == 1001  # the ref's daemon buffer, direct
+        client._import_source.assert_not_called()
+        # only the new dst was allocated; nothing re-imported or copied in
+        assert small.shape == (16 * 3 // 2, 16)
+        # borrow semantics: the ref was NOT consumed by being a source
+        # (only the second call's own temp dst was released)
+        assert [c.args[0] for c in client._send_release.call_args_list] \
+            == [1002]
+        assert ref.released is False
+        ref.release()
+
+    def test_released_ref_as_source_raises(self):
+        client = self._ref_client()
+        ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                               out="ref")
+        ref.release()
+        with pytest.raises(DspError, match="released"):
+            client.resize_hw(ref, 16, 8)
+
+    def test_ref_source_format_mismatch_raises(self):
+        client = self._ref_client()
+        ref = client.resize_hw(np.zeros((32, 32, 3), np.uint8), 16, 16,
+                               out="ref")
+        with pytest.raises(DspError, match="format mismatch"):
+            client.resize_hw(ref, 8, 8, fmt="nv12")
+
+    def test_out_mode_validation(self):
+        client = self._ref_client()
+        with pytest.raises(DspError, match="must be None or 'ref'"):
+            client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                             out="pool")
+        with pytest.raises(DspError, match="wait=False"):
+            client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                             wait=False, out="ref")
+
+    def test_crop_and_convert_out_ref(self):
+        client = self._ref_client()
+        rref = client.crop_hw(nv12_array(64, 32), 8, 8, 32, 16, fmt="nv12",
+                              out="ref")
+        assert (rref.width, rref.height, rref.fmt) == (32, 16, "nv12")
+        rref.release()
+
+        cref = client.convert_hw(np.zeros((32, 64, 3), np.uint8), "nv12",
+                                 out="ref")
+        assert (cref.width, cref.height, cref.fmt) == (64, 32, "nv12")
+        arr = cref.read()
+        assert arr.shape == (32 * 3 // 2, 64)
+
+    def test_ref_with_caller_dst_pool_is_not_released_by_ref(self):
+        client = self._ref_client()
+        dst_pool = make_pool(client, 32, 16, "nv12", 1, id_base=7777)
+        client._send_release.reset_mock()
+        ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                               dst_pool=dst_pool, out="ref")
+        assert ref.buffer_id == 7777
+        ref.release()
+        # only the temp src pool (1000) — the caller's pool survives
+        assert [c.args[0] for c in client._send_release.call_args_list] \
+            == [1000]
+        # releasing the pool under a (still-alive) ref is caught on use
+        ref2 = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                                dst_pool=dst_pool, out="ref")
+        dst_pool.release()
+        with pytest.raises(DspError, match="pool was released"):
+            ref2.read()
+
+    def test_encode_jpeg_from_ref_uses_daemon_id(self):
+        client = self._ref_client()
+        ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                               out="ref")
+        client._send_release.reset_mock()
+        client._encode_rpc = mock.Mock(return_value=b"\xff\xd8jpeg")
+        out = client.encode_jpeg_hw(ref, quality=85)
+        assert out == b"\xff\xd8jpeg"
+        client._encode_rpc.assert_called_once_with(1001, 85, 5.0)
+        client._send_release.assert_not_called()  # borrow: ref untouched
+
+    def test_blend_refuses_ref_base(self):
+        client = self._ref_client()
+        ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                               out="ref")
+        overlay = np.zeros((16, 16, 4), np.uint8)
+        with pytest.raises(DspError, match="DspBufferRef base"):
+            client.blend_hw(ref, [(overlay, 0, 0)])
+
+    def test_gray8_ref_encode_refused_without_silent_copy(self):
+        client = self._ref_client()
+        ref = client.resize_hw(np.zeros((32, 32), np.uint8), 16, 16,
+                               fmt="gray8", out="ref")
+        with pytest.raises(DspError, match="gray8"):
+            client.encode_jpeg_hw(ref, quality=85)

@@ -87,6 +87,7 @@ from .draw import (
 )
 from .dsp import (
     DspBufferPool,
+    DspBufferRef,
     DspClient,
     DspError,
     PendingDspJob,
@@ -234,6 +235,7 @@ __all__ = [
     # DSP offload
     "DspClient",
     "DspBufferPool",
+    "DspBufferRef",
     "DspError",
     "PendingDspJob",
     # Config & Plugin
