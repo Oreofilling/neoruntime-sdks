@@ -219,16 +219,50 @@ class InferenceClient(GenAiMixin):
     def _parse_infer_response(self, response: inference_pb2.InferResponse) -> InferenceResult:
         return _parse_infer_response(response)
 
-    def _frame_input_tensor(self, image: Any) -> inference_pb2.Tensor | None:
-        """Zero-copy input path: import a Frame/FrameHandle as Tensor.buffer_id.
+    def _frame_input_tensor(
+        self, image: Any
+    ) -> tuple[inference_pb2.Tensor | None, int]:
+        """Zero-copy input path: Frame/FrameHandle/DspBufferRef as buffer_id.
 
-        Returns None for array inputs (the caller falls back to the bytes
-        path). The frame's dma-bufs are imported via DSP_IMPORT; ai-runtime
+        Returns ``(tensor, release_id)``. ``tensor`` is None for array
+        inputs (the caller falls back to the bytes path). ``release_id``
+        is the imported buffer the caller MUST release via
+        :meth:`_release_input` when the RPC settles — 0 when there is
+        nothing to release.
+
+        A frame's dma-bufs are imported via DSP_IMPORT; ai-runtime
         resolves the id against the daemon buffer registry, so the pixels
-        never cross a socket. The tensor carries the import id — the caller
-        MUST release it via :meth:`_release_input` when the RPC settles.
+        never cross a socket.
+
+        A :class:`~neoruntime_ipc_sdk.dsp.DspBufferRef` yields its own
+        daemon-registered id directly — no import. That id is *borrowed*:
+        it is the caller's DSP_ALLOC buffer, so it is NOT released here
+        (``release_id == 0``); releasing it would detach the buffer out
+        from under its owner. Keep the ref alive until the RPC settles.
         """
+        from .dsp import DspBufferRef
         from .frame import Frame, FrameHandle
+
+        if isinstance(image, DspBufferRef):
+            if image.released:
+                raise ValueError(
+                    "dsp buffer ref is released — its buffer is back with "
+                    "the daemon and may be reused; infer() from a live ref"
+                )
+            if image.fmt != "nv12":
+                # same tight-NV12 contract as the frame path
+                raise ValueError(
+                    f"zero-copy inference supports NV12 refs only "
+                    f"(got {image.fmt or 'unknown format'})"
+                )
+            return (
+                inference_pb2.Tensor(
+                    buffer_id=image.buffer_id,
+                    dtype=inference_pb2.UINT8,
+                    shape=[image.height * 3 // 2, image.width],
+                ),
+                0,
+            )
 
         if isinstance(image, FrameHandle):
             handle = image
@@ -240,7 +274,7 @@ class InferenceClient(GenAiMixin):
                     "keep_fd=True, or pass the pixel array directly"
                 )
         else:
-            return None
+            return None, 0
 
         if handle.closed:
             raise ValueError(
@@ -259,10 +293,13 @@ class InferenceClient(GenAiMixin):
 
             self._dsp = DspClient()
         buffer_id = self._dsp.import_frame(handle)
-        return inference_pb2.Tensor(
-            buffer_id=buffer_id,
-            dtype=inference_pb2.UINT8,
-            shape=[handle.height * 3 // 2, handle.width],
+        return (
+            inference_pb2.Tensor(
+                buffer_id=buffer_id,
+                dtype=inference_pb2.UINT8,
+                shape=[handle.height * 3 // 2, handle.width],
+            ),
+            buffer_id,
         )
 
     def _release_input(self, buffer_id: int) -> None:
@@ -285,15 +322,19 @@ class InferenceClient(GenAiMixin):
     ) -> InferenceResult:
         """Run one inference.
 
-        ``image`` is an ndarray (pixels shipped as bytes) or a
-        keep-fd ``Frame``/``FrameHandle`` (NV12 only): the frame's
-        dma-bufs are imported and referenced by buffer id, so no pixel
-        copy crosses the transport.
+        ``image`` is an ndarray (pixels shipped as bytes) or a zero-copy
+        input: a keep-fd ``Frame``/``FrameHandle`` (NV12 only — its
+        dma-bufs are imported and referenced by buffer id) or a
+        device-resident :class:`~neoruntime_ipc_sdk.dsp.DspBufferRef`
+        (NV12 only — its daemon buffer id is sent directly, no import,
+        no copy; the call blocks, so simply passing the ref keeps it
+        alive). In both buffer-id cases no pixel copy crosses the
+        transport.
         """
         if self.stub is None:
             self.connect()
 
-        tensor = self._frame_input_tensor(image)
+        tensor, release_id = self._frame_input_tensor(image)
         if tensor is None:
             tensor = self._numpy_to_tensor(image, "input")
 
@@ -311,8 +352,8 @@ class InferenceClient(GenAiMixin):
             # itself is timeout_ms/1000.
             response = fut.result(timeout=timeout_ms / 1000 + 5)
         finally:
-            if tensor.buffer_id:
-                self._release_input(tensor.buffer_id)
+            if release_id:
+                self._release_input(release_id)
 
         if not response.status.success:
             raise RuntimeError(f"Inference failed: {response.status.message}")
@@ -346,9 +387,11 @@ class InferenceClient(GenAiMixin):
         to a parsed InferenceResult. The caller MUST call fut.result(timeout=...)
         to obtain the result (or propagate the error).
 
-        ``image`` may be an ndarray or a keep-fd NV12 Frame/FrameHandle
-        (zero-copy buffer-id input, same as :meth:`infer`); the import is
-        released when the RPC settles.
+        ``image`` may be an ndarray or a zero-copy input, same contract
+        as :meth:`infer`: a keep-fd NV12 Frame/FrameHandle (import
+        released when the RPC settles) or a NV12
+        :class:`~neoruntime_ipc_sdk.dsp.DspBufferRef` — the ref's id is
+        *borrowed*, so keep the ref alive until the future resolves.
 
         Enables depth-N pipelines: submit frame N+1 while still awaiting frame N
         so the NPU stays busy across the host-side gap between jobs. Schedules
@@ -358,7 +401,7 @@ class InferenceClient(GenAiMixin):
         if self.stub is None:
             self.connect()
 
-        tensor = self._frame_input_tensor(image)
+        tensor, release_id = self._frame_input_tensor(image)
         if tensor is None:
             tensor = self._numpy_to_tensor(image, "input")
 
@@ -370,7 +413,9 @@ class InferenceClient(GenAiMixin):
             session_id=session_id,
         )
 
-        if not tensor.buffer_id:
+        if not release_id:
+            # array input, or a borrowed DspBufferRef id — nothing to
+            # release when the RPC settles
             return asyncio.run_coroutine_threadsafe(
                 self._infer_full_async(request, timeout_ms), self._loop
             )
@@ -379,7 +424,7 @@ class InferenceClient(GenAiMixin):
             try:
                 return await self._infer_full_async(request, timeout_ms)
             finally:
-                self._release_input(tensor.buffer_id)
+                self._release_input(release_id)
 
         return asyncio.run_coroutine_threadsafe(_infer_and_release(), self._loop)
 
