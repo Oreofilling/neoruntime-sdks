@@ -797,13 +797,75 @@ class TestBufferRef:
         client._encode_rpc.assert_called_once_with(1001, 85, 5.0)
         client._send_release.assert_not_called()  # borrow: ref untouched
 
-    def test_blend_refuses_ref_base(self):
+    def test_blend_ref_base_requires_zero_copy(self):
         client = self._ref_client()
         ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
                                out="ref")
+        before = len(client._stub.requests)  # the producing resize
         overlay = np.zeros((16, 16, 4), np.uint8)
-        with pytest.raises(DspError, match="DspBufferRef base"):
+        with pytest.raises(DspError, match="device-side bases"):
             client.blend_hw(ref, [(overlay, 0, 0)])
+        assert len(client._stub.requests) == before  # no new wire work
+        ref.release()
+
+    def test_blend_ref_base_zero_copy_wire(self):
+        # P2-4: with zero_copy=True the ref rides its daemon id into a
+        # 1:1 RESIZE copy, then the blend composites on that copy — no
+        # import for the base, no release of the borrowed id.
+        client = self._ref_client()
+        ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                               out="ref")
+        client._send_release.reset_mock()
+        client._import_source = mock.Mock()  # a ref base must NOT import
+        client._import_memfd = mock.Mock(return_value=2000)
+        overlay = np.zeros((16, 16, 4), np.uint8)
+        overlay[..., 3] = 255
+
+        out = client.blend_hw(ref, [(overlay, 8, 0)], zero_copy=True)
+
+        # the producing resize (1000->1001) is first in the log; the
+        # blend itself is the last two requests
+        reqs = client._stub.requests[-2:]
+        assert [r.op for r in reqs] == [
+            camera_pb2.DSP_OP_RESIZE, camera_pb2.DSP_OP_BLEND,
+        ]
+        # copy leg: the ref's own daemon buffer (1001) -> fresh base
+        # pool (1002; 1000/1001 were the producing resize's src/dst)
+        assert reqs[0].src_buffer_id == 1001
+        assert list(reqs[0].dst_buffer_ids) == [1002]
+        client._import_source.assert_not_called()
+        # blend leg: composites in place on the base pool copy
+        assert reqs[1].src_buffer_id == 1002
+        assert list(reqs[1].dst_buffer_ids) == [2000]  # overlay memfd import
+        # read-back comes from the base pool; shape is the base geometry
+        assert out.shape == (16 * 3 // 2, 32)
+        # the borrowed ref id is never released; releasing the ref frees
+        # only its own pool ids — the blend's allocations already went
+        # back when the sync call unwound
+        assert ref.released is False
+        client._send_release.reset_mock()
+        ref.release()
+        released = [c.args[0] for c in client._send_release.call_args_list]
+        assert released == [1000, 1001]
+    def test_blend_ref_base_failure_names_the_copy_out(self):
+        client = self._ref_client()
+        ref = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
+                               out="ref")
+
+        def fail_blend(req):
+            if req.op == camera_pb2.DSP_OP_BLEND:
+                return camera_pb2.DspJobResponse(
+                    success=False, message="firmware says no")
+            return camera_pb2.DspJobResponse(success=True)
+
+        client._stub = RecordingStub(side_effect=fail_blend)
+        client._import_memfd = mock.Mock(return_value=2000)
+        overlay = np.zeros((16, 16, 4), np.uint8)
+        try:
+            with pytest.raises(DspError, match="ref.read()"):
+                client.blend_hw(ref, [(overlay, 0, 0)], zero_copy=True)
+        finally:
+            ref.release()
 
     def test_gray8_ref_encode_refused_without_silent_copy(self):
         client = self._ref_client()
@@ -811,3 +873,71 @@ class TestBufferRef:
                                fmt="gray8", out="ref")
         with pytest.raises(DspError, match="gray8"):
             client.encode_jpeg_hw(ref, quality=85)
+
+
+# -------------------------------------------------- blend overlay prep (P2-4) --
+class TestBlendOverlayPrep:
+    """Transparent padding: 16px daemon floor + even-height DSP contract.
+
+    Both pads grow the rect with fully transparent pixels (no-ops), so
+    the in-bounds check must run on the padded geometry.
+    """
+
+    def _client(self):
+        client = DspClient()
+        patched_alloc(client)
+        client._stub = RecordingStub()
+        client._send_release = mock.Mock()
+        client._import_memfd = mock.Mock(return_value=2000)
+        return client
+
+    def test_odd_height_overlay_padded_to_even(self):
+        # device ruling: odd width/x/y blend fine, odd height is
+        # rejected by firmware (-2801) — pad one transparent row.
+        client = self._client()
+        overlay = np.zeros((17, 33, 4), np.uint8)
+        client.blend_hw(nv12_array(64, 32), [(overlay, 1, 1)])
+
+        blend = client._stub.requests[-1]
+        rect = blend.rects[0]
+        # width/x/y untouched (odd is fine there); height padded 17->18
+        assert (rect.x, rect.y, rect.width, rect.height) == (1, 1, 33, 18)
+        assert (rect.dst_width, rect.dst_height) == (33, 18)
+        # the padded row is fully transparent in the imported plane
+        # (wire order is [A, R, G, B])
+        wire = client._import_memfd.call_args.args[0]
+        argb = np.frombuffer(wire, np.uint8).reshape(18, 33, 4)
+        assert (argb[17, :, 0] == 0).all()
+
+    def test_odd_flush_bottom_overlay_refused_with_hint(self):
+        # 17-row overlay flush to the base bottom: the transparent pad
+        # row would exceed the base — refuse with the padding hint.
+        client = self._client()
+        overlay = np.zeros((17, 32, 4), np.uint8)
+        with pytest.raises(DspError, match="includes transparent padding"):
+            client.blend_hw(nv12_array(64, 32), [(overlay, 0, 32 - 17)])
+        assert client._stub.requests == []
+
+    def test_small_overlay_pad_now_bounds_checked(self):
+        # regression: a <16 overlay used to be padded AFTER the bounds
+        # check, so a corner placement could exceed the base unflagged.
+        client = self._client()
+        overlay = np.zeros((10, 10, 4), np.uint8)
+        with pytest.raises(DspError, match="exceeds the"):
+            client.blend_hw(nv12_array(32, 16), [(overlay, 22, 6)])
+        assert client._stub.requests == []
+
+    def test_small_overlay_corner_fits_after_pad_when_in_bounds(self):
+        client = self._client()
+        overlay = np.zeros((10, 10, 4), np.uint8)
+        out = client.blend_hw(nv12_array(32, 16), [(overlay, 0, 0)])
+        rect = client._stub.requests[-1].rects[0]
+        assert (rect.width, rect.height) == (16, 16)  # padded to floor
+        assert out.shape == (16 * 3 // 2, 32)
+
+    def test_even_overlay_untouched(self):
+        client = self._client()
+        overlay = np.zeros((16, 16, 4), np.uint8)
+        client.blend_hw(nv12_array(64, 32), [(overlay, 3, 5)])
+        rect = client._stub.requests[-1].rects[0]
+        assert (rect.x, rect.y, rect.width, rect.height) == (3, 5, 16, 16)
