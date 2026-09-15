@@ -540,10 +540,17 @@ std::optional<ModelInfo> InferenceClient::get_model_info(const std::string& mode
 
 // ---- Statistics ----
 InferenceSystemStats InferenceClient::get_stats() {
+    return get_stats(0);
+}
+
+InferenceSystemStats InferenceClient::get_stats(std::uint32_t sampling_window_ms) {
     impl_->ensure_connected();
     grpc::ClientContext ctx;
     deadline_in(ctx, 35000);
-    pb::Empty req;
+    pb::GetStatsRequest req;
+    // 0 stays unset (proto3 default): the server applies its own default
+    // window — the same shape a pre-windowing Empty request produced.
+    req.set_sampling_window_ms(sampling_window_ms);
     pb::SystemStats resp;
     detail::check_grpc(impl_->stub->GetStats(&ctx, req, &resp), "GetStats");
 
