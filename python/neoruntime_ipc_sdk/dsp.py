@@ -47,6 +47,7 @@ import mmap
 import os
 import socket
 import struct
+import threading
 import warnings
 from typing import Sequence, Union
 
@@ -674,6 +675,12 @@ class DspClient(GrpcClient):
             sock_path = os.getenv("CAMERA_SOCK_PATH", "/run/aipc/camera.sock")
         self.sock_path = sock_path
         self._sock: socket.socket | None = None
+        # Serializes the buffer-plane UDS exchanges (ALLOC / IMPORT /
+        # BUF_RELEASE send+recv cycles). The job plane (gRPC) is
+        # thread-safe on its own; the raw socket is not — two threads
+        # exchanging concurrently would interleave responses. Needed
+        # since the router keeps one resident client for the process.
+        self._plane_lock = threading.Lock()
         self.last_used_hw: bool | None = None
         # set once the daemon refuses a gray8 CONVERT (hailo15 firmware
         # gap) — later gray8 pairs skip the doomed submit quietly
@@ -712,28 +719,33 @@ class DspClient(GrpcClient):
     # -- UDS buffer management -----------------------------------------------
     def _exchange_alloc(self, width: int, height: int, fmt_wire: int, count: int):
         """Send DSP_ALLOC, await RESP (with fds). Returns pool ingredients."""
-        sock = self._ensure_sock()
-        sock.sendall(alloc_request_bytes(width, height, fmt_wire, count))
+        with self._plane_lock:
+            sock = self._ensure_sock()
+            sock.sendall(alloc_request_bytes(width, height, fmt_wire, count))
 
-        buf = b""
-        fds: list[int] = []
-        while len(buf) < _ALLOC_RESP_SIZE:
-            data, got = _recvmsg_with_fds(sock, _ALLOC_RESP_SIZE - len(buf), max_fds=_DSP_MAX_FDS)
-            if not data and not got:
-                raise DspError("camera socket closed during DSP alloc")
-            buf += data
-            fds.extend(got)
+            buf = b""
+            fds: list[int] = []
+            while len(buf) < _ALLOC_RESP_SIZE:
+                data, got = _recvmsg_with_fds(
+                    sock, _ALLOC_RESP_SIZE - len(buf), max_fds=_DSP_MAX_FDS
+                )
+                if not data and not got:
+                    raise DspError("camera socket closed during DSP alloc")
+                buf += data
+                fds.extend(got)
 
-        code, n, num_planes, strides, sizes, ids = parse_alloc_resp(buf)
-        if code != 0:
-            for fd in fds:
-                os.close(fd)
-            raise DspError(_ERROR_TEXT.get(code, "alloc failed"), code=code)
-        if n != count or len(fds) != n * num_planes:
-            for fd in fds:
-                os.close(fd)
-            raise DspError(f"alloc returned {n} buffers / {len(fds)} fds, requested {count}")
-        return code, n, num_planes, strides, sizes, ids, fds
+            code, n, num_planes, strides, sizes, ids = parse_alloc_resp(buf)
+            if code != 0:
+                for fd in fds:
+                    os.close(fd)
+                raise DspError(_ERROR_TEXT.get(code, "alloc failed"), code=code)
+            if n != count or len(fds) != n * num_planes:
+                for fd in fds:
+                    os.close(fd)
+                raise DspError(
+                    f"alloc returned {n} buffers / {len(fds)} fds, requested {count}"
+                )
+            return code, n, num_planes, strides, sizes, ids, fds
 
     def alloc_buffers(
         self, width: int, height: int, fmt: str = "nv12", count: int = 1
@@ -827,19 +839,20 @@ class DspClient(GrpcClient):
 
     def _send_release(self, buffer_id: int) -> None:
         """Fire-and-forget DSP_BUF_RELEASE (the daemon never answers)."""
-        if self._sock is None:
-            return
-        try:
-            self._sock.sendall(
-                struct.pack(
-                    _RELEASE_FMT,
-                    _FD_PUB_MSG_DSP_BUF_RELEASE,
-                    struct.calcsize(_RELEASE_FMT),
-                    buffer_id,
+        with self._plane_lock:
+            if self._sock is None:
+                return
+            try:
+                self._sock.sendall(
+                    struct.pack(
+                        _RELEASE_FMT,
+                        _FD_PUB_MSG_DSP_BUF_RELEASE,
+                        struct.calcsize(_RELEASE_FMT),
+                        buffer_id,
+                    )
                 )
-            )
-        except OSError:
-            logger.debug("DSP release send failed", exc_info=True)
+            except OSError:
+                logger.debug("DSP release send failed", exc_info=True)
 
     def _import_source(
         self, handle: FrameHandle, width: int, height: int, fmt: str, timeout_s: float = 5.0
@@ -883,43 +896,44 @@ class DspClient(GrpcClient):
             width, height, _HAL_PIXEL_FORMAT[fmt], num_planes, strides, sizes
         )
         anc = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack(f"{num_planes}i", *fds))]
-        sock = self._ensure_sock()
-        # scatter/gather form: some device python builds reject
-        # sendmsg(bytes, ancdata) with a TypeError but accept a buffer list
-        sock.sendmsg([payload], anc)
+        with self._plane_lock:
+            sock = self._ensure_sock()
+            # scatter/gather form: some device python builds reject
+            # sendmsg(bytes, ancdata) with a TypeError but accept a buffer list
+            sock.sendmsg([payload], anc)
 
-        sock.settimeout(timeout_s)
-        try:
-            for _drain in range(64):
-                try:
-                    mtype, msg, fds = _recv_one_msg(sock)
-                except socket.timeout:
-                    raise DspError(
-                        f"no DSP_IMPORT response in {timeout_s}s — the daemon "
-                        "may predate DSP_IMPORT (needs platform a94ee007+); "
-                        "close this client, the socket may hold a partial "
-                        "message"
-                    ) from None
-                for fd in fds:  # the reply itself never carries fds
-                    os.close(fd)
-                if mtype == _FD_PUB_MSG_DSP_IMPORT_RESP:
-                    code, import_id = parse_import_resp(msg)
-                    if code != 0:
+            sock.settimeout(timeout_s)
+            try:
+                for _drain in range(64):
+                    try:
+                        mtype, msg, fds = _recv_one_msg(sock)
+                    except socket.timeout:
                         raise DspError(
-                            f"buffer import rejected: {_ERROR_TEXT.get(code, 'error')}",
-                            code=code,
-                        )
-                    return import_id
-                if mtype in (_FD_PUB_MSG_OK, _FD_PUB_MSG_ERROR):
-                    continue  # control acks from an earlier request
-                # a FRAME here means this socket is subscribed somewhere —
-                # a DspClient socket never is, so treat it as protocol desync
-                raise DspError(
-                    f"unexpected camera-sock message type {mtype} "
-                    "while awaiting DSP import response"
-                )
-        finally:
-            sock.settimeout(None)
+                            f"no DSP_IMPORT response in {timeout_s}s — the daemon "
+                            "may predate DSP_IMPORT (needs platform a94ee007+); "
+                            "close this client, the socket may hold a partial "
+                            "message"
+                        ) from None
+                    for fd in fds:  # the reply itself never carries fds
+                        os.close(fd)
+                    if mtype == _FD_PUB_MSG_DSP_IMPORT_RESP:
+                        code, import_id = parse_import_resp(msg)
+                        if code != 0:
+                            raise DspError(
+                                f"buffer import rejected: {_ERROR_TEXT.get(code, 'error')}",
+                                code=code,
+                            )
+                        return import_id
+                    if mtype in (_FD_PUB_MSG_OK, _FD_PUB_MSG_ERROR):
+                        continue  # control acks from an earlier request
+                    # a FRAME here means this socket is subscribed somewhere —
+                    # a DspClient socket never is, so treat it as protocol desync
+                    raise DspError(
+                        f"unexpected camera-sock message type {mtype} "
+                        "while awaiting DSP import response"
+                    )
+            finally:
+                sock.settimeout(None)
         raise DspError("too many control messages before import response")
 
     def _import_memfd(
