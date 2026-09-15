@@ -38,6 +38,12 @@ Usage::
     # zero-copy: keep the frame's dma-bufs and hand them over directly
     frame = media.get_frame("main", keep_fd=True)
     small = client.resize_hw(frame, 640, 640)
+
+    # device-resident chain: results stay on the daemon between calls,
+    # no read-back until the tail (P2-2)
+    ref = client.resize_hw(frame, 640, 640, out="ref")
+    jpeg = client.encode_jpeg_hw(ref, quality=85)
+    ref.release()
 """
 
 from __future__ import annotations
@@ -120,7 +126,9 @@ from .proto import camera_pb2, camera_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
-JobSource = Union[np.ndarray, Frame, FrameHandle]
+# DspBufferRef is defined below the pool classes it wraps; the forward
+# ref keeps this alias at the top where the ``*_hw`` signatures quote it
+JobSource = Union[np.ndarray, Frame, FrameHandle, "DspBufferRef"]
 
 
 def _warn_bgr_convert(src: JobSource) -> None:
@@ -136,6 +144,18 @@ def _warn_bgr_convert(src: JobSource) -> None:
             "convert_hw: source frame is BGR — the DSP wire only carries "
             "rgb24, so R and B come back swapped; use frame.to_rgb() first "
             "or stay on the CPU leg (color.bgr_to_nv12)"
+        )
+
+
+def _check_out_mode(out: str | None, wait: bool) -> None:
+    """Validate the ``out=`` parameter shared by the sync ``*_hw`` methods."""
+    if out not in (None, "ref"):
+        raise DspError(f"out must be None or 'ref', got {out!r}")
+    if out == "ref" and not wait:
+        raise DspError(
+            "out='ref' is the sync no-read-back form; wait=False already "
+            "returns a PendingDspJob whose wait_result() keeps the result "
+            "device-side"
         )
 
 
@@ -392,6 +412,26 @@ class _ImportedSource:
         self.import_id = -1
 
 
+class _RefSource:
+    """A :class:`DspBufferRef` loaned to a job as its source.
+
+    The ref's buffer is already daemon-registered (DSP_ALLOC), so its id
+    is used directly — no DSP_IMPORT round-trip, no copy-in. The ref is
+    *borrowed*: ``release`` is a no-op because the ref belongs to its
+    caller, who must keep it alive across the job (same contract as a
+    keep-fd Frame source).
+    """
+
+    def __init__(self, ref: "DspBufferRef"):
+        self._ref = ref
+
+    def buffer_id(self, index: int) -> int:
+        return self._ref.buffer_id  # single buffer; index for symmetry
+
+    def release(self) -> None:
+        pass  # borrow: the ref's own release() belongs to its caller
+
+
 class PendingDspJob:
     """The ``wait=False`` return of the ``*_hw`` job methods (P2 async).
 
@@ -543,6 +583,112 @@ class PendingDspJob:
         return resp
 
 
+class DspBufferRef:
+    """The ``out="ref"`` return of the sync ``*_hw`` job methods (P2-2).
+
+    Wraps one completed job's destination buffer — device-side, no
+    read-back — plus everything the call owned to produce it (imported
+    sources, temp pools):
+
+    * :attr:`buffer_id`/:attr:`width`/:attr:`height`/:attr:`fmt` — the
+      daemon buffer id and its geometry; chain the id into another
+      ``*_hw`` call or ``encode_jpeg_hw`` without touching the pixels.
+    * :meth:`read` — read the array back on demand (exactly what the
+      ``out=None`` default returns inline).
+    * :meth:`release` — return the owned buffers to the daemon
+      (idempotent). When the destination pool was caller-supplied
+      (``dst_pool=``) the pool is not owned and stays valid — but the
+      ref is dead either way; re-read through the pool if you need it.
+
+    A ref is also a valid job *source*: passing it as ``src`` uses its
+    daemon id directly (no re-import, no copy-in). That borrows it —
+    the source call neither consumes nor keeps the ref alive; keep it
+    alive until the consuming job completes, then :meth:`release` it.
+    There is no GC safety net (same contract as :class:`PendingDspJob`):
+    rebinding a ref away without ``release()`` leaks its daemon-side
+    pixel budget until the client disconnects — chain users keep every
+    intermediate ref and release it, or use one ref per statement.
+
+    Context manager support releases on exit. Device-side lifetime:
+    like every client-owned buffer, the daemon reclaims it when the
+    client's UDS closes — a leaked ref costs its slot until then.
+    """
+
+    def __init__(
+        self,
+        client: DspClient,
+        pool: DspBufferPool,
+        index: int,
+        owns: Sequence[object],
+    ):
+        self._client = client
+        self._pool = pool
+        self._index = index
+        self._owns = list(owns)
+        self._released = False
+
+    @property
+    def buffer_id(self) -> int:
+        """Daemon id of the wrapped buffer."""
+        self._ensure_alive()
+        return self._pool.buffer_id(self._index)
+
+    @property
+    def width(self) -> int:
+        return self._pool.width
+
+    @property
+    def height(self) -> int:
+        return self._pool.height
+
+    @property
+    def fmt(self) -> str:
+        return self._pool.fmt
+
+    @property
+    def released(self) -> bool:
+        return self._released
+
+    def read(self) -> np.ndarray:
+        """Read the buffer back as a numpy array (SDK layout)."""
+        self._ensure_alive()
+        return self._pool.read(self._index)
+
+    def release(self) -> None:
+        """Release the owned buffers (idempotent).
+
+        Frees what the producing call allocated — temp pools and
+        imports; a caller-supplied ``dst_pool`` is left alone. The job
+        itself already completed (``out="ref"`` is the sync path), so
+        there is nothing to reap, unlike :class:`PendingDspJob`.
+        """
+        if self._released:
+            return
+        self._released = True
+        for owned in self._owns:
+            owned.release()
+        self._owns = []
+
+    def _ensure_alive(self) -> None:
+        if self._released:
+            raise DspError(
+                "dsp buffer ref is released — its buffers are back with "
+                "the daemon (or reused); keep the ref alive across jobs "
+                "that read it, like a keep-fd frame"
+            )
+        if self._pool._released:
+            raise DspError(
+                "dsp buffer ref's pool was released underneath it — "
+                "release the ref before the pool"
+            )
+
+    def __enter__(self) -> "DspBufferRef":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.release()
+
+
 def _recv_one_msg(sock: socket.socket) -> tuple[int, bytes, list[int]]:
     """One complete UDS message: ``(type, payload-with-header, fds)``.
 
@@ -573,13 +719,27 @@ def _recv_one_msg(sock: socket.socket) -> tuple[int, bytes, list[int]]:
     return mtype, hdr + body, fds
 
 
-def _resolve_source(src, fmt: str | None) -> tuple[int, int, FrameHandle | None, str]:
-    """Normalize a ``*_hw`` source into ``(width, height, handle, fmt)``.
+def _resolve_source(
+    src, fmt: str | None
+) -> tuple[int, int, FrameHandle | DspBufferRef | None, str]:
+    """Normalize a ``*_hw`` source into ``(width, height, source, fmt)``.
 
-    ``handle`` is None for array sources (ndarray, or a Frame that only
+    ``source`` is None for array sources (ndarray, or a Frame that only
     carries pixels); for a Frame/FrameHandle it is the retained dma-buf
-    handle and the geometry comes with it.
+    handle; for a :class:`DspBufferRef` it is the ref itself (a
+    daemon-side buffer — no import, no copy-in). Callers treat a
+    non-None ``source`` as "no CPU pixels exist": no silent fallback.
     """
+    if isinstance(src, DspBufferRef):
+        if src.released:
+            raise DspError(
+                "dsp buffer ref is released — its buffers are back with "
+                "the daemon; keep the ref alive across the job"
+            )
+        src_fmt = src.fmt
+        if fmt is not None and fmt != src_fmt:
+            raise DspError(f"format mismatch: source is {src_fmt!r}, fmt={fmt!r}")
+        return src.width, src.height, src, src_fmt
     if isinstance(src, FrameHandle):
         frame = None
         handle = src
@@ -1047,15 +1207,21 @@ class DspClient(GrpcClient):
         dst_pool: DspBufferPool | None = None,
         cpu_fallback: bool = True,
         wait: bool = True,
-    ) -> np.ndarray | PendingDspJob:
+        out: str | None = None,
+    ) -> np.ndarray | PendingDspJob | DspBufferRef:
         """Scale ``src`` to ``(width, height)`` on the DSP.
 
-        ``src`` is a numpy array (copied in) or a keep-fd Frame/FrameHandle
-        (imported zero-copy — see the module docstring). ``wait=False``
-        returns a :class:`PendingDspJob` instead of the array: the job is
-        enqueued without blocking and the buffers stay owned until the
-        pending job consumes them.
+        ``src`` is a numpy array (copied in), a keep-fd Frame/FrameHandle
+        (imported zero-copy — see the module docstring), or a
+        :class:`DspBufferRef` (its daemon buffer used directly — no
+        re-import). ``wait=False`` returns a :class:`PendingDspJob`
+        instead of the array: the job is enqueued without blocking and
+        the buffers stay owned until the pending job consumes them.
+        ``out="ref"`` (sync path only) skips the read-back and returns a
+        :class:`DspBufferRef` — the resized pixels stay device-side for
+        the next hw call; ``ref.read()`` brings them back on demand.
         """
+        _check_out_mode(out, wait)
         _sw, _sh, handle, fmt = _resolve_source(src, fmt)
         _validate_geometry(width, height, fmt, "destination")
         try:
@@ -1086,6 +1252,11 @@ class DspClient(GrpcClient):
                     return PendingDspJob(
                         self, [(pools[0], 0)], job_id, own, timeout_s
                     )
+                if out == "ref":
+                    # device-resident result (P2-2): skip the read-back,
+                    # hand buffer ownership to the caller
+                    handed = True
+                    return DspBufferRef(self, pools[0], 0, own)
                 return pools[0].read(0)
             finally:
                 if not handed:
@@ -1094,8 +1265,8 @@ class DspClient(GrpcClient):
             if handle is not None:
                 raise DspError(
                     "DSP unavailable with a zero-copy frame source — refusing "
-                    "the silent CPU fallback (the frame holds fds, not "
-                    "pixels; use frame.to_array() to accept the copy)"
+                    "the silent CPU fallback (the source holds fds, not "
+                    "pixels; use frame.to_array()/ref.read() to accept the copy)"
                 ) from e
             if not cpu_fallback:
                 raise
@@ -1126,11 +1297,15 @@ class DspClient(GrpcClient):
         dst_pool: DspBufferPool | None = None,
         cpu_fallback: bool = True,
         wait: bool = True,
-    ) -> np.ndarray | PendingDspJob:
+        out: str | None = None,
+    ) -> np.ndarray | PendingDspJob | DspBufferRef:
         """Crop ``(x, y, w, h)`` and scale to the destination size.
 
         ``wait=False`` returns a :class:`PendingDspJob` (async submit).
+        ``out="ref"`` (sync path only) returns a :class:`DspBufferRef`
+        instead of reading the pixels back — see :meth:`resize_hw`.
         """
+        _check_out_mode(out, wait)
         sw, sh, handle, fmt = _resolve_source(src, fmt)
         dst_width = width if dst_width is None else dst_width
         dst_height = height if dst_height is None else dst_height
@@ -1163,6 +1338,9 @@ class DspClient(GrpcClient):
                     return PendingDspJob(
                         self, [(pools[0], 0)], job_id, own, timeout_s
                     )
+                if out == "ref":
+                    handed = True
+                    return DspBufferRef(self, pools[0], 0, own)
                 return pools[0].read(0)
             finally:
                 if not handed:
@@ -1171,8 +1349,8 @@ class DspClient(GrpcClient):
             if handle is not None:
                 raise DspError(
                     "DSP unavailable with a zero-copy frame source — refusing "
-                    "the silent CPU fallback (the frame holds fds, not "
-                    "pixels; use frame.to_array() to accept the copy)"
+                    "the silent CPU fallback (the source holds fds, not "
+                    "pixels; use frame.to_array()/ref.read() to accept the copy)"
                 ) from e
             if not cpu_fallback:
                 raise
@@ -1276,8 +1454,8 @@ class DspClient(GrpcClient):
             if handle is not None:
                 raise DspError(
                     "DSP unavailable with a zero-copy frame source — refusing "
-                    "the silent CPU fallback (the frame holds fds, not "
-                    "pixels; use frame.to_array() to accept the copy)"
+                    "the silent CPU fallback (the source holds fds, not "
+                    "pixels; use frame.to_array()/ref.read() to accept the copy)"
                 ) from e
             if not cpu_fallback:
                 raise
@@ -1301,7 +1479,8 @@ class DspClient(GrpcClient):
         dst_pool: DspBufferPool | None = None,
         cpu_fallback: bool = True,
         wait: bool = True,
-    ) -> np.ndarray | PendingDspJob:
+        out: str | None = None,
+    ) -> np.ndarray | PendingDspJob | DspBufferRef:
         """Convert ``src`` to ``dst_fmt`` (``nv12``/``rgb24``/``gray8``) on
         the DSP, keeping the dimensions.
 
@@ -1324,7 +1503,10 @@ class DspClient(GrpcClient):
 
         ``wait=False`` returns a :class:`PendingDspJob` (async submit) —
         only for accepted jobs; a refused pair still returns CPU pixels.
+        ``out="ref"`` (sync path only) returns a :class:`DspBufferRef`
+        instead of reading the pixels back — see :meth:`resize_hw`.
         """
+        _check_out_mode(out, wait)
         sw, sh, handle, fmt = _resolve_source(src, fmt)
         _warn_bgr_convert(src)
         _validate_geometry(sw, sh, fmt, "source")
@@ -1361,7 +1543,14 @@ class DspClient(GrpcClient):
             # bespoke prep: _prep assumes one fmt for src AND dst pools,
             # but CONVERT needs the dst pool in dst_fmt at the source geometry
             own: list[object] = []
-            if handle is not None:
+            if isinstance(src, DspBufferRef):
+                if src_pool is not None:
+                    raise DspError(
+                        "src_pool applies to numpy sources; a DspBufferRef "
+                        "is already a daemon buffer"
+                    )
+                source = _RefSource(src)
+            elif handle is not None:
                 if src_pool is not None:
                     raise DspError(
                         "src_pool applies to numpy sources; a frame handle imports its own dma-bufs"
@@ -1403,6 +1592,9 @@ class DspClient(GrpcClient):
                     return PendingDspJob(
                         self, [(out_pool, 0)], job_id, own, timeout_s
                     )
+                if out == "ref":
+                    handed = True
+                    return DspBufferRef(self, out_pool, 0, own)
                 return out_pool.read(0)
             finally:
                 if not handed:
@@ -1411,8 +1603,8 @@ class DspClient(GrpcClient):
             if handle is not None:
                 raise DspError(
                     "DSP unavailable with a zero-copy frame source — refusing "
-                    "the silent CPU fallback (the frame holds fds, not "
-                    "pixels; use frame.to_array() to accept the copy)"
+                    "the silent CPU fallback (the source holds fds, not "
+                    "pixels; use frame.to_array()/ref.read() to accept the copy)"
                 ) from e
             if not cpu_fallback:
                 raise
@@ -1507,6 +1699,12 @@ class DspClient(GrpcClient):
         """
         if fmt is not None and fmt != "nv12":
             raise DspError(f"BLEND base must be nv12 (daemon contract), got {fmt!r}")
+        if isinstance(base, DspBufferRef):
+            raise DspError(
+                "blend_hw does not take a DspBufferRef base yet — the "
+                "device-resident base leg arrives with the keep-fd blend "
+                "(P2-4); blend ref.read() for now"
+            )
         # fmt is nv12 by definition — never leave it to shape inference
         # (a 2D nv12 array would ambiguously infer gray8)
         bw, bh, handle, fmt = _resolve_source(base, "nv12")
@@ -1646,8 +1844,8 @@ class DspClient(GrpcClient):
             if handle is not None:
                 raise DspError(
                     "DSP unavailable with a zero-copy frame base — refusing "
-                    "the silent CPU fallback (the frame holds fds, not "
-                    "pixels; use frame.to_array() to accept the copy)"
+                    "the silent CPU fallback (the source holds fds, not "
+                    "pixels; use frame.to_array()/ref.read() to accept the copy)"
                 ) from e
             if not cpu_fallback:
                 raise
@@ -1694,6 +1892,8 @@ class DspClient(GrpcClient):
         up-convert to rgb24 client-side (R=G=B=gray) and ride the same
         hardware leg; gray8 keep-fd frames raise instead of silently
         copying — accept the copy yourself with ``frame.to_array()``.
+        A :class:`DspBufferRef` encodes straight from its daemon buffer
+        (the same zero-copy leg as ``src_buffer_id``).
 
         ``src_buffer_id`` (with ``src=None``) encodes straight from a
         daemon-side buffer — the zero-copy chain tail:
@@ -1725,7 +1925,7 @@ class DspClient(GrpcClient):
                 raise DspError(
                     "gray8 frames cannot ride the hardware jpeg encoder "
                     "without a copy (the daemon feeds nv12/rgb24); "
-                    "use frame.to_array() and pass the array"
+                    "use frame.to_array() (or ref.read()) and pass the array"
                 )
             # no hardware gray leg: replicate to rgb24 (R=G=B=gray) and
             # let the daemon's DSP convert take it from there
@@ -1739,7 +1939,14 @@ class DspClient(GrpcClient):
         try:
             # bespoke prep (no dst pool — the JPEG rides the response)
             own: list[object] = []
-            if handle is not None:
+            if isinstance(src, DspBufferRef):
+                if src_pool is not None:
+                    raise DspError(
+                        "src_pool applies to numpy sources; a DspBufferRef "
+                        "is already a daemon buffer"
+                    )
+                source = _RefSource(src)
+            elif handle is not None:
                 if src_pool is not None:
                     raise DspError(
                         "src_pool applies to numpy sources; a frame handle imports its own dma-bufs"
@@ -1762,8 +1969,8 @@ class DspClient(GrpcClient):
             if handle is not None:
                 raise DspError(
                     "EncodeImage unavailable with a zero-copy frame source — refusing "
-                    "the silent CPU fallback (the frame holds fds, not "
-                    "pixels; use frame.to_array() to accept the copy)"
+                    "the silent CPU fallback (the source holds fds, not "
+                    "pixels; use frame.to_array()/ref.read() to accept the copy)"
                 ) from e
             if not cpu_fallback:
                 raise
@@ -1811,18 +2018,26 @@ class DspClient(GrpcClient):
     ) -> tuple[object, list[DspBufferPool], list[object]]:
         """Prepare one job's buffers: ``(source, dst_pools, owned)``.
 
-        ``src`` is either a numpy array — copied into a daemon-allocated
-        pool (or the caller's ``src_pool``) — or a Frame/FrameHandle whose
-        dma-buf fds are imported zero-copy via DSP_IMPORT; the pixels are
-        never touched on that path. ``owned`` entries are released by the
-        caller's ``finally`` (temp pools and the import alike).
+        ``src`` is a numpy array — copied into a daemon-allocated pool
+        (or the caller's ``src_pool``) — a Frame/FrameHandle whose
+        dma-buf fds are imported zero-copy via DSP_IMPORT, or a
+        :class:`DspBufferRef` whose daemon buffer id is used directly
+        (borrowed — never consumed here). ``owned`` entries are released
+        by the caller's ``finally`` (temp pools and the import alike).
         """
         sw, sh, handle, fmt = _resolve_source(src, fmt)
         _validate_geometry(sw, sh, fmt, "source")
         for dw, dh, _c in dst_specs:
             _validate_geometry(dw, dh, fmt, "destination")
         own: list[object] = []
-        if handle is not None:
+        if isinstance(src, DspBufferRef):
+            if src_pool is not None:
+                raise DspError(
+                    "src_pool applies to numpy sources; a DspBufferRef "
+                    "is already a daemon buffer"
+                )
+            source = _RefSource(src)
+        elif handle is not None:
             if src_pool is not None:
                 raise DspError(
                     "src_pool applies to numpy sources; a frame handle imports its own dma-bufs"
