@@ -20,6 +20,8 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
+from .dsp_wire import _MAX_BATCH
+
 # Distinct palette used by draw_detections when color is None (indexed by class_id)
 PALETTE: tuple[tuple[int, int, int], ...] = (
     (0, 255, 0),  # green
@@ -247,6 +249,25 @@ def _text_metrics() -> tuple[int, int, int]:
         return 12, 0, 12
 
 
+def _text_width(text: str) -> int:
+    """Painted caption width measured from the box's left edge.
+
+    Backend-matched to :func:`_draw_masks` (cv2 draws at ``xi1`` with
+    LINE_AA spill, Pillow at ``xi1 + 2``) plus a 2 px pad, so a caption
+    strip tightened to this width never clips mid-glyph — the rasterizer
+    itself never clips a caption at the box extent.
+    """
+    try:
+        import cv2
+
+        return int(cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]) + 2
+    except ImportError:
+        from PIL import Image, ImageDraw
+
+        canvas = ImageDraw.Draw(Image.new("L", (1, 1)))
+        return int(canvas.textlength(text)) + 4
+
+
 def _text_row(yi1: int, y0: int, ch: int, offset: int, floor: int,
               fragment: bool) -> int | None:
     """Canvas row for a box caption; ``None`` = not this canvas's pixels.
@@ -457,14 +478,17 @@ def render_overlay_fragments(
     fragments tile the shape extents without gaps or overlap. Two
     caveats: overlapping shapes composite marginally differently (an AA
     edge landing on another shape's stroke blends against it instead of
-    taking the union mask), and a caption wider than its box clips at
-    the box extent — call once per detection for exact single-canvas
+    taking the union mask), and in the per-shape fallback below a
+    caption wider than its shape clips at that shape's extent (the
+    fragment path itself widens a caption's strip to its measured text
+    extent instead). Call once per detection for exact single-canvas
     parity.
 
-    Fragment count is the caller's budget: ``blend_hw`` caps one job at
-    64 overlays and each box costs up to four fragments, so past ~15
-    boxes fall back to one canvas per shape (or one shared union
-    canvas) rather than overflowing the batch.
+    Fragment count is bounded for the caller: ``blend_hw`` caps one job
+    at 64 overlays and each box costs up to four fragments, so past
+    ~15 boxes this falls back to one canvas per shape, and past 64
+    shapes to the one shared union canvas — the return always fits one
+    blend job.
     """
     t = max(1, int(thickness))
     items = [_to_xyxy(b) for b in boxes]
@@ -520,15 +544,23 @@ def render_overlay_fragments(
     if ux1 <= ux0 or uy1 <= uy0:
         raise ValueError("all shapes lie outside the frame")
 
-    # fragment rects: a box with a caption gets union-wide horizontal
-    # strips (the caption may run past its own box; the union canvas
-    # does not clip it there), a box without one only its stroke extent;
-    # vertical strips are always just the stroke columns
+    # fragment rects, tight to what each must carry: horizontal strips
+    # to the box stroke extent (a captioned box's top strip widens to
+    # the measured text extent — the rasterizer never clips a caption
+    # at the box, so its canvas must cover where the text paints),
+    # vertical strips to the stroke columns only. Coverage is unchanged:
+    # every shape pixel lands in its own fragments, and a shape whose
+    # bbox overlaps another fragment's window still rasterizes there
+    # too (opaque double-paints are idempotent; AA edges keep the
+    # union-canvas caveat). Union-wide strips were tried first and cost
+    # 64% of the frame for two boxes on opposite edges.
     frags: list[tuple[int, int, int, int]] = []
     for (xi1, yi1, xi2, yi2, text), _bb in zip(rects, rect_bboxes):
         strip = _LABEL_STRIP if text else 0
-        sx0, sx1 = ((ux0, ux1) if text
-                    else (max(ux0, xi1 - t - 1), min(ux1, xi2 + t + 1)))
+        fx0 = max(ux0, xi1 - t - 1)
+        fx1 = min(ux1, xi2 + t + 1)
+        if text:
+            fx1 = min(ux1, max(fx1, xi1 + _text_width(text)))
         top0 = max(uy0, yi1 - t - 1 - strip)
         top1 = min(uy1, yi1 + t + 1)
         bot0 = max(uy0, yi2 - t)
@@ -536,19 +568,34 @@ def render_overlay_fragments(
         lx1 = min(ux1, xi1 + t + 1)
         rx0 = max(ux0, xi2 - t)
         if top1 > top0:
-            frags.append((sx0, top0, sx1, top1))
+            frags.append((fx0, top0, fx1, top1))
         if bot1 > bot0:
-            frags.append((sx0, bot0, sx1, bot1))
+            frags.append((fx0, bot0, fx1, bot1))
         if bot0 > top1:  # side edges between the horizontal strips
-            if lx1 > ux0:
-                frags.append((ux0, top1, lx1, bot0))
-            if ux1 > rx0:
-                frags.append((rx0, top1, ux1, bot0))
+            if lx1 > fx0:
+                frags.append((fx0, top1, lx1, bot0))
+            if fx1 > rx0:
+                frags.append((rx0, top1, fx1, bot0))
     for bb in line_bboxes:
         fx0, fy0 = max(ux0, bb[0]), max(uy0, bb[1])
         fx1, fy1 = min(ux1, bb[2]), min(uy1, bb[3])
         if fx1 > fx0 and fy1 > fy0:
             frags.append((fx0, fy0, fx1, fy1))
+
+    # blend_hw caps one job at _MAX_BATCH overlays and a box costs up to
+    # four fragments: past that, fall back to one canvas per shape (a
+    # caption wider than its shape then clips at that shape's extent);
+    # past _MAX_BATCH shapes, one shared union canvas. Either way the
+    # return always fits a single blend job.
+    if len(frags) > _MAX_BATCH:
+        frags = [
+            (max(ux0, bb[0]), max(uy0, bb[1]), min(ux1, bb[2]), min(uy1, bb[3]))
+            for bb in rect_bboxes + line_bboxes
+            if min(ux1, bb[2]) > max(ux0, bb[0])
+            and min(uy1, bb[3]) > max(uy0, bb[1])
+        ]
+        if len(frags) > _MAX_BATCH:
+            frags = [(ux0, uy0, ux1, uy1)]
 
     m = _text_metrics()
     out: list[tuple[np.ndarray, int, int]] = []

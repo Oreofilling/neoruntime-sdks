@@ -819,6 +819,51 @@ class TestRenderOverlayFragments:
         with pytest.raises(ValueError, match="outside the frame"):
             render_overlay_fragments(640, 480, [(700, 500, 900, 700)])
 
+    def test_fragment_area_stays_tight_for_separated_boxes(self):
+        # review regression: side strips used to reach union-wide — two
+        # boxes on opposite edges cost 64% of the frame in canvas area,
+        # defeating the fragment path entirely
+        frags = render_overlay_fragments(
+            1280, 720, [(10, 100, 30, 300), (1200, 100, 1270, 300)],
+            labels=["car", "car"], scores=[0.9, 0.9])
+        area = sum(rgba.shape[0] * rgba.shape[1] for rgba, _x, _y in frags)
+        assert area < 0.05 * 1280 * 720
+
+    def test_composite_parity_with_union_canvas_same_row(self):
+        # same-height separated boxes: tight strips must still cover
+        # every stroke pixel exactly (strokes are opaque, LINE_8 — the
+        # union-wide strips used to double-paint them idempotently)
+        base = np.full((720, 1280, 3), 90, np.uint8)
+        boxes = [(10, 100, 60, 300), (1200, 100, 1250, 300)]
+        for kwargs in (
+            dict(labels=[None, None], thickness=3),
+            dict(labels=["car", "car"], scores=[0.9, 0.9], thickness=3),
+        ):
+            union, x0, y0 = render_overlay_rgba(1280, 720, boxes, **kwargs)
+            frags = render_overlay_fragments(1280, 720, boxes, **kwargs)
+            got = self._composite(base.copy(), frags)
+            want = self._composite(base.copy(), [(union, x0, y0)])
+            assert np.array_equal(got, want)
+
+    def test_over_64_fragments_fall_back_to_one_canvas_per_shape(self):
+        # 17 captioned boxes would be 68 stroke fragments — one over
+        # blend_hw's batch cap; the renderer must return one canvas per
+        # shape instead of an unblendable list
+        boxes = [(10 + 36 * i, 50, 30 + 36 * i, 120) for i in range(17)]
+        frags = render_overlay_fragments(
+            640, 480, boxes, labels=["x"] * 17, scores=[0.5] * 17)
+        assert len(frags) == 17
+        assert all(rgba[..., 3].max() > 0 for rgba, _x, _y in frags)
+
+    def test_over_64_shapes_collapse_to_one_union_canvas(self):
+        boxes = [
+            (i * 8 % 600, i * 17 % 400, i * 8 % 600 + 20, i * 17 % 400 + 20)
+            for i in range(70)
+        ]
+        frags = render_overlay_fragments(640, 480, boxes)
+        assert len(frags) == 1
+        assert frags[0][0].shape[2] == 4
+
 
 # ------------------------------------------------------------ router legs --
 class TestRouterLegs:
