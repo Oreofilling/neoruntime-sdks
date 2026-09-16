@@ -27,7 +27,10 @@ logger = logging.getLogger("perf_demo.status")
 
 GAP_SANITY_MS = 10_000.0  # ignore absurd gaps (startup, reconnect)
 WATCHER_REBUILD_BACKOFF_S = 0.5
-WATCHER_REBUILD_LIMIT = 10
+# Must outlast phase_runner's 30s startup grace: each rebuild costs a
+# 500ms poll timeout + backoff, so a too-small budget gives up on a
+# cold-starting encoder before its first packet can ever arrive.
+WATCHER_REBUILD_LIMIT = 30
 
 
 class StatusLine(threading.Thread):
@@ -179,6 +182,16 @@ class EncodedWatcher(threading.Thread):
     def stop(self) -> None:
         self._stop_event.set()
 
+    def _close_client(self, client) -> None:
+        # A close error from ONE dead cycle must not stick to the final
+        # watcher_exit verdict: phase_runner fails the phase on any
+        # watcher_exit error, so a later clean cycle clears it.
+        try:
+            client.close()
+            self.cleanup_error = None
+        except Exception as exc:
+            self.cleanup_error = type(exc).__name__
+
     def close(self, timeout: float = 2.0) -> bool:
         self.stop()
         self.join(timeout)
@@ -197,10 +210,7 @@ class EncodedWatcher(threading.Thread):
                 self.hub.emit("watcher_error", stream_id=self.stream_id, error=reason)
             finally:
                 if client is not None:
-                    try:
-                        client.close()
-                    except Exception as exc:
-                        self.cleanup_error = type(exc).__name__
+                    self._close_client(client)
             if self._stop_event.is_set():
                 break
             self._consecutive_rebuilds += 1
