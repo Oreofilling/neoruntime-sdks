@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import threading
+import weakref
+
 import numpy as np
 import pytest
 
+from neoruntime_ipc_sdk import accel
 from neoruntime_ipc_sdk.accel import (
     AccelRouter,
     DegradationRecord,
@@ -12,6 +16,7 @@ from neoruntime_ipc_sdk.accel import (
     RoutePolicy,
     get_default_router,
 )
+from neoruntime_ipc_sdk.dsp import DspError
 
 
 def _sw_upper(x):
@@ -205,3 +210,79 @@ class TestSetRoutePolicy:
             assert router.health()["policy"] == "software_only"
         finally:
             set_route_policy(original)
+
+
+class TestSharedResident:
+    """Retirement semantics of the process-resident DSP client."""
+
+    class _Fake:
+        def __init__(self, fail=(), block=None):
+            self.closed = False
+            self.live_pools = []  # entries are alive flags
+            self.fail = set(fail)
+            self.block = block
+
+        def has_live_pools(self):
+            return any(self.live_pools)
+
+        def close(self):
+            self.closed = True
+
+        def __getattr__(self, name):
+            def call(*args, **kwargs):
+                if self.block is not None and name == self.block[0]:
+                    self.block[1].set()
+                    self.block[2].wait()
+                if name in self.fail:
+                    raise DspError(f"{name} failed")
+                return ("ok", name)
+
+            return call
+
+    def _install(self, monkeypatch, fake):
+        monkeypatch.setattr(accel, "_lazy_dsp_client", lambda: fake)
+        monkeypatch.setattr(accel, "_dsp_shared", fake)
+        monkeypatch.setattr(accel, "_dsp_active", 0)
+        monkeypatch.setattr(accel, "_dsp_retired", weakref.WeakSet())
+
+    def test_failure_retires_and_drains_to_close(self, monkeypatch):
+        fake = self._Fake(fail=["resize_hw"])
+        self._install(monkeypatch, fake)
+        with pytest.raises(DspError, match="resize_hw failed"):
+            accel.shared_dsp_call("resize_hw", None, 4, 4)
+        assert fake.closed  # nothing in flight, no pools — closed at drain
+        assert accel._dsp_shared is None  # ...and the slot is free again
+
+    def test_retirement_waits_for_a_concurrent_call(self, monkeypatch):
+        entered, release = threading.Event(), threading.Event()
+        fake = self._Fake(fail=["resize_hw"], block=("blend_hw", entered, release))
+        self._install(monkeypatch, fake)
+        done = {}
+
+        def worker():
+            done["r"] = accel.shared_dsp_call("blend_hw", None)
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        try:
+            assert entered.wait(2)  # the other call is mid-flight on the resident
+            with pytest.raises(DspError):
+                accel.shared_dsp_call("resize_hw", None, 4, 4)  # a sibling fails
+            assert not fake.closed  # retirement defers the close under it
+            assert accel._dsp_shared is None  # ...but freed the slot at once
+        finally:
+            release.set()
+            t.join(2)
+        assert done["r"] == ("ok", "blend_hw")  # mid-flight call finished fine
+        assert fake.closed  # and the drain closed once it ended
+
+    def test_retirement_waits_for_live_pools(self, monkeypatch):
+        fake = self._Fake(fail=["resize_hw"])
+        fake.live_pools = [True]  # a ref from before the failure
+        self._install(monkeypatch, fake)
+        with pytest.raises(DspError):
+            accel.shared_dsp_call("resize_hw", None, 4, 4)
+        assert not fake.closed  # the ref's pool still anchors the client
+        fake.live_pools = []  # holder released it
+        accel.shared_dsp_call("blend_hw", None)  # any call's end re-drains
+        assert fake.closed

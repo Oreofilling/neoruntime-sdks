@@ -55,6 +55,7 @@ import socket
 import struct
 import threading
 import warnings
+import weakref
 from typing import Sequence, Union
 
 import grpc
@@ -309,6 +310,24 @@ class DspBufferPool:
         self._released = True
         for bid in self.ids:
             self._client._send_release(bid)
+        for fd in self.plane_fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def _mark_dead(self) -> None:
+        """Poison the pool with no wire traffic — the client is closing.
+
+        The daemon reclaims these buffers when the UDS drops, so the ids
+        dangle from here on. Flagging the pool dead makes every later
+        use (direct or through a :class:`DspBufferRef`) raise fast
+        client-side instead of submitting reclaimed ids to inference or
+        jobs. Closes our fds too — they are ours.
+        """
+        if self._released:
+            return
+        self._released = True
         for fd in self.plane_fds:
             try:
                 os.close(fd)
@@ -622,6 +641,10 @@ class DspBufferRef:
     Context manager support releases on exit. Device-side lifetime:
     like every client-owned buffer, the daemon reclaims it when the
     client's UDS closes — a leaked ref costs its slot until then.
+    :meth:`DspClient.close` (explicit, or the accel router dropping the
+    process-resident client after a failed call) also poisons the pool,
+    so a ref outliving its client raises on next use instead of
+    submitting the reclaimed id.
     """
 
     def __init__(
@@ -688,8 +711,10 @@ class DspBufferRef:
             )
         if self._pool._released:
             raise DspError(
-                "dsp buffer ref's pool was released underneath it — "
-                "release the ref before the pool"
+                "dsp buffer ref's pool is gone — released explicitly, or "
+                "its client closed and the daemon reclaimed the buffers "
+                "on disconnect; keep the owning client open across jobs "
+                "that read the ref"
             )
 
     def __enter__(self) -> "DspBufferRef":
@@ -855,6 +880,10 @@ class DspClient(GrpcClient):
         # set once the daemon refuses a gray8 CONVERT (hailo15 firmware
         # gap) — later gray8 pairs skip the doomed submit quietly
         self._gray8_refused = False
+        # pools this client allocated, weakly held: close() poisons
+        # whatever is still live so later use fails fast client-side
+        # instead of sending ids the daemon reclaimed with the UDS
+        self._live_pools: "weakref.WeakSet[DspBufferPool]" = weakref.WeakSet()
 
     # -- life cycle ----------------------------------------------------------
     def _ensure_sock(self) -> socket.socket:
@@ -868,8 +897,26 @@ class DspClient(GrpcClient):
             self._sock = sock
         return self._sock
 
+    def has_live_pools(self) -> bool:
+        """True while a pool this client allocated is still usable.
+
+        The accel router's retirement drain polls this before closing a
+        failed resident: pools die with their refs (the WeakSet) or turn
+        stale on ``release()``, so flipping to False means no ref can
+        still be reading through this client.
+        """
+        return any(not pool._released for pool in self._live_pools)
+
     def close(self) -> None:
-        """Close both transports. The daemon releases our DSP buffers."""
+        """Close both transports. The daemon releases our DSP buffers.
+
+        Still-live pools this client allocated are poisoned first: the
+        daemon reclaims their buffers when the UDS drops, so a held
+        :class:`DspBufferRef` would dangle — after close, its (and the
+        pool's) next use raises instead of submitting reclaimed ids.
+        """
+        for pool in list(self._live_pools):
+            pool._mark_dead()
         if self._sock is not None:
             try:
                 self._sock.close()
@@ -929,7 +976,9 @@ class DspClient(GrpcClient):
         _code, _n, _planes, strides, sizes, ids, fds = self._exchange_alloc(
             width, height, _HAL_PIXEL_FORMAT[fmt], count
         )
-        return DspBufferPool(self, width, height, fmt, ids, fds, strides, sizes)
+        pool = DspBufferPool(self, width, height, fmt, ids, fds, strides, sizes)
+        self._live_pools.add(pool)
+        return pool
 
     def import_shared_buffers(
         self,

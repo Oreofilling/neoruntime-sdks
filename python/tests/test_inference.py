@@ -1082,7 +1082,7 @@ class TestInferWithRef:
         ref = _dsp_ref()
         ref._pool._released = True
         try:
-            with pytest.raises(DspError, match="pool was released"):
+            with pytest.raises(DspError, match="pool is gone"):
                 client.infer(ref, "yolov8n")
 
             assert client.stub.requests == []
