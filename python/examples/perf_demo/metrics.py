@@ -78,6 +78,10 @@ class _Counters:
         with self._lock:
             self._data[key] = value
 
+    def increment(self, key: str, amount: int = 1) -> None:
+        with self._lock:
+            self._data[key] = self._data.get(key, 0) + amount
+
     def get(self, key: str):
         with self._lock:
             return self._data[key]
@@ -96,9 +100,12 @@ class ChainAMetrics:
         self.skew_ms = Ring()                    # result.skew_us / 1000 (device clock)
         self.counters = _Counters(
             results=0, subscribe_errors=0, annotate_calls=0, annotate_errors=0,
-            dropped=0, avg_latency_ms=0.0, avg_skew_us=0.0,
+            dropped=0, avg_latency_ms=None, avg_skew_us=0.0,
+            infer_attempts=None, infer_failures=None,
+            per_frame_failures_observable=False,
+            failure_observability="sdk_skips_failed_frames",
             last_result_age_s=None, epoch=None, degraded_reason=None,
-            reconnects=0,
+            reconnects=0, cleanup_error=None,
         )
         self._last_result_t: float | None = None
 
@@ -136,17 +143,23 @@ class ChainBMetrics:
 
     def __init__(self) -> None:
         self.frame_t = Ring(capacity=1200)       # processed-frame arrival (rate)
-        self.pull_ms = Ring()                    # get/subscribe + to_array
-        self.infer_ms = Ring()                   # pipeline.run total
-        self.hw_infer_ms = Ring()                # result.infer_time_us (model head)
+        self.pull_ms = Ring()                    # materialization only (legacy name)
+        self.infer_ms = Ring()                   # resize + infer RPC (legacy aggregate)
+        self.hw_infer_ms = Ring()                # result.hw_infer_time_us only
         self.draw_ms = Ring()                    # render_overlay_rgba + text chip + blend_hw
         self.pub_ms = Ring()                     # FramePublisher.publish
-        self.e2e_ms = Ring()                     # publish done − frame.timestamp_ns
+        self.e2e_ms = Ring()                     # compose done − source; NOT display
         self.counters = _Counters(
             frames_ok=0, frames_err=0, objects_last=0,
             inject_dropped=0, in_flight=0, pool_depth=0,
             retained_frames=None, lease_mode=None,
             degraded_reason=None, rebuilds=0, publishes=0,
+            frames_delivered=0, frames_materialized=0, rate_skipped=0,
+            decimation_skipped=0, infer_attempts=0, infer_success=0,
+            infer_failures=0, composed_unique=0, publish_calls=0,
+            publish_errors=0, published_unique=0, compose_errors=0,
+            last_infer_success_ns=None, last_compose_ns=None,
+            cleanup_error=None,
         )
 
     def record_frame(self, *, pull_ms: float, infer_ms: float, hw_infer_ms: float | None,
@@ -162,7 +175,8 @@ class ChainBMetrics:
         self.draw_ms.add(draw_ms, t)
         if pub_ms is not None:
             self.pub_ms.add(pub_ms, t)
-        self.e2e_ms.add(e2e_ms, t)
+        if e2e_ms is not None:
+            self.e2e_ms.add(e2e_ms, t)
         self.counters.set("objects_last", objects)
 
     def snapshot(self, window_s: float = 10.0) -> dict:
@@ -173,7 +187,9 @@ class ChainBMetrics:
             "hw_infer": self.hw_infer_ms.summary(window_s),
             "draw": self.draw_ms.summary(window_s),
             "pub": self.pub_ms.summary(window_s),
-            "e2e": self.e2e_ms.summary(window_s),
+            "e2e": self.e2e_ms.summary(window_s),  # compatibility alias only
+            "compose_age": self.e2e_ms.summary(window_s),
+            "e2e_semantics": "source_to_compose_done_not_display",
             **self.counters.snapshot(),
         }
 
@@ -211,7 +227,8 @@ class SystemMetrics:
 class MetricsHub:
     """Everything the demo measures, in one lock-guarded object."""
 
-    def __init__(self) -> None:
+    def __init__(self, recorder=None) -> None:
+        self.recorder = recorder
         self.started_monotonic = time.monotonic()
         self.started_wall = time.time()
         self.a = ChainAMetrics()
@@ -219,6 +236,10 @@ class MetricsHub:
         self.sys = SystemMetrics()
         self._lock = threading.Lock()
         self._final: dict | None = None
+
+    def emit(self, kind: str, **fields) -> None:
+        if self.recorder is not None:
+            self.recorder.emit(kind, **fields)
 
     def uptime_s(self) -> float:
         return time.monotonic() - self.started_monotonic
@@ -233,6 +254,7 @@ class MetricsHub:
             "a": self.a.snapshot(window_s),
             "b": self.b.snapshot(window_s),
             "sys": self.sys.snapshot(),
+            "recorder": self.recorder.snapshot() if self.recorder else None,
         }
         if final:
             snap["final"] = final

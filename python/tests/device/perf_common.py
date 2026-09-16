@@ -198,6 +198,9 @@ def pick_model(*preferred: str) -> str | None:
     device has (the chosen file is recorded in the smoke evidence)
     instead of hard-requiring one filename.
     """
+    override = os.environ.get("PERF_MODEL_FILE")
+    if override and os.path.exists(override):
+        return override
     for name in preferred:
         path = os.path.join(MODEL_DIR, name)
         if os.path.exists(path):

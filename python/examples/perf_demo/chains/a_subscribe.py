@@ -1,22 +1,8 @@
-"""Chain A: platform-scheduled inference via InferenceClient.subscribe.
+"""Chain A: subscribe results, annotate bound boxes and unbound metrics.
 
-The app never touches pixels on this chain — it subscribes to results
-on the infer stream (default ``third``), then burns the detections AND
-its own metric lines through the platform overlay (annotate) onto the
-display stream (default ``main``). Two annotate calls per tick keep the
-semantics apart: detections bind to their frame (frame_sequence +
-stream_epoch), the metric lines stay unbound with a TTL so they are
-always visible. The two ride DIFFERENT session_ids because the daemon
-layers by (session_id, source) — same identity replaces, different
-stacks — so the unbound metric layer must not share the detection
-layer's session.
-
-Recovery model: a dead subscribe path (the -2814 deployment condition)
-blocks inside next() forever, so the app watchdog cancels the iterator
-from another thread (cancel() is documented cross-thread safe) and,
-if no result ever arrived, degrades this chain — chain B keeps running.
+Detection and metric layers use distinct session IDs. Raw events record
+result arrival and each annotate call, not a claim of encoded visibility.
 """
-
 from __future__ import annotations
 
 import logging
@@ -24,112 +10,139 @@ import threading
 import time
 
 from display import format_a_line, format_status_line, metric_detections
+
 from neoruntime_ipc_sdk import OverlayClient
 
 logger = logging.getLogger("perf_demo.chain_a")
-
 EPOCH_REFRESH_S = 30.0
 REBUILD_BACKOFF_S = 1.0
 
 
 class ChainA(threading.Thread):
-    """Subscribe for results, annotate bound boxes + unbound metric bars."""
-
     def __init__(self, *, camera, infer, hub, stream_id: str = "third",
                  display_stream: str = "main", model_id: str = "",
                  fps: int = 10, annotate_hz: float = 3.0,
-                 min_score: float = 0.3, session_id: str = "perf-demo") -> None:
+                 min_score: float = 0.3, session_id: str = "perf-demo",
+                 metrics_overlay: bool = True, detections_overlay: bool = True) -> None:
         super().__init__(name="chain-a", daemon=True)
-        self.camera = camera
-        self.infer = infer
-        self.hub = hub
-        self.stream_id = stream_id
-        self.display_stream = display_stream
-        self.model_id = model_id
-        self.fps = fps
-        self.min_score = min_score
-        self.session_id = session_id
-        # separate layer identity: daemon stacks (session, source) layers,
-        # and a same-session detections payload would replace the boxes
-        self.osd_session = f"{session_id}-osd"
+        self.camera, self.infer, self.hub = camera, infer, hub
+        self.stream_id, self.display_stream = stream_id, display_stream
+        self.model_id, self.fps, self.min_score = model_id, fps, min_score
+        self.session_id, self.osd_session = session_id, f"{session_id}-osd"
+        self.metrics_overlay, self.detections_overlay = metrics_overlay, detections_overlay
         self.overlay = OverlayClient()
-        self._annotate_interval = 1.0 / max(annotate_hz, 0.1)
-        self._stop = threading.Event()
+        self._annotate_interval = 1.0 / annotate_hz
+        self._stop_event = threading.Event()
         self._iter = None
-        self._epoch: int | None = None
-        self._epoch_next_check = 0.0
-        self._last_annotate = 0.0
-        self._t0 = time.monotonic()
-
-    # -- control surface (app watchdog / teardown) --
+        self._epoch = None
+        self._epoch_next_check, self._last_annotate = 0.0, 0.0
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
         self.cancel_iter()
 
     def cancel_iter(self) -> None:
-        """Wake a consumer blocked in next() — cross-thread safe."""
         it = self._iter
         if it is not None:
             try:
                 it.cancel()
-            except Exception:  # noqa: BLE001 - watchdog path, never raise
-                pass
+            except Exception as exc:
+                logger.warning("subscribe cancel failed: %s", type(exc).__name__)
+                self.hub.emit("a_error", error="cancel_failed")
 
     def degrade(self, reason: str) -> None:
         self.hub.a.counters.set("degraded_reason", reason)
         self.cancel_iter()
 
-    # -- thread body --
-
-    def run(self) -> None:  # noqa: C901 - the rebuild loop is the story
+    def run(self) -> None:
+        enabled = False
         try:
-            while not self._stop.is_set() \
-                    and self.hub.a.counters.get("degraded_reason") is None:
+            if not self._stop_event.is_set() and (self.metrics_overlay or self.detections_overlay):
+                self.overlay.enable(show_label=True, show_confidence=False, line_thickness=2)
+                enabled = True
+            while not self._stop_event.is_set() and self.hub.a.counters.get("degraded_reason") is None:
                 try:
                     self._subscribe_loop()
-                except StopIteration:
-                    pass  # clean server-side end: fall through to rebuild
-                except Exception as exc:  # noqa: BLE001 - count, backoff, retry
-                    errs = (self.hub.a.counters.get("subscribe_errors") or 0) + 1
-                    self.hub.a.counters.set("subscribe_errors", errs)
-                    logger.warning("chain A subscribe loop ended: %s", exc)
-                if self._stop.is_set() \
-                        or self.hub.a.counters.get("degraded_reason") is not None:
+                except Exception as exc:
+                    self.hub.a.counters.increment("subscribe_errors")
+                    self.hub.emit("a_error", error=type(exc).__name__, stream_id=self.stream_id)
+                    logger.warning("chain A subscribe ended: %s", type(exc).__name__)
+                if self._stop_event.is_set() or self.hub.a.counters.get("degraded_reason") is not None:
                     break
-                n = (self.hub.a.counters.get("reconnects") or 0) + 1
-                self.hub.a.counters.set("reconnects", n)
-                self._sleep_stop_aware(REBUILD_BACKOFF_S)
+                self.hub.a.counters.increment("reconnects")
+                self._stop_event.wait(REBUILD_BACKOFF_S)
+        except Exception as exc:
+            self.hub.a.counters.set("degraded_reason", type(exc).__name__)
         finally:
             self._clear_drawings()
+            if enabled:
+                try:
+                    self.overlay.disable()
+                except Exception as exc:
+                    self.hub.a.counters.set("cleanup_error", type(exc).__name__)
+            try:
+                self.overlay.close()
+            except Exception as exc:
+                self.hub.a.counters.set("cleanup_error", type(exc).__name__)
+            self.hub.emit("chain_exit", chain="a", counters=self.hub.a.counters.snapshot())
 
     def _subscribe_loop(self) -> None:
         self._refresh_epoch()
-        gen = self.infer.subscribe(
-            self.stream_id, self.model_id,
-            fps=self.fps, session_id=self.session_id,
-        )
+        gen = self.infer.subscribe(self.stream_id, self.model_id, fps=self.fps, session_id=self.session_id)
         self._iter = gen
-        for seq, result in gen:
-            if self._stop.is_set():
-                break
-            now = time.monotonic()
-            m = self.hub.a
-            m.record_result(
-                latency_ms=getattr(gen, "last_latency_ms", 0.0) or None,
-                skew_us=getattr(gen, "last_skew_us", 0) or None,
-                now=now,
-            )
-            m.counters.set("dropped", getattr(gen, "dropped", 0) or 0)
-            if getattr(gen, "avg_latency_ms", 0.0):
-                m.counters.set("avg_latency_ms", gen.avg_latency_ms)
-            if getattr(gen, "avg_skew_us", 0.0):
-                m.counters.set("avg_skew_us", gen.avg_skew_us)
-            m.counters.set("epoch", self._epoch)
-            self._maybe_annotate(seq, result, now)
-        # generator exhausted: the outer loop reconnects
+        try:
+            if self._stop_event.is_set():
+                return
+            for seq, result in gen:
+                if self._stop_event.is_set():
+                    break
+                now = time.monotonic()
+                self.hub.emit("a_result", source_frame_id=seq, stream_id=self.stream_id,
+                              result_timestamp_ns=result.timestamp_ns,
+                              result_timestamp_clock="unknown",
+                              success=True, infer_failures=None,
+                              per_frame_failures_observable=False,
+                              latency_ms=None, source_age_ms=None,
+                              sdk_latency_ms=getattr(gen, "last_latency_ms", 0) or None,
+                              sdk_latency_clock_verified=False,
+                              skew_us=getattr(gen, "last_skew_us", 0) or None,
+                              hw_infer_time_us=getattr(result, "hw_infer_time_us", 0) or None,
+                              queue_time_us=getattr(result, "queue_time_us", None),
+                              daemon_infer_time_us=getattr(result, "infer_time_us", None))
+                # SDK yields only successful results; it skips per-frame
+                # failures and may eventually raise a subscription exception.
+                # Its wall-clock latency diagnostic is unverified here, not a
+                # source age or a sample for the validated latency summary.
+                m = self.hub.a
+                m.record_result(latency_ms=None,
+                                skew_us=getattr(gen, "last_skew_us", 0) or None, now=now)
+                m.counters.set("dropped", getattr(gen, "dropped", 0) or 0)
+                m.counters.set("avg_latency_ms", None)
+                m.counters.set("avg_skew_us", getattr(gen, "avg_skew_us", 0) or 0)
+                m.counters.set("epoch", self._epoch)
+                self._maybe_annotate(seq, result, now)
+        finally:
+            self.cancel_iter()
+            self._iter = None
+            close = getattr(gen, "close", None)
+            if close:
+                close()  # owning consumer thread, not concurrently executing next()
 
-    # -- annotate side --
+    def _annotate(self, seq, layer, detections, **kwargs) -> bool:
+        started = time.monotonic_ns()
+        success, error = False, None
+        try:
+            self.overlay.annotate(self.display_stream, detections, **kwargs)
+            self.hub.a.counters.increment("annotate_calls")
+            success = True
+        except Exception as exc:
+            error = type(exc).__name__
+            self.hub.a.counters.increment("annotate_errors")
+        self.hub.emit("a_annotate", source_frame_id=seq, stream_id=self.stream_id,
+                      display_stream=self.display_stream, layer=layer,
+                      annotate_ms=(time.monotonic_ns() - started) / 1e6,
+                      success=success, error=error, stream_epoch=self._epoch)
+        return success
 
     def _maybe_annotate(self, seq: int, result, now: float) -> None:
         if now - self._last_annotate < self._annotate_interval:
@@ -138,46 +151,18 @@ class ChainA(threading.Thread):
         if now >= self._epoch_next_check:
             self._refresh_epoch()
             self._epoch_next_check = now + EPOCH_REFRESH_S
-        m = self.hub.a
-        # 1) bound detections: the frame-sync showcase (P1-2 semantics)
-        try:
-            objs = [o for o in (result.objects or [])
-                    if (getattr(o, "score", 0.0) or 0.0) >= self.min_score]
-            self.overlay.annotate(
-                self.display_stream, objs,
-                frame_sequence=seq if seq and seq > 0 else None,
-                stream_epoch=self._epoch,
-                session_id=self.session_id,
-            )
-            m.counters.set("annotate_calls",
-                           (m.counters.get("annotate_calls") or 0) + 1)
-        except Exception as exc:  # noqa: BLE001 - display must not kill the chain
-            m.counters.set("annotate_errors",
-                           (m.counters.get("annotate_errors") or 0) + 1)
-            logger.debug("chain A detection annotate failed: %s", exc)
-            self._refresh_epoch()  # a stale epoch is the usual suspect
-            return
-        # 2) unbound metric lines: always visible, TTL keeps them alive;
-        #    own session so this layer stacks with the bound boxes above
-        try:
+        if self.detections_overlay:
+            objs = [o for o in (result.objects or []) if (getattr(o, "score", 0) or 0) >= self.min_score]
+            if not self._annotate(seq, "detections", objs,
+                                  frame_sequence=seq if seq and seq > 0 else None,
+                                  stream_epoch=self._epoch, session_id=self.session_id):
+                self._refresh_epoch()
+                return
+        if self.metrics_overlay:
             snap = self.hub.snapshot()
-            lines = [
-                format_a_line(snap["a"],
-                              snap["sys"].get("stream_delta", {}).get(self.display_stream)),
-                format_status_line(snap["sys"], snap["uptime_s"]),
-            ]
-            self.overlay.annotate(
-                self.display_stream,
-                detections=metric_detections(lines),
-                ttl_ms=2000,
-                session_id=self.osd_session,
-            )
-            m.counters.set("annotate_calls",
-                           (m.counters.get("annotate_calls") or 0) + 1)
-        except Exception as exc:  # noqa: BLE001
-            m.counters.set("annotate_errors",
-                           (m.counters.get("annotate_errors") or 0) + 1)
-            logger.debug("chain A metric annotate failed: %s", exc)
+            lines = [format_a_line(snap["a"], snap["sys"].get("stream_delta", {}).get(self.display_stream)),
+                     format_status_line(snap["sys"], snap["uptime_s"])]
+            self._annotate(seq, "metrics", metric_detections(lines), ttl_ms=2000, session_id=self.osd_session)
 
     def _refresh_epoch(self) -> None:
         try:
@@ -185,19 +170,15 @@ class ChainA(threading.Thread):
                 if s.stream_id == self.display_stream:
                     self._epoch = s.stream_epoch
                     return
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("epoch refresh failed: %s", exc)
+        except Exception as exc:
+            logger.debug("epoch refresh failed: %s", type(exc).__name__)
 
     def _clear_drawings(self) -> None:
-        """Graceful stop: clear BOTH of our layers — the bound boxes and
-        the OSD metric layer (SIGKILL relies on the daemon's ttl expiry
-        instead, ~2 s)."""
-        for session in (self.session_id, self.osd_session):
+        for enabled, session in ((self.detections_overlay, self.session_id),
+                                 (self.metrics_overlay, self.osd_session)):
+            if not enabled:
+                continue
             try:
-                self.overlay.annotate(self.display_stream, [],
-                                      polygons=[], session_id=session)
-            except Exception:  # noqa: BLE001 - teardown path
-                pass
-
-    def _sleep_stop_aware(self, seconds: float) -> None:
-        self._stop.wait(seconds)
+                self.overlay.annotate(self.display_stream, [], polygons=[], session_id=session)
+            except Exception as exc:
+                self.hub.a.counters.set("cleanup_error", type(exc).__name__)

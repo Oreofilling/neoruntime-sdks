@@ -26,6 +26,8 @@ from display import format_a_line, format_b_line
 logger = logging.getLogger("perf_demo.status")
 
 GAP_SANITY_MS = 10_000.0  # ignore absurd gaps (startup, reconnect)
+WATCHER_REBUILD_BACKOFF_S = 0.5
+WATCHER_REBUILD_LIMIT = 10
 
 
 class StatusLine(threading.Thread):
@@ -44,14 +46,14 @@ class StatusLine(threading.Thread):
         self.interval = interval
         self.a_display = a_display
         self.b_stream = b_stream
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
         self._last_counters: dict[str, dict] = {}  # stream_id -> raw counters
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
 
     def run(self) -> None:
-        while not self._stop.wait(self.interval):
+        while not self._stop_event.wait(self.interval):
             try:
                 self.tick()
             except Exception:  # noqa: BLE001 - status must never kill the demo
@@ -74,6 +76,7 @@ class StatusLine(threading.Thread):
         print(f"[perf-demo] {a_line}", flush=True)
         print(f"[perf-demo] {b_line}", flush=True)
         self._write_json(snap)
+        self.hub.emit("status", snapshot=snap)
         return snap
 
     # -- samplers --
@@ -93,8 +96,13 @@ class StatusLine(threading.Thread):
             }
             prev = self._last_counters.get(stream_id)
             self._last_counters[stream_id] = cur
-            if prev is None:
-                continue  # first reading: establish the baseline only
+            reset = prev is not None and (cur["stream_epoch"] != prev["stream_epoch"] or any(
+                cur[k] < prev[k] for k in ("packets_published", "bake_skips", "overlay_late_commands")))
+            if prev is None or reset:
+                self.hub.sys.stream_delta[stream_id] = dict(
+                    packets=None, bake_skips=None, overlay_late_commands=None,
+                    epoch=cur["stream_epoch"], bake_pct=None, reset=reset)
+                continue
             d_packets = cur["packets_published"] - prev["packets_published"]
             d_skips = cur["bake_skips"] - prev["bake_skips"]
             delta = {
@@ -121,10 +129,15 @@ class StatusLine(threading.Thread):
         b.counters.set("in_flight", len(st.in_flight_buffer_ids))
 
     def _sample_system(self) -> None:
+        s = self.hub.sys.counters
+        for key in ("npu_util", "dsp_util", "cpu_util", "temp_c", "model_avg_latency_us", "model_hw_fps", "model_qps"):
+            s.set(key, None)
+        s.set("sample_error", None)
         try:
             stats = self.infer.get_stats(sampling_window_ms=50)
         except Exception as exc:  # noqa: BLE001
             logger.debug("get_stats failed: %s", exc)
+            s.set("sample_error", type(exc).__name__)
             return
         s = self.hub.sys.counters
         s.set("npu_util", stats.get("device_utilization"))
@@ -143,7 +156,7 @@ class StatusLine(threading.Thread):
         if not path:
             return
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             tmp = f"{path}.tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(snap, fh, indent=1, default=str)
@@ -152,30 +165,77 @@ class StatusLine(threading.Thread):
             logger.debug("json write failed: %s", exc)
 
 
-def start_encoded_watcher(stream_id: str, hub) -> threading.Thread:
-    """Watch one encoded stream: record inter-packet pts gaps into the hub."""
+class EncodedWatcher(threading.Thread):
+    """Bounded polling; the worker owns and closes its socket on every path."""
 
-    _watch_stop = threading.Event()
+    def __init__(self, stream_id: str, hub) -> None:
+        super().__init__(name=f"enc-watch-{stream_id}", daemon=True)
+        self.stream_id, self.hub = stream_id, hub
+        self._stop_event = threading.Event()
+        self.cleanup_error = None
+        self.terminal_error = None
+        self._consecutive_rebuilds = 0
 
-    def _run() -> None:
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def close(self, timeout: float = 2.0) -> bool:
+        self.stop()
+        self.join(timeout)
+        return not self.is_alive()
+
+    def run(self) -> None:
         from neoruntime_ipc_sdk import EncodedStreamClient
-
-        last_pts = 0
-        while not _watch_stop.is_set():
+        while not self._stop_event.is_set():
+            client = None
+            reason = "no_packet_timeout_eof_or_invalid"
             try:
-                client = EncodedStreamClient(stream_id=stream_id)
-                for pkt in client.subscribe():
-                    if _watch_stop.is_set():
-                        break
-                    if last_pts and pkt.pts_ns > last_pts:
-                        gap_ms = (pkt.pts_ns - last_pts) / 1e6
-                        if 0 < gap_ms < GAP_SANITY_MS:
-                            hub.sys.note_encode_gap(stream_id, gap_ms)
-                    last_pts = pkt.pts_ns
-            except Exception as exc:  # noqa: BLE001 - reconnect and continue
-                logger.debug("encoded watcher(%s) ended: %s", stream_id, exc)
-                _watch_stop.wait(5.0)
+                client = EncodedStreamClient(stream_id=self.stream_id)
+                self._consume(client)
+            except Exception as exc:
+                reason = type(exc).__name__
+                self.hub.emit("watcher_error", stream_id=self.stream_id, error=reason)
+            finally:
+                if client is not None:
+                    try:
+                        client.close()
+                    except Exception as exc:
+                        self.cleanup_error = type(exc).__name__
+            if self._stop_event.is_set():
+                break
+            self._consecutive_rebuilds += 1
+            self.hub.emit("watcher_reconnect", stream_id=self.stream_id, reason=reason,
+                          consecutive_rebuilds=self._consecutive_rebuilds)
+            if self._consecutive_rebuilds >= WATCHER_REBUILD_LIMIT:
+                self.terminal_error = "reconnect_limit"
+                break
+            self._stop_event.wait(WATCHER_REBUILD_BACKOFF_S)
+        self.hub.emit("watcher_exit", stream_id=self.stream_id,
+                      error=self.cleanup_error or self.terminal_error)
 
-    t = threading.Thread(target=_run, name=f"enc-watch-{stream_id}", daemon=True)
-    t.start()
-    return t
+    def _consume(self, client) -> None:
+        import time
+        last_pts, last_arrival = None, None
+        while not self._stop_event.is_set():
+            pkt = client.get_frame(timeout_ms=500)
+            if pkt is None:
+                # SDK deliberately conflates EOF, timeout and invalid/partial
+                # packets. Rebuild all of them: retrying EOF spins forever,
+                # and a partial read may no longer be on a framing boundary.
+                return
+            self._consecutive_rebuilds = 0
+            now = time.monotonic_ns()
+            gap = (pkt.pts_ns - last_pts) / 1e6 if last_pts is not None else None
+            if gap is not None and 0 < gap < GAP_SANITY_MS:
+                self.hub.sys.note_encode_gap(self.stream_id, gap)
+            self.hub.emit("encoded_packet", stream_id=self.stream_id,
+                          packet_sequence=getattr(pkt, "seq", None),
+                          pts_ns=pkt.pts_ns, pts_gap_ms=gap,
+                          arrival_gap_ms=(now - last_arrival) / 1e6 if last_arrival else None)
+            last_pts, last_arrival = pkt.pts_ns, now
+
+
+def start_encoded_watcher(stream_id: str, hub) -> EncodedWatcher:
+    watcher = EncodedWatcher(stream_id, hub)
+    watcher.start()
+    return watcher
