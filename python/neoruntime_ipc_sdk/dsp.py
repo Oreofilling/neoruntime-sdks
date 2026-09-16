@@ -897,6 +897,16 @@ class DspClient(GrpcClient):
             self._sock = sock
         return self._sock
 
+    def has_live_pools(self) -> bool:
+        """True while a pool this client allocated is still usable.
+
+        The accel router's retirement drain polls this before closing a
+        failed resident: pools die with their refs (the WeakSet) or turn
+        stale on ``release()``, so flipping to False means no ref can
+        still be reading through this client.
+        """
+        return any(not pool._released for pool in self._live_pools)
+
     def close(self) -> None:
         """Close both transports. The daemon releases our DSP buffers.
 
