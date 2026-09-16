@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import threading
 import time
+import weakref
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
@@ -110,14 +111,17 @@ class _Route:
 # steady-state budget instead of a fresh 1-second burst each call).
 _dsp_shared: Any | None = None
 _dsp_shared_lock = threading.Lock()
+_dsp_active = 0  # shared calls in flight, on any resident or retired one
+_dsp_retired = weakref.WeakSet()  # failed residents awaiting their drain
 
 
 def _lazy_dsp_client() -> Any:
     """Return the DSP client dispatch runs on — the process-resident one.
 
     Both transports connect lazily on first use and then stay open; a
-    failed call drops the resident (:func:`_dsp_drop_shared`) so the next
-    call reconnects. Tests substitute fakes by patching this factory.
+    failed call retires the resident (:func:`_dsp_drop_shared`) so the
+    next call reconnects. Tests substitute fakes by patching this
+    factory.
     """
     global _dsp_shared  # noqa: PLW0603 — module-level resident cache
     with _dsp_shared_lock:
@@ -129,23 +133,57 @@ def _lazy_dsp_client() -> Any:
 
 
 def _dsp_drop_shared(client: Any) -> None:
-    """Close and forget the resident client after a failure.
+    """Retire the resident client after a failure — without closing it
+    beneath whatever is still using it.
 
+    The client only loses the resident slot (the next call reconnects
+    on a fresh one); the actual close waits for :func:`_drain_retired`.
     A client that is not the current resident (a test fake, or one
-    another thread already replaced) is left alone — not ours to close.
+    another thread already replaced) is left alone — not ours to retire.
     """
     global _dsp_shared  # noqa: PLW0603 — module-level resident cache
     with _dsp_shared_lock:
         if _dsp_shared is not client:
             return
         _dsp_shared = None
-    try:
-        # close() also poisons the client's still-live pools/refs (next
-        # use raises) — the daemon reclaims those buffers with the UDS,
-        # so keeping them addressable would dangle.
-        client.close()
-    except Exception:  # noqa: S110 — cleanup must not mask result/error
-        pass
+        _dsp_retired.add(client)
+    _drain_retired()
+
+
+def _drain_retired() -> None:
+    """Close retired clients once nothing can still be using them.
+
+    A retired client closes when no shared call is in flight anywhere
+    (the counter covers calls started before the retirement too) and it
+    has no live pool left — pools die with their refs, so a ref handed
+    out before the retirement keeps working until its holder releases
+    or drops it. Until then the client idles on one open transport; its
+    daemon-side buffers return at that final close exactly as an
+    explicit ``close()`` would reclaim them.
+    """
+    with _dsp_shared_lock:
+        if _dsp_active:
+            return
+        done = [c for c in _dsp_retired if _retired_is_idle(c)]
+        for client in done:
+            _dsp_retired.discard(client)
+    for client in done:  # close outside the lock — must not block callers
+        try:
+            client.close()
+        except Exception:  # noqa: S110 — cleanup must not mask result/error
+            pass
+
+
+def _retired_is_idle(client: Any) -> bool:
+    """No live pools on a retired client — safe to close.
+
+    Clients without the :meth:`~neoruntime_ipc_sdk.DspClient.\
+has_live_pools` query (test fakes that model transports, not buffers)
+count as idle: they close at drain exactly as residents did before
+pool-aware deferral existed.
+    """
+    probe = getattr(client, "has_live_pools", None)
+    return probe is None or not probe()
 
 
 def shared_dsp_call(method: str, *args: Any, **kwargs: Any) -> Any:
@@ -153,17 +191,27 @@ def shared_dsp_call(method: str, *args: Any, **kwargs: Any) -> Any:
 
     The same resident machinery the router legs use, exposed for SDK
     fast paths that live outside the route table (``Frame.resize``'s DSP
-    arm). On any error the resident client is closed — the next call
+    arm). On any error the resident client is retired — the next call
     reconnects — and the original exception propagates so the caller
-    keeps its own fallback policy. The connection is never closed on
+    keeps its own fallback policy. Retirement defers the close until no
+    shared call is in flight and no live pool remains, so a failure in
+    one thread cannot cut the transport under a concurrent call or kill
+    a ref another thread is holding. The resident is never retired on
     success.
     """
+    global _dsp_active  # noqa: PLW0603 — in-flight counter for the drain
     client = _lazy_dsp_client()
+    with _dsp_shared_lock:
+        _dsp_active += 1
     try:
         return getattr(client, method)(*args, **kwargs)
     except Exception:
         _dsp_drop_shared(client)
         raise
+    finally:
+        with _dsp_shared_lock:
+            _dsp_active -= 1
+        _drain_retired()
 
 
 def _dsp_call(method: str, *args: Any, **kwargs: Any) -> Any:
