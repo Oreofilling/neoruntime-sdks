@@ -864,6 +864,20 @@ class TestRenderOverlayFragments:
         assert len(frags) == 1
         assert frags[0][0].shape[2] == 4
 
+    def test_fragment_heights_stay_even_at_the_bottom_edge(self):
+        # odd-span shapes flush to the frame bottom: blend_hw pads an odd
+        # overlay height with one transparent bottom row and enforces
+        # bounds on the padded rect, so an odd canvas at y+h==frame_h
+        # would overshoot the base and kill the whole blend call
+        pts = np.array([[100, 604], [400, 604], [400, 719], [100, 719]],
+                       dtype=np.int32)
+        frags = render_overlay_fragments(1280, 720, polygons=[(pts, None)])
+        assert frags  # the shape is in-frame
+        assert any(y + rgba.shape[0] == 720 for rgba, _x, y in frags)
+        for rgba, _x, y in frags:
+            assert rgba.shape[0] % 2 == 0
+            assert y + rgba.shape[0] <= 720
+
 
 # ------------------------------------------------------------ router legs --
 class TestRouterLegs:
