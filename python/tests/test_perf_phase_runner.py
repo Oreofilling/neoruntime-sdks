@@ -252,6 +252,13 @@ def test_demo_command_uses_current_interpreter_fixed_paths_and_model_retention(t
                           ("--run-id", "test-run"), ("--phase", "p1")]:
         assert command[command.index(option) + 1] == value
     assert all(flag in command for flag in ("--keep-model", "--reuse-model", "--no-metrics-overlay"))
+    assert "--variant" not in command  # unset variant must not reach the demo CLI
+
+
+def test_demo_command_forwards_variant_to_the_demo(tmp_path):
+    args = arguments(tmp_path, ["--variant", "hailo_yolov8n"])
+    command = mod.demo_command(args)
+    assert command[command.index("--variant") + 1] == "hailo_yolov8n"
 
 
 @pytest.mark.parametrize("extra", [["--duration", "0"], ["--duration", "nan"],
@@ -259,7 +266,8 @@ def test_demo_command_uses_current_interpreter_fixed_paths_and_model_retention(t
                                    ["--warmup", "86000"], ["--phase", ""],
                                    ["--model-id", "bad/id"], ["--expect-platform", "1"],
                                    ["--expect-platform", "0:2"], ["--b-fps", "inf"],
-                                   ["--publish-hz", "0"]])
+                                   ["--publish-hz", "0"], ["--variant", "bad name"],
+                                   ["--variant", ""], ["--variant", "x" * 129]])
 def test_cli_invalid_inputs_fail_before_creating_output(tmp_path, extra):
     with pytest.raises(SystemExit):
         arguments(tmp_path, extra)

@@ -19,22 +19,28 @@ logger = logging.getLogger("perf_demo.recorder")
 class SampleRecorder:
     def __init__(self, path: str, *, run_id: str, phase: str,
                  capacity: int = 4096, batch_size: int = 64,
-                 max_bytes: int = 1024 * 1024 * 1024) -> None:
+                 max_bytes: int = 1024 * 1024 * 1024,
+                 free_reserve_bytes: int = 64 * 1024 * 1024) -> None:
         if not path or not run_id or not phase:
             raise ValueError("path, run_id and phase must not be empty")
         if any(isinstance(v, bool) or not isinstance(v, int) or v < 1
                for v in (capacity, batch_size, max_bytes)):
             raise ValueError("capacity, batch_size and max_bytes must be positive integers")
+        if isinstance(free_reserve_bytes, bool) or not isinstance(free_reserve_bytes, int) \
+                or free_reserve_bytes < 0:
+            raise ValueError("free_reserve_bytes must be a non-negative integer (0 disables)")
         self.run_id, self.phase = run_id, phase
         self._queue = queue.Queue(maxsize=capacity)
         self._batch_size = batch_size
         self._max_bytes = max_bytes
+        self._free_reserve = free_reserve_bytes
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._counts = dict(accepted=0, written=0, dropped=0, error=None)
         self._exit_code = 0
         self._file = open(path, "a", encoding="utf-8")
         self._bytes = os.fstat(self._file.fileno()).st_size
+        self._dir = os.path.dirname(os.path.abspath(path))
         self._thread = threading.Thread(target=self._run, name="sample-writer", daemon=True)
         self._thread.start()
 
@@ -96,6 +102,18 @@ class SampleRecorder:
             lines.append(line)
         if not lines:
             return
+        if self._free_reserve:
+            # The byte cap knows the file, not the filesystem: stop writing
+            # while the phase runner's evidence writers still have headroom
+            # instead of failing the whole partition with ENOSPC.
+            try:
+                stat = os.statvfs(self._dir)
+                free = stat.f_bavail * stat.f_frsize
+            except OSError:
+                free = None
+            if free is not None and free < self._free_reserve:
+                self._drop(len(lines), "free space reserve reached")
+                return
         try:
             self._file.write("".join(lines))
             self._file.flush()  # batch only, never producer/per-inference IO

@@ -645,11 +645,33 @@ def test_status_sampling_and_io_failures(tmp_path):
     status._write_json({})
 
 
-@pytest.mark.parametrize('kwargs', [{'capacity': 0}, {'capacity': None}, {'capacity': True}, {'batch_size': -1}])
+@pytest.mark.parametrize('kwargs', [{'capacity': 0}, {'capacity': None}, {'capacity': True},
+                                    {'batch_size': -1}, {'free_reserve_bytes': -1},
+                                    {'free_reserve_bytes': True}])
 def test_recorder_invalid_bounds(kwargs, tmp_path):
     from recorder import SampleRecorder
     with pytest.raises(ValueError):
         SampleRecorder(str(tmp_path / 'samples'), run_id='run', phase='p', **kwargs)
+
+
+def test_recorder_preserves_free_space_reserve(tmp_path):
+    import os
+
+    from recorder import SampleRecorder
+    stat = os.statvfs(tmp_path)
+    # A reserve larger than the real free space forces the gate on the
+    # very first batch, whatever the machine running the suite.
+    reserve = stat.f_bavail * stat.f_frsize + 1024 * 1024
+    path = tmp_path / 'reserve'
+    r = SampleRecorder(str(path), run_id='run', phase='p', free_reserve_bytes=reserve)
+    assert r.emit('sample', value=1)
+    assert r.close(2)
+    snap = r.snapshot()
+    assert snap['dropped'] == 1
+    assert snap['error'] == 'free space reserve reached'
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert rows[-1]['type'] == 'recorder_final'
+    assert not any(row['type'] == 'sample' for row in rows)
 
 
 def test_recorder_limit_invalid_json_and_closed_producer(tmp_path):
