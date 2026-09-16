@@ -199,7 +199,12 @@ def pick_model(*preferred: str) -> str | None:
     instead of hard-requiring one filename.
     """
     override = os.environ.get("PERF_MODEL_FILE")
-    if override and os.path.exists(override):
+    if override:
+        # An explicit override is authoritative: falling through to a
+        # preferred or arbitrary HEF would benchmark a different model
+        # under the requested label in per-model matrix runs.
+        if not os.path.exists(override):
+            raise FileNotFoundError(f"PERF_MODEL_FILE not found: {override}")
         return override
     for name in preferred:
         path = os.path.join(MODEL_DIR, name)

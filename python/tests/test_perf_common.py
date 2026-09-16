@@ -146,6 +146,34 @@ class PickModelTest(unittest.TestCase):
             finally:
                 perf_common.MODEL_DIR = old
 
+    def test_override_wins_and_missing_override_fails(self):
+        import tempfile
+
+        import perf_common
+
+        with tempfile.TemporaryDirectory() as td:
+            old_dir = perf_common.MODEL_DIR
+            perf_common.MODEL_DIR = td
+            open(os.path.join(td, "hailo_yolov8n_384_640.hef"), "wb").close()
+            override = os.path.join(td, "yolo_world_v2s_540.hef")
+            open(override, "wb").close()
+            old_override = os.environ.get("PERF_MODEL_FILE")
+            os.environ["PERF_MODEL_FILE"] = override
+            try:
+                # present override beats every preference
+                self.assertEqual(pick_model("hailo_yolov8n_384_640.hef"), override)
+                # a mistyped override must fail the job, never silently
+                # benchmark a fallback model under the requested label
+                os.environ["PERF_MODEL_FILE"] = os.path.join(td, "absent.hef")
+                with self.assertRaises(FileNotFoundError):
+                    pick_model("hailo_yolov8n_384_640.hef")
+            finally:
+                if old_override is None:
+                    del os.environ["PERF_MODEL_FILE"]
+                else:
+                    os.environ["PERF_MODEL_FILE"] = old_override
+                perf_common.MODEL_DIR = old_dir
+
 
 class ModelInputGeometryTest(unittest.TestCase):
     def test_height_width_pair(self):

@@ -414,6 +414,11 @@ def demo_command(args):
     for flag in ("reuse_model", "no_metrics_overlay"):
         if getattr(args, flag):
             command.append("--" + flag.replace("_", "-"))
+    if getattr(args, "variant", None):
+        # Without the passthrough a variant-dependent HEF registers as
+        # model_variant=None: inference "succeeds" with zero detections
+        # and the phase passes with misleading numbers.
+        command += ["--variant", args.variant]
     return command
 
 
@@ -675,6 +680,15 @@ def _label(value):
     return value
 
 
+def _variant(value):
+    # Same charset as the demo app's --variant: a dlsym postprocess
+    # symbol name, passed through to the demo's register_model.
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value or ""):
+        raise argparse.ArgumentTypeError(
+            "must use 1..128 letters/digits/underscore/dot/colon/hyphen")
+    return value
+
+
 def _expected(value):
     if not re.fullmatch(r"[1-9][0-9]*:[0-9]+", value):
         raise argparse.ArgumentTypeError("expected PID:START_TICKS")
@@ -697,6 +711,7 @@ def parse_args(argv=None):
     parser.add_argument("--b-fps", type=float, default=0)
     parser.add_argument("--publish-hz", type=float, default=40)
     parser.add_argument("--no-metrics-overlay", action="store_true")
+    parser.add_argument("--variant", default=None, type=_variant)
     parser.add_argument("--max-log-bytes", type=int, default=64 * 1024 * 1024)
     parser.add_argument("--min-free-bytes", type=int, default=64 * 1024 * 1024)
     args = parser.parse_args(argv)
