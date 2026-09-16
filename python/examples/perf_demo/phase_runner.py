@@ -41,7 +41,8 @@ APP_PATH = Path(__file__).resolve().with_name("app.py")
 MAX_DURATION = 86000
 INIT_GRACE_NS = 30_000_000_000
 STALE_NS = 10_000_000_000
-TERM_GRACE = 15
+TERM_GRACE = 30  # > app teardown worst case (~15s joins + 5s recorder close): a shorter
+                 # grace SIGKILLs the child before its terminal records are written
 READ_LIMIT = 8 * 1024 * 1024
 LINE_LIMIT = 256 * 1024
 POLL_SECONDS = 1.0

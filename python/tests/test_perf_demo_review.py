@@ -33,6 +33,17 @@ def capture(hub):
     return events
 
 
+def test_watcher_transient_close_error_does_not_poison_final_verdict():
+    hub = MetricsHub()
+    watcher = EncodedWatcher('sub', hub)
+    client = MagicMock()
+    client.close.side_effect = [OSError('boom'), None]
+    watcher._close_client(client)  # one dead cycle fails its close
+    assert watcher.cleanup_error == 'OSError'
+    watcher._close_client(client)  # the next clean cycle clears it
+    assert watcher.cleanup_error is None
+
+
 def test_watcher_real_socket_eof_closes_reconnects_and_receives_new_packet():
     hub = MetricsHub()
     events = []

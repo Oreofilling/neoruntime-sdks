@@ -202,8 +202,9 @@ def pick_model(*preferred: str) -> str | None:
     if override:
         # An explicit override is authoritative: falling through to a
         # preferred or arbitrary HEF would benchmark a different model
-        # under the requested label in per-model matrix runs.
-        if not os.path.exists(override):
+        # under the requested label in per-model matrix runs. isfile, not
+        # exists — a directory is as wrong as a missing path.
+        if not os.path.isfile(override):
             raise FileNotFoundError(f"PERF_MODEL_FILE not found: {override}")
         return override
     for name in preferred:

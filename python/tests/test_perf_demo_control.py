@@ -674,20 +674,33 @@ def test_recorder_preserves_free_space_reserve(tmp_path):
     assert not any(row['type'] == 'sample' for row in rows)
 
 
-def test_recorder_limit_invalid_json_and_closed_producer(tmp_path):
+def test_recorder_invalid_json_drops_only_the_bad_record(tmp_path):
     from recorder import SampleRecorder
-    for fields, limit in [({'value': object()}, 10000), ({'value': 'too big'}, 1)]:
-        path = tmp_path / str(limit)
-        r = SampleRecorder(str(path), run_id='run', phase='p', max_bytes=limit)
-        r.emit('sample', **fields)
-        assert r.close(2)
-        assert r.snapshot()['dropped'] == 1
-        assert r.snapshot()['error'] is not None
-        assert not r.emit('sample')
-        with pytest.raises(ValueError):
-            r.emit(None)
-        final = json.loads(path.read_text().splitlines()[-1])
-        assert final['error'] is not None
+    path = tmp_path / 'invalid'
+    r = SampleRecorder(str(path), run_id='run', phase='p')
+    assert r.emit('sample', value=object())  # unserializable: dropped, not fatal
+    assert r.emit('sample', value=7)         # recording continues afterwards
+    assert r.close(2)
+    snap = r.snapshot()
+    assert snap['dropped'] == 1 and snap['invalid'] == 1
+    assert snap['error'] is None and snap['written'] == 1
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [row['value'] for row in rows if row['type'] == 'sample'] == [7]
+
+
+def test_recorder_size_limit_stays_terminal_and_closed_producer_rejects(tmp_path):
+    from recorder import SampleRecorder
+    path = tmp_path / str(1)
+    r = SampleRecorder(str(path), run_id='run', phase='p', max_bytes=1)
+    r.emit('sample', value='too big')
+    assert r.close(2)
+    assert r.snapshot()['dropped'] == 1
+    assert r.snapshot()['error'] is not None
+    assert not r.emit('sample')
+    with pytest.raises(ValueError):
+        r.emit(None)
+    final = json.loads(path.read_text().splitlines()[-1])
+    assert final['error'] is not None
 
 
 def test_recorder_concurrent_producers_account_for_all_items(tmp_path):

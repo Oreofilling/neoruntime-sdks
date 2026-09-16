@@ -36,7 +36,7 @@ class SampleRecorder:
         self._free_reserve = free_reserve_bytes
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
-        self._counts = dict(accepted=0, written=0, dropped=0, error=None)
+        self._counts = dict(accepted=0, written=0, dropped=0, invalid=0, error=None)
         self._exit_code = 0
         self._file = open(path, "a", encoding="utf-8")
         self._bytes = os.fstat(self._file.fileno()).st_size
@@ -92,7 +92,12 @@ class SampleRecorder:
             try:
                 line = json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n"
             except (TypeError, ValueError):
-                self._drop(1, "invalid JSON sample")
+                # One unserializable record must not end evidence for the
+                # whole run (writer-level failures below stay terminal):
+                # count it, drop it, keep recording.
+                with self._lock:
+                    self._counts["dropped"] += 1
+                    self._counts["invalid"] += 1
                 continue
             size = len(line.encode("utf-8"))
             if self._bytes + size > self._max_bytes:
