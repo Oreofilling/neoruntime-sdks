@@ -140,6 +140,9 @@ def _dsp_drop_shared(client: Any) -> None:
             return
         _dsp_shared = None
     try:
+        # close() also poisons the client's still-live pools/refs (next
+        # use raises) — the daemon reclaims those buffers with the UDS,
+        # so keeping them addressable would dangle.
         client.close()
     except Exception:  # noqa: S110 — cleanup must not mask result/error
         pass

@@ -435,6 +435,24 @@ class TestLifecycle:
             pass
         assert client._stub is None
 
+    def test_close_poisons_live_pools_and_refs(self):
+        # review regression: any failed shared call drops the resident
+        # client; its pools' buffers are reclaimed with the UDS, so a
+        # held ref must fail fast instead of submitting stale ids
+        client = DspClient()
+        patched_alloc(client)
+        pool = client.alloc_buffers(64, 48, "rgb24", count=1)
+        ref = DspBufferRef(client, pool, 0, owns=())
+        assert not ref.released
+
+        client.close()
+
+        assert pool._released
+        with pytest.raises(DspError, match="pool is gone"):
+            _ = ref.buffer_id
+        with pytest.raises(DspError, match="released pool"):
+            pool.read(0)
+
 
 # ------------------------------------------------- zero-copy handle source --
 def make_handle(width, height, fmt="NV12", frame_id=77):
@@ -783,7 +801,7 @@ class TestBufferRef:
         ref2 = client.resize_hw(nv12_array(64, 32), 32, 16, fmt="nv12",
                                 dst_pool=dst_pool, out="ref")
         dst_pool.release()
-        with pytest.raises(DspError, match="pool was released"):
+        with pytest.raises(DspError, match="pool is gone"):
             ref2.read()
 
     def test_encode_jpeg_from_ref_uses_daemon_id(self):
