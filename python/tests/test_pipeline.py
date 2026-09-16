@@ -161,3 +161,70 @@ class TestFromModel:
         out = pipe.run(frame)
         assert out.tensor is sentinel
         assert client.infer_calls[0][1] is None  # a ref, not an ndarray
+
+
+class TestPassthroughRefLifecycle:
+    """The passthrough input ref must not outlive its pass by default."""
+
+    class _Ref:
+        def __init__(self):
+            self.buffer_id = 7
+            self.released = 0
+
+        def release(self):
+            self.released += 1
+
+    def test_run_releases_the_ref_once_inference_settles(self, monkeypatch):
+        client = FakeClient()
+        pipe = InferencePipeline(client=client, model_id="m")
+        ref = self._Ref()
+        monkeypatch.setattr(pipe, "_prepare", lambda src: (ref, None))
+        out = pipe.run("frame")
+        assert ref.released == 1
+        assert out.tensor is None
+
+    def test_run_failure_path_still_releases(self, monkeypatch):
+        client = FakeClient()
+
+        def boom(image, model_id, timeout_ms=5000):
+            raise RuntimeError("infer down")
+
+        monkeypatch.setattr(client, "infer", boom)
+        pipe = InferencePipeline(client=client, model_id="m")
+        ref = self._Ref()
+        monkeypatch.setattr(pipe, "_prepare", lambda src: (ref, None))
+        with pytest.raises(RuntimeError, match="infer down"):
+            pipe.run("frame")
+        assert ref.released == 1
+
+    def test_retain_input_keeps_the_ref_until_release(self, monkeypatch):
+        client = FakeClient()
+        pipe = InferencePipeline(client=client, model_id="m", retain_input=True)
+        ref = self._Ref()
+        monkeypatch.setattr(pipe, "_prepare", lambda src: (ref, None))
+        out = pipe.run("frame")
+        assert out.tensor is ref
+        assert ref.released == 0
+        out.release()
+        assert ref.released == 1
+        assert out.tensor is None
+        out.release()  # idempotent
+        assert ref.released == 1
+
+    def test_run_async_failure_path_still_releases(self, monkeypatch):
+        client = FakeClient()
+
+        class _FailFut:
+            def add_done_callback(self, cb):
+                cb(self)
+
+            def result(self):
+                raise RuntimeError("infer down")
+
+        monkeypatch.setattr(client, "infer_async", lambda *a, **k: _FailFut())
+        pipe = InferencePipeline(client=client, model_id="m")
+        ref = self._Ref()
+        monkeypatch.setattr(pipe, "_prepare", lambda src: (ref, None))
+        with pytest.raises(RuntimeError, match="infer down"):
+            pipe.run_async("frame").result(timeout=5)
+        assert ref.released == 1
