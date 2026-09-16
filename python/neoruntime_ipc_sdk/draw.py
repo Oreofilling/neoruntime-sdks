@@ -611,6 +611,13 @@ def render_overlay_fragments(
             row = _text_row(yi1c, fy, ch, m[0], m[1], True)
             if row is not None:
                 ch = max(ch, row + m[2])
+        # even height before the slide: blend_hw pads an odd overlay
+        # height with one transparent bottom row and enforces bounds on
+        # the padded rect, so an odd ch flush to the frame bottom would
+        # overshoot the base by that pad row. Growing here instead adds
+        # the same transparent row while the slide can still keep the
+        # canvas in-bounds.
+        ch += ch & 1
         # the 16 px floor can push the canvas past the frame's right or
         # bottom edge — slide the origin back (content offsets follow the
         # origin, so pixels keep their frame position)
