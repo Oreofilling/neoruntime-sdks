@@ -48,6 +48,29 @@ from .preprocess import Preprocessor
 __all__ = ["InferencePipeline", "PipelineResult"]
 
 
+def _release_ref_like(tensor: Any) -> bool:
+    """Release ``tensor`` if it exposes the device-resident ref protocol.
+
+    That protocol is ``buffer_id`` plus a callable ``release()`` — what
+    :class:`~neoruntime_ipc_sdk.dsp.DspBufferRef` implements. Anything
+    else (ndarrays, opaque test sentinels) passes through untouched.
+    Returns whether a ref was released; a release that itself fails
+    with :class:`~neoruntime_ipc_sdk.dsp.DspError` still counts — the
+    ref is dead either way, and a dropped transport reclaims its
+    buffers at disconnect.
+    """
+    release = getattr(tensor, "release", None)
+    if not callable(release) or not hasattr(tensor, "buffer_id"):
+        return False
+    from .dsp import DspError  # noqa: PLC0415 — deferred: heavy proto import
+
+    try:
+        release()
+    except DspError:
+        pass
+    return True
+
+
 @dataclass
 class PipelineResult:
     """One pipeline pass: decoded objects plus everything underneath."""
@@ -58,7 +81,20 @@ class PipelineResult:
     latency_ms: float = 0.0
     tensor: Any | None = None
     """The preprocessed image actually sent to the model (when a
-    preprocessor ran) — handy for drawing previews at input size."""
+    preprocessor ran) — handy for drawing previews at input size. On
+    the NV12 passthrough path this is a device-resident buffer ref,
+    which the pipeline releases once inference settles unless it was
+    built with ``retain_input=True`` (then :meth:`release` hands it
+    back when the chain using it is done)."""
+
+    def release(self) -> None:
+        """Release a retained passthrough input ref, if any.
+
+        Idempotent, and a no-op for plain-array tensors — only a
+        ``retain_input=True`` pipeline leaves a live ref in ``tensor``.
+        """
+        if _release_ref_like(self.tensor):
+            self.tensor = None
 
 
 class InferencePipeline:
@@ -72,6 +108,13 @@ class InferencePipeline:
         postprocessor: a :class:`~neoruntime_ipc_sdk.Postprocessor`, or
             ``None`` to keep server-decoded results as-is.
         infer_timeout_ms: per-call inference timeout.
+        retain_input: keep a device-resident passthrough ref in
+            ``PipelineResult.tensor`` instead of releasing it once
+            inference settles (the default — refs carry no garbage
+            collection, so one leaked per frame would hold daemon-side
+            DSP buffers for the process lifetime). Retain it to chain
+            the ref further (e.g. as a zero-copy blend base) and hand
+            it back with :meth:`PipelineResult.release`.
     """
 
     def __init__(
@@ -81,12 +124,14 @@ class InferencePipeline:
         preprocessor: Preprocessor | None = None,
         postprocessor: Any | None = None,
         infer_timeout_ms: int = 5000,
+        retain_input: bool = False,
     ):
         self.client = client if client is not None else InferenceClient()
         self.model_id = model_id
         self.preprocessor = preprocessor
         self.postprocessor = postprocessor
         self.infer_timeout_ms = infer_timeout_ms
+        self.retain_input = bool(retain_input)
 
     @classmethod
     def from_model(
@@ -130,15 +175,31 @@ class InferencePipeline:
         model_id = self._model(model_id)
         started = time.perf_counter()
         tensor, meta = self._prepare(source)
-        result = self.client.infer(tensor, model_id, timeout_ms=self.infer_timeout_ms)
+        try:
+            result = self.client.infer(tensor, model_id, timeout_ms=self.infer_timeout_ms)
+        except BaseException:
+            self._settle_input(tensor)  # the pass is dead — don't leak its ref
+            raise
         objects = self._decode(result, meta)
         return PipelineResult(
             objects=objects,
             result=result,
             meta=meta,
             latency_ms=(time.perf_counter() - started) * 1000.0,
-            tensor=tensor,
+            tensor=self._settle_input(tensor),
         )
+
+    def _settle_input(self, tensor: Any) -> Any:
+        """Release a passthrough input ref once inference has settled.
+
+        Returns what ``PipelineResult.tensor`` should carry: the tensor
+        when there is nothing to release — plain arrays, or a
+        ``retain_input=True`` pipeline keeping its ref for a zero-copy
+        chain — and ``None`` behind a released ref.
+        """
+        if self.retain_input or not _release_ref_like(tensor):
+            return tensor
+        return None
 
     def run_async(self, source: Any, model_id: str | None = None) -> concurrent.futures.Future:
         """Non-blocking :meth:`run`; the Future resolves to PipelineResult.
@@ -148,7 +209,10 @@ class InferencePipeline:
         :meth:`InferenceClient.infer_async
         <neoruntime_ipc_sdk.InferenceClient.infer_async>` and the
         postprocessor runs on the completing thread. ``latency_ms`` is
-        not measured on this path. As with ``infer_async``, the returned
+        not measured on this path. A passthrough input ref is released
+        when the inner future settles — success or failure — unless the
+        pipeline was built with ``retain_input=True``. As with
+        ``infer_async``, the returned
         Future must be resolved (``.result()``) or exceptions stay
         silently swallowed.
         """
@@ -164,10 +228,12 @@ class InferencePipeline:
                 objects = decode(result, meta)
                 outer.set_result(
                     PipelineResult(
-                        objects=objects, result=result, meta=meta, tensor=tensor
+                        objects=objects, result=result, meta=meta,
+                        tensor=self._settle_input(tensor),
                     )
                 )
             except Exception as exc:  # propagate through the outer Future
+                self._settle_input(tensor)  # the pass is dead — don't leak its ref
                 outer.set_exception(exc)
 
         inner.add_done_callback(_finish)
