@@ -32,6 +32,10 @@ description: Maintain and evolve the NE503/NeoRuntime AIPC SDK repository. Use w
 
 ### C++ SDK
 
+> Temporarily withdrawn from `main` (no `cpp/`, no C++ CI or tarball in
+> releases). The last revision carrying the C++ SDK is tagged `cpp-sdk-last`;
+> skip C++ build, test, and packaging steps until it is restored.
+
 - Configure and test native builds with:
 
 ```sh

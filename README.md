@@ -2,14 +2,14 @@
 
 SDKs for building applications on the NeoRuntime edge AI platform.
 
-This repository publishes the Python SDK, the C++ SDK, and shared protocol
-definitions for NeoRuntime applications.
+This repository publishes the Python SDK and shared protocol definitions for
+NeoRuntime applications. The C++ SDK is temporarily unavailable; the last
+revision that carries it is tagged `cpp-sdk-last`.
 
 ## Contents
 
 - `proto/` - source protocol definitions copied from the platform repository
 - `python/` - Python SDK package, examples, tests, and Sphinx documentation
-- `cpp/` - C++ SDK package, examples, tests, CMake config, and Doxygen docs
 - `docs/sdk-module-framework.md` - current cross-language SDK module map and
   extension rules
 - `.github/workflows/pages.yml` - GitHub Pages documentation publishing
@@ -24,8 +24,6 @@ published at:
 - `https://camthink-ai.github.io/neoruntime-sdks/`
 - `https://camthink-ai.github.io/neoruntime-sdks/python/en/`
 - `https://camthink-ai.github.io/neoruntime-sdks/python/zh/`
-- `https://camthink-ai.github.io/neoruntime-sdks/cpp/en/`
-- `https://camthink-ai.github.io/neoruntime-sdks/cpp/zh/`
 
 ## Python SDK
 
@@ -70,17 +68,14 @@ The repository also builds release artifacts automatically with GitHub Actions:
 
 - Pull requests, pushes to `main`, and manual runs build and upload Python
   distributions (wheel + sdist) as an artifact named `python-sdk-dist`.
-- Tags matching `v*` build the Python distributions plus a C++ SDK tarball,
-  attach them to a GitHub Release, upload the Python distributions to
-  TestPyPI, and then to PyPI once the protected `pypi` environment is
-  approved.
+- Tags matching `v*` build the Python distributions, attach them to a GitHub
+  Release, upload them to TestPyPI, and then to PyPI once the protected `pypi`
+  environment is approved.
 - Manual runs can also publish a GitHub Release, TestPyPI, or PyPI when the
   corresponding dispatch inputs are enabled.
 
 Release a version by pushing a tag that matches `python/setup.py` (and
-`python/neoruntime_ipc_sdk/__init__.py`, which must stay in sync). The release
-tag follows the Python SDK version; the C++ SDK keeps its own package version in
-the tarball filename.
+`python/neoruntime_ipc_sdk/__init__.py`, which must stay in sync).
 
 ```bash
 git tag v0.5.0
@@ -91,7 +86,6 @@ The GitHub Release assets are:
 
 - `neoruntime_ipc_sdk-0.5.0-py3-none-any.whl`
 - `neoruntime_ipc_sdk-0.5.0.tar.gz`
-- `ne503-aipc-cpp-sdk-0.2.0-linux-arm64.tar.gz`
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full release and publishing
 runbook.
@@ -106,32 +100,12 @@ python -m sphinx -b html python/docs/en /tmp/neoruntime-sdk-docs/python/en
 
 ## C++ SDK
 
-Build and test locally:
+The C++ SDK is temporarily withdrawn from this repository. To restore or
+inspect it locally, check out the `cpp-sdk-last` tag:
 
 ```bash
-cmake -S cpp -B build-x64 -DCMAKE_BUILD_TYPE=Release
-cmake --build build-x64 -j
-ctest --test-dir build-x64
+git checkout cpp-sdk-last -- cpp
 ```
-
-Build an installable C++ SDK tarball:
-
-```bash
-scripts/package_cpp_sdk.sh
-```
-
-Cross-compile the release tarball for the aarch64 device target:
-
-```bash
-PACKAGE_ARCH=arm64 \
-BUILD_DIR="$PWD/build-arm64-package" \
-CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$PWD/cpp/cmake/aarch64-toolchain.cmake -DVCPKG_TARGET_TRIPLET=arm64-linux" \
-  scripts/package_cpp_sdk.sh
-```
-
-The tarball contains the installed SDK layout: headers, static library, CMake
-package files, documentation metadata, and example binaries when examples are
-enabled.
 
 ## Protocol Sync
 

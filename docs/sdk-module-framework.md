@@ -1,6 +1,9 @@
 # SDK Modular Framework
 
-Status: current `main` working tree, Python SDK `0.7.4`, C++ SDK `0.2.0`.
+Status: current `main` working tree, Python SDK `0.7.4`. The C++ SDK (last
+in-tree version `0.2.0`) is temporarily withdrawn from `main`; the last
+revision carrying `cpp/` is tagged `cpp-sdk-last`. C++ entries below describe
+that revision.
 
 This document organizes the current NeoRuntime SDK repository into module
 boundaries, runtime dependencies, and extension rules. It is meant for SDK

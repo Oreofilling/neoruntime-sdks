@@ -1,5 +1,9 @@
 # Project Map
 
+> The C++ SDK is temporarily withdrawn from `main` (no `cpp/`, no
+> `scripts/package_cpp_sdk.sh`, no C++ CI). The `cpp/` paths below refer to the
+> last revision carrying them, tagged `cpp-sdk-last`.
+
 ## Layout
 
 - `proto/`: protobuf definitions copied from the NeoRuntime platform repository.

@@ -74,9 +74,9 @@ of relying on `--skip-existing`.
    git push origin v0.6.0
    ```
 
-3. The tag run builds the distributions, attaches them (plus the C++ SDK
-   tarball) to a GitHub Release, uploads to TestPyPI, then pauses at the
-   protected `pypi` environment for approval.
+3. The tag run builds the distributions, attaches them to a GitHub Release,
+   uploads to TestPyPI, then pauses at the protected `pypi` environment for
+   approval.
 4. Validate the TestPyPI page for the new version, then approve the `pypi`
    environment deployment to publish to PyPI.
 5. Verify `https://pypi.org/project/neoruntime-ipc-sdk/` and install from a

@@ -79,6 +79,9 @@ if __name__ == "__main__":
 
 ## C++ Pattern
 
+> The C++ SDK is temporarily unavailable in this repository (last revision
+> tagged `cpp-sdk-last`). Use the Python pattern until it is restored.
+
 - Include public headers from `neoruntime_ipc_sdk/*.hpp`.
 - Use `neoruntime_ipc_sdk::Config` for endpoints and app id.
 - For streaming inference, consume the subscription with `next()` and check for empty optional values.
