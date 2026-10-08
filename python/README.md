@@ -2,6 +2,8 @@
 
 Python SDK for NeoRuntime EdgeCam AI Platform
 
+中文接口使用手册：[SDK_API_ZH.md](SDK_API_ZH.md)
+
 ## Installation
 
 Install from PyPI:
@@ -34,6 +36,17 @@ python -m pip install --upgrade build
 python -m build --wheel
 python -m pip install dist/neoruntime_ipc_sdk-*.whl
 ```
+
+## Learn it hands-on
+
+**sdk-teaching-demo** is an installable interactive lesson for this SDK:
+five live stations against real camera streams (subscribe + infer + draw,
+platform overlay, hardware routing, `StreamPipeline`, events), each showing
+the real code behind it plus the error lesson it prevents (DMA -2811,
+overlay `None` vs `[]`, exit codes). Download
+[sdk-teaching-demo-latest-arm64.neoapp](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/sdk-teaching-demo-latest-arm64.neoapp)
+from the apps repository, or browse
+[its source](https://github.com/camthink-ai/neoruntime-apps/tree/main/showcases/sdk-teaching-demo).
 
 ## Quick Start
 
@@ -446,6 +459,71 @@ Video stream client receiving frames over UDS (dma-buf fds, decoded on receive b
 - `EncodedStreamClient` / `EncodedFrame`: encoded stream subscription; `EncodedFrame.data` (Annex-B bytes), `.is_keyframe()`, `.codec_name()`
 - `StreamInfo`, `PixelFormat`: NV12, NV21, RGB, BGR, RGBA, BGRA, GRAY8, YUYV
 
+### OverlayClient (`overlay`)
+
+Draws results on the device's **hardware overlay**: camera-daemon bakes boxes and zone polygons into the encoded stream, so the app never rasterizes pixels (use the `draw` module instead when you own the pixels, e.g. your own MJPEG preview). The overlay must be enabled first.
+
+**Methods:**
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `enable(show_label, show_confidence, line_thickness)` | bool, bool, int | - | Turn the overlay on with the given appearance |
+| `disable()` | - | - | Turn the overlay off |
+| `configure(enabled, show_label, show_confidence, line_thickness, box_color, label_color, font_size, strict_frame_lock, strict_wait_cap_ms)` | see notes | - | Full appearance control. Colors are ARGB ints. `strict_frame_lock=True` binds each box to the frame it was computed from (the bake site waits, bounded by `strict_wait_cap_ms`); `None` keeps the daemon's current setting |
+| `apply(config)` | OverlayConfig | - | Apply an `OverlayConfig` object |
+| `annotate(stream_id, detections, polygons, ttl_ms, ...)` | str, list, list, int | str | Push detections and/or zone polygons for one stream (event id) |
+| `annotate_result(stream_id, result, ttl_ms, ...)` | str, InferenceResult | str | Push whichever section of an `InferenceResult` is populated (detections, then classifications, landmarks, OCR lines) |
+| `close()` | - | - | Close connection |
+
+**Data Classes:**
+
+- `OverlayConfig`: enabled, show_label, show_confidence, line_thickness, box_color, label_color, font_size, strict_frame_lock, strict_wait_cap_ms
+
+Results expire ~two frame periods after the last event, so call `annotate` at a few Hz while detections are fresh. The None-vs-empty distinction matters: `detections=None` leaves the stream's previous boxes untouched (polygons can ride alone), while `detections=[]` **clears** them — same for polygons. Polygon points are normalized [0, 1] floats (2-128 points each, at most 16 polygons per call); `ttl_ms` must be a positive int (omitted = derived from the stream fps).
+
+```python
+from neoruntime_ipc_sdk import OverlayClient
+
+oc = OverlayClient()
+oc.enable()
+for result in inference.subscribe("main", "person_v1"):
+    oc.annotate("main", result.objects)   # fresh boxes every frame
+oc.annotate("main", detections=[])        # done: clear stale boxes
+oc.annotate("main", polygons=[{"points": ZONE, "label": "yard"}])
+```
+
+### StreamPipeline (`stream_pipeline`)
+
+One-call pipeline: subscribe a registered model to a camera stream, draw every result on the hardware overlay, and yield the same results to the app. Single-shot (create a new instance per run) and usable as a context manager.
+
+```python
+from neoruntime_ipc_sdk import StreamPipeline
+
+pipe = StreamPipeline(
+    "main", "person_v1", fps=10,
+    polygons=[{"points": [[0, 0], [1, 0], [1, 1], [0, 1]], "label": "zone"}],
+)
+pipe.start()
+for sequence, result in pipe.results():
+    ...   # drawing already happened on the overlay
+pipe.stop()   # clears boxes and zones
+```
+
+**Methods:**
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `start()` | - | StreamPipeline | Subscribe, apply overlay config / static zones, start drawing |
+| `stop()` | - | - | Stop the worker, clear what was drawn, close owned clients. Idempotent, safe to call from `on_result` |
+| `results()` | - | Iterator[(int, InferenceResult)] | Yield `(frame_sequence, result)`; bounded drop-oldest queue (counted in `status()`) |
+| `status()` | - | StreamPipelineStatus | Health snapshot incl. pass-through subscribe stats |
+
+**Constructor notes:** `draw=False` keeps the encoded stream clean (results still flow to `results()`); `min_score` / `labels` filter *drawing only* — a fully-filtered result still publishes an empty detection list, clearing stale boxes; `on_result` (worker thread) may replace or drop each result; `overlay_config` accepts an `OverlayConfig`; `ttl_ms` overrides per-event validity; the subscription runs at stream geometry, so register the model for the stream's dimensions.
+
+**Data Classes:**
+
+- `StreamPipelineStatus`: running, results_seen, results_annotated, annotate_errors, result_queue_drops, subscribe_dropped, last_error, last_latency_ms, avg_latency_ms, last_skew_us, avg_skew_us
+
 ### Diagnostics
 
 `diagnostics()` (never raises) snapshots the SDK's execution environment — the first stop when an app feels slow:
@@ -486,7 +564,7 @@ set_route_policy("software_only")   # baseline/benchmark; "prefer_hardware" (def
 
 The SDK is layered, and the middle layer is a stability contract:
 
-1. **Daemon clients** — `InferenceClient`, `FdMediaClient`, `CameraClient`, `DeviceClient`, `EventClient`, `AppClient`: communication, timeouts, reconnection, resource release.
+1. **Daemon clients** — `InferenceClient`, `FdMediaClient`, `CameraClient`, `DeviceClient`, `EventClient`, `AppClient`, `OverlayClient`, `AudioClient`: communication, timeouts, reconnection, resource release.
 2. **Data & algorithm primitives** *(stable contract)* — `Frame`/`FrameHandle`, `PreprocessMeta`, `DetectedObject`, and the callable protocols `preprocessor(frame) -> (tensor, meta)` / `postprocessor(raw_outputs, meta) -> objects`. The built-in `Preprocessor` and `YoloV5/V8Postprocessor` implement them; custom decoders (RetinaFace, OCR, pose...) can replace them freely. Breaking changes here are gated behind a minor-version bump with deprecation warnings.
 3. **App pipeline** — `InferencePipeline` (single pass) and `PipelineRunner` (long-running): composition, backpressure (latest-wins with drop counters), latency/error stats, frame ownership.
 
@@ -513,6 +591,72 @@ Detection visualization on RGB numpy arrays (returns new arrays, input untouched
 - `draw_boxes(image, boxes, labels=None, scores=None, color=(0,255,0), thickness=2)`
 - `draw_text(image, text, xy, color=(255,255,255), font_scale=0.5, thickness=1)`
 - `draw_detections(image, result_or_objects, color=None)` - Accepts `InferenceResult` / `DetectedObject` / raw `(x1,y1,x2,y2)` tuples
+
+### Audio (`audio`, `audio_stream`)
+
+Audio HAL via camera-daemon: device enumeration, capture/playback control, and two-way-talk PCM streaming (`AudioClient`); captured frames arrive over UDS (`AudioStreamClient`).
+
+**Methods (`AudioClient`):**
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `list_capture_devices()` / `list_playback_devices()` | - | List[AudioDevice] | Enumerate audio devices |
+| `start_capture(device, sample_rate, channels, codec, bitrate)` | str, int, int, str, int | - | Start capture (0/empty = daemon defaults) |
+| `stop_capture()` | - | - | Stop capture |
+| `start_playback(device, sample_rate, channels)` | str, int, int | - | Start playback |
+| `stop_playback()` | - | - | Stop playback |
+| `get_status()` | - | AudioStatus | Current audio status |
+| `set_config(volume, mute, ...)` | float, bool | - | Update volume/mute/codec (defaults keep current values) |
+| `stream_pcm(pcm_iter, sample_rate, channels, fmt)` | Iterator[bytes], int, int, str | - | Stream PCM chunks to the device (two-way talk) |
+| `stream_pcm_file(path, chunk_size, ...)` | str, int | - | Stream a raw PCM file |
+
+**Data Classes:**
+
+- `AudioDevice`: name, description
+- `AudioStatus`: capturing, playing, device, sample_rate, channels, codec, volume, mute
+- `AudioFrame` (from `AudioStreamClient`): codec (0=pcm, 1=aac, 2=g711a, 3=g711u), flags (bit0 = keyframe), pts_ns, sample_rate, channels, bits_per_sample, `data` bytes; helpers `is_keyframe()`, `codec_name()`, `duration_ms()`
+- `AudioStreamClient(socket_path=None)`: `subscribe()` → Iterator[AudioFrame], `on_frame(cb)`, `close()`; default socket `/run/aipc/encoded/audio_capture.sock` (env `AUDIO_CAPTURE_SOCK_PATH`)
+
+```python
+from neoruntime_ipc_sdk import AudioClient, AudioStreamClient
+
+audio = AudioClient()
+audio.start_capture(codec="aac", sample_rate=48000)
+for frame in AudioStreamClient().subscribe():
+    print(frame.codec_name, len(frame.data))
+audio.stop_capture()
+```
+
+### DSP Offload (`dsp`)
+
+Hardware image ops on the camera-daemon DSP service: resize, crop, convert, blend, and JPEG encode without burning CPU. Apps usually reach this indirectly through the accel router (`set_route_policy` / `AccelRouter.health()`); use `DspClient` directly for ops the router does not cover, or to pre-allocate buffer pools in hot loops.
+
+- `DspClient.resize_hw(src, width, height, fmt=None, ...)` - HW resize (bilinear; `stretch` scaling)
+- `DspClient.crop_hw(src, x, y, width, height, dst_width=None, dst_height=None, ...)` - HW crop, optional resize in the same job
+- `DspClient.multi_crop_hw(src, rects, ...)` - Many crop/resize windows in one job
+- `DspClient.convert_hw(src, dst_fmt, ...)` - `nv12`/`rgb24`/`gray8` conversion, dimensions kept; the supported pair matrix is device-dependent, and a pair the firmware refuses falls back to CPU when `cpu_fallback=True` (the default)
+- `DspClient.blend_hw(base, overlays, ...)` - Composite ARGB32 overlays onto an NV12 base
+- `DspClient.encode_jpeg_hw(src, quality=85)` - One JPEG frame, returns bytes
+- `DspClient.alloc_buffers(width, height, fmt="nv12", count=1)` → `DspBufferPool` - Pre-allocate daemon-side buffers so hot-loop calls only write, submit, read
+- `DspClient.import_frame(handle)` / `release_buffer(buffer_id)` - Import a `FrameHandle`'s dma-bufs into the daemon registry / free an id
+
+Every `*_hw` method takes `cpu_fallback=True` by default: when the daemon lacks the DSP surface, array-source calls warn and compute on CPU; pass `False` to make unavailability raise instead. With `wait=False` a call returns a `PendingDspJob` (`done(timeout_s)`, `wait_result()`, `wait()`) instead of blocking.
+
+**Data Classes:**
+
+- `DspBufferPool`: `write(index, arr)` / `read(index)` / `release()` - Pre-allocated daemon-side buffers
+- `DspBufferRef`: buffer_id, width, height, fmt; `read()` / `release()` - Zero-copy result handle (`out="ref"`)
+- `PendingDspJob`: `done(timeout_s)` / `wait_result()` / `wait()` - Async job handle (`wait=False`)
+- `DspError` - DSP failures (allocation, import, firmware refusals)
+
+```python
+from neoruntime_ipc_sdk import DspClient
+
+dsp = DspClient()
+small = dsp.resize_hw(frame.image, 640, 384, fmt="nv12")
+# hot loop: allocate once, then every call only writes / submits / reads
+pool = dsp.alloc_buffers(frame.width, frame.height, fmt="nv12", count=2)
+```
 
 ### Config
 
