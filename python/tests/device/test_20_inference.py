@@ -3,7 +3,10 @@
 Registers a YOLO-World HEF from the device's model partition (without
 ``owner_id`` — the global-registry gotcha), then exercises infer /
 batch / tensors / subscribe / session / postprocess paths against real
-frames pulled from the camera.
+frames pulled from the camera. The lifecycle class registers a plain
+detection HEF with ``model_type="detection"`` instead —
+``update_postprocess_config`` needs a live post-process session, which
+only a typed registration creates.
 """
 
 from __future__ import annotations
@@ -21,6 +24,10 @@ from neoruntime_ipc_sdk import (
 from common import MODEL_DIR, DeviceTestCase, known_issue
 
 MODEL_PATH = os.path.join(MODEL_DIR, "yolo_world_v2s.hef")
+# Plain detection HEF for the lifecycle class: a typed registration
+# ("detection") gives it a live post-process session, which
+# update_postprocess_config requires. yolo_world has no plugin backend.
+DETECTION_MODEL_PATH = os.path.join(MODEL_DIR, "hailo_yolov8n_384_640.hef")
 TEST_MODEL_ID = "sdk-test-yolo"
 # Probed 2026-09-08: the daemon's stream table names the primary stream
 # "main". A wrong name ("cam0_main", …) is NOT an error — subscribe just
@@ -62,8 +69,9 @@ class T01Lifecycle(DeviceTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        if not os.path.exists(MODEL_PATH):
-            raise unittest.SkipTest(f"no model at {MODEL_PATH}")
+        if not os.path.exists(DETECTION_MODEL_PATH):
+            raise unittest.SkipTest(
+                f"no detection model at {DETECTION_MODEL_PATH}")
         cls.client = InferenceClient()
 
     @classmethod
@@ -86,8 +94,13 @@ class T01Lifecycle(DeviceTestCase):
         # owner_id deliberately omitted: models registered with an
         # owner_id never enter the global table and subscribe() then
         # fails with "Model not found" (verified field defect).
+        # model_type="detection" is deliberate: an untyped registration
+        # creates no post-process session and every
+        # update_postprocess_config call then answers -2 (root cause of
+        # the old test_06 known_issue, resolved 2026-09-20).
         model_id = self.timed(
-            self.client.register_model, MODEL_PATH, model_id=TEST_MODEL_ID,
+            self.client.register_model, DETECTION_MODEL_PATH,
+            model_id=TEST_MODEL_ID, model_type="detection",
             label="register_model",
         )
         self.evidence(model_id=model_id)
@@ -121,19 +134,17 @@ class T01Lifecycle(DeviceTestCase):
         self.evidence(stats={k: stats[k] for k in list(stats)[:10]})
         self.assertIsInstance(stats, dict)
 
-    @known_issue(
-        "update_postprocess_config: daemon answers -2 for documented keys "
-        "(detection_threshold/iou_threshold) — the same call worked "
-        "against the 2026-08-28 patched daemon, so this is a "
-        "daemon-deployment regression, not an SDK contract change")
     def test_06_update_postprocess_config(self):
         self.mark("InferenceClient.update_postprocess_config")
+        # Requires the typed registration from test_02: the update only
+        # reaches a live post-process session. Keys must belong to the
+        # closed detection schema the variant carries —
+        # detection_threshold / iou_threshold / max_boxes / … .
+        # (conf_threshold/nms_threshold are NOT schema keys and the
+        # daemon answers -2801 "config rejected" for them.)
         ok = self.timed(
             self.client.update_postprocess_config,
             TEST_MODEL_ID,
-            # Documented keys: detection_threshold / iou_threshold /
-            # max_boxes (conf_threshold/nms_threshold are NOT accepted
-            # by the daemon and it answers -2 "Failed to update config").
             '{"detection_threshold": 0.30, "iou_threshold": 0.45}',
             label="update_postprocess_config",
         )

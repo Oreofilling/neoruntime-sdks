@@ -5,7 +5,7 @@ NeoRuntime Platform Python SDK 文档
 
 .. only:: html
 
-   .. image:: https://img.shields.io/badge/version-0.4.0-blue.svg
+   .. image:: https://img.shields.io/badge/version-0.8.0-blue.svg
       :target: https://github.com/camthink-ai/neoruntime-sdks
       :alt: Version
 
@@ -95,6 +95,7 @@ AI 推理
    :maxdepth: 2
    :caption: 用户指南
 
+   learning-path
    installation
    quickstart
    app_image_guide

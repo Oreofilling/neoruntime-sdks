@@ -18,8 +18,11 @@ revision that carries it is tagged `cpp-sdk-last`.
 
 ## Documentation
 
-After GitHub Pages is enabled for this repository, the SDK documentation is
-published at:
+New to the SDK? Start with the [learning path](https://camthink-ai.github.io/neoruntime-sdks/python/en/learning-path.html) ([中文](https://camthink-ai.github.io/neoruntime-sdks/python/zh/learning-path.html)) — five stages from first inference to your first installed app.
+
+- [Python SDK 中文接口使用手册](python/SDK_API_ZH.md)
+
+The SDK documentation is published at:
 
 - `https://camthink-ai.github.io/neoruntime-sdks/`
 - `https://camthink-ai.github.io/neoruntime-sdks/python/en/`
@@ -97,6 +100,26 @@ python -m pip install -r python/docs/requirements.txt
 python -m sphinx -b html python/docs /tmp/neoruntime-sdk-docs/python/zh
 python -m sphinx -b html python/docs/en /tmp/neoruntime-sdk-docs/python/en
 ```
+
+## Interactive teaching demo
+
+The fastest way to learn the SDK is to drive it. **sdk-teaching-demo** is a
+single installable app with five live stations against real camera streams —
+subscribe + infer + draw (B form), platform overlay vs your own pixels,
+hardware routing (including a deliberate refusal), A-form `StreamPipeline`,
+and cooldown-gated event publishing. Every station also shows the real code
+behind it (copy button included) and the error lesson for that station —
+DMA -2811, `None` vs `[]` overlay cleanup, exit codes under
+`restart_policy: on-failure`.
+
+```bash
+# on the device, after downloading the bundle:
+aipc-cli app install sdk-teaching-demo <path-to-app.yaml> <path-to-image.tar>
+aipc-cli app start sdk-teaching-demo
+```
+
+- Bundle: [sdk-teaching-demo-latest-arm64.neoapp](https://github.com/camthink-ai/neoruntime-apps/releases/download/showcase-bundles-latest/sdk-teaching-demo-latest-arm64.neoapp)
+- Source: [showcases/sdk-teaching-demo](https://github.com/camthink-ai/neoruntime-apps/tree/main/showcases/sdk-teaching-demo) · starter skeleton: [templates/basic](https://github.com/camthink-ai/neoruntime-apps/tree/main/templates/basic)
 
 ## C++ SDK
 
