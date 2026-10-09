@@ -30,10 +30,10 @@ NeoRuntime SDK 对应的整机是 **NeoEyes NE503** (4K PoE 边缘 AI 相机)，
 
 1. 把电脑的以太网口设为同网段，例如 ``10.0.0.2/24``；
 2. 网线接通设备（PoE 供电）；
-3. 浏览器打开 ``http://10.0.0.1:8080``。
+3. 浏览器打开 ``http://10.0.0.1`` (自动跳转 HTTPS)。
 
 已配置到局域网的设备：每台 NE503 都会通过 ``device-discovery`` 服务在
-组播 ``239.255.255.250:19850`` 上持续播报自己（型号、版本、Web 端口），
+组播 ``239.255.255.250:19850`` 上持续播报自己（型号、固件版本），
 同一交换机（二层可达）内可监听到::
 
    python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(('', 19850)); s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, socket.inet_aton('239.255.255.250')+socket.inet_aton('0.0.0.0')); print(s.recvfrom(4096))"
@@ -41,7 +41,7 @@ NeoRuntime SDK 对应的整机是 **NeoEyes NE503** (4K PoE 边缘 AI 相机)，
 登录 Web 控制台
 ~~~~~~~~~~~~~~~
 
-浏览器打开 ``http://<设备IP>:8080``，出厂账号：
+浏览器打开 ``http://<设备IP>``，出厂账号：
 
 - 用户名 ``admin``
 - 密码 ``password``

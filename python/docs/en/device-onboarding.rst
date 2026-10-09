@@ -35,10 +35,10 @@ address ``10.0.0.1/24``:
 1. Set your computer's Ethernet interface to the same subnet, e.g.
    ``10.0.0.2/24``;
 2. Connect the device (PoE powered);
-3. Browse to ``http://10.0.0.1:8080``.
+3. Browse to ``http://10.0.0.1`` (redirects to HTTPS).
 
 For devices already provisioned onto a LAN: every NE503 continuously
-announces itself (model, version, web port) via the
+announces itself (model, firmware version) via the
 ``device-discovery`` service on multicast ``239.255.255.250:19850``.
 On the same switch (layer-2 reachable) you can listen for it::
 
@@ -47,7 +47,7 @@ On the same switch (layer-2 reachable) you can listen for it::
 Logging into the web console
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Browse to ``http://<device-ip>:8080``. Factory credentials:
+Browse to ``http://<device-ip>``. Factory credentials:
 
 - username ``admin``
 - password ``password``
