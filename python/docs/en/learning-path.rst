@@ -34,7 +34,7 @@ The path
    * - 3. Adopt
      - ~1 h
      - Read short runnable examples, start your app from the skeleton
-     - apps repo ``examples/`` + ``templates/basic``
+     - examples ladder (01-05) + ``templates/basic``
    * - 4. Ship
      - day+
      - Package a ``.neoapp``, restart policy, your own web page
@@ -83,21 +83,20 @@ Bundle: `sdk-teaching-demo-latest-arm64.neoapp
 Stage 3 — Adopt the patterns (~1 hour)
 --------------------------------------
 
-Read short, complete apps in the apps repository's `examples directory
-<https://github.com/camthink-ai/neoruntime-apps/tree/main/examples>`_
-(``hello-world``, ``object-detection``, ``people-counting``,
-``person-detection``) — each is an ``app.yaml`` plus one main file.
-Then start your own app from the `basic template
+Work through the `examples ladder
+<https://github.com/camthink-ai/neoruntime-apps/blob/main/examples/README.md>`_
+first: five numbered minimal apps, 01 hello-app (runs without a device)
+through 05 live-detection (live loop + your own MJPEG page), each rung
+adding exactly one new idea and carrying its own offline tests — rung 05
+is teaching-demo station 1 as a standalone app. The larger complete
+examples (``object-detection``, ``people-counting``,
+``person-detection``) make good follow-up reading. Then start your own
+app from the `basic template
 <https://github.com/camthink-ai/neoruntime-apps/tree/main/templates/basic>`_.
 
-You are done when your copy of the skeleton runs on the device and you
-have changed one thing — a draw color, a topic name.
-
-.. note::
-
-   A numbered, progressive examples ladder (01 hello-app through
-   10 dsp-offload) is on the roadmap for ``examples/``; the teaching
-   demo's five stations map onto its middle rungs.
+You are done when you have read the ladder through (or your skeleton
+copy runs on the device) and changed one thing — a draw color, a topic
+name.
 
 Stage 4 — Ship it
 -----------------

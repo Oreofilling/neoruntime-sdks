@@ -31,7 +31,7 @@
    * - 3. 拿来用
      - ~1 小时
      - 读短小可跑的示例，从骨架起自己的 app
-     - apps 仓 ``examples/`` + ``templates/basic``
+     - examples 阶梯（01–05）+ ``templates/basic``
    * - 4. 交付
      - 一天起
      - 打 ``.neoapp`` 包、重启策略、自己的网页
@@ -78,21 +78,18 @@
 阶段 3 —— 拿来用（约 1 小时）
 ------------------------------
 
-读 apps 仓库 `examples 目录
-<https://github.com/camthink-ai/neoruntime-apps/tree/main/examples>`_
-里的短小完整应用（``hello-world``、``object-detection``、
-``people-counting``、``person-detection``）——每个都是一份
-``app.yaml`` 加一个主文件。然后从 `basic 模板
+先走 `examples 阶梯
+<https://github.com/camthink-ai/neoruntime-apps/blob/main/examples/README.md>`_：
+五个编号递进的最小应用——01 hello-app（免设备可跑）到 05
+live-detection（活循环 + 自建 MJPEG 网页）——每级只引入一个新
+概念，每级自带离线测试，05 正是教学 demo 站 1 的独立 app 版。
+更大的完整示例（``object-detection``、``people-counting``、
+``person-detection``）可作进阶参考。然后从 `basic 模板
 <https://github.com/camthink-ai/neoruntime-apps/tree/main/templates/basic>`_
 起你自己的 app。
 
-当骨架副本在设备上跑起来、并且你改了一样东西（一个绘制颜色、一个
-topic 名），本阶段完成。
-
-.. note::
-
-   一套编号递进的示例阶梯（01 hello-app 到 10 dsp-offload）已在
-   ``examples/`` 的规划中；教学 demo 的五个站点对应它的中段。
+当阶梯读完（或骨架副本在设备上跑起来）、并且你改了一样东西
+（一个绘制颜色、一个 topic 名），本阶段完成。
 
 阶段 4 —— 交付
 ---------------
