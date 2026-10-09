@@ -95,6 +95,7 @@ Contents
    :maxdepth: 2
    :caption: User Guide
 
+   device-onboarding
    learning-path
    installation
    quickstart

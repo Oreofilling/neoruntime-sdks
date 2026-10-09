@@ -12,6 +12,9 @@ carries it.
    *run* code. Without one, this page and the API reference still show
    you the shape of the SDK.
 
+No device yet? Start at :doc:`device-onboarding` — it covers buying
+an NE503 and logging in for the first time.
+
 The path
 --------
 
