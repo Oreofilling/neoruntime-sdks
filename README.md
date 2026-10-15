@@ -20,6 +20,8 @@ revision that carries it is tagged `cpp-sdk-last`.
 
 New to the SDK? Start with the [learning path](https://camthink-ai.github.io/neoruntime-sdks/python/en/learning-path.html) ([中文](https://camthink-ai.github.io/neoruntime-sdks/python/zh/learning-path.html)) — five stages from first inference to your first installed app.
 
+No device yet? The [device onboarding](https://camthink-ai.github.io/neoruntime-sdks/python/en/device-onboarding.html) ([中文](https://camthink-ai.github.io/neoruntime-sdks/python/zh/device-onboarding.html)) page covers buying an NE503 and logging in for the first time.
+
 - [Python SDK 中文接口使用手册](python/SDK_API_ZH.md)
 
 The SDK documentation is published at:
