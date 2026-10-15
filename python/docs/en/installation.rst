@@ -21,10 +21,17 @@ The SDK depends on the following Python packages:
 Installation Methods
 --------------------
 
+Install from PyPI
+~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   python -m pip install neoruntime-ipc-sdk
+
 Install from Source
 ~~~~~~~~~~~~~~~~~~~
 
-The SDK is not published to PyPI yet. Install from the public repository:
+Install from the public repository:
 
 .. code-block:: bash
 
@@ -52,25 +59,13 @@ verify the artifact:
 GitHub Actions Wheel Artifacts
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The public repository builds the Python wheel with GitHub Actions. Open
-``Actions`` -> ``Build Python SDK wheel`` and download the
-``python-sdk-wheel`` artifact from a successful run.
+The public repository builds and tests the wheel and sdist with GitHub
+Actions. Open ``Actions`` -> ``Build SDK release artifacts`` and download
+the ``python-sdk-dist`` artifact from a successful run.
 
-Maintainers can also publish a GitHub Release by pushing a matching version tag
-or running the workflow manually with release publishing enabled.
-
-Planned Package Channels
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-PyPI and tarball packages are not published yet. Do not use
-``pip install neoruntime-ipc-sdk`` or tarball URLs until those release channels are
-announced.
-
-When PyPI publishing is enabled, installation will use:
-
-.. code-block:: bash
-
-   python -m pip install neoruntime-ipc-sdk
+Maintainers publish by pushing a ``v*`` tag (or running the workflow
+manually with publishing enabled): this creates a GitHub Release and
+publishes the distributions to TestPyPI and then PyPI.
 
 Verify Installation
 -------------------
@@ -79,7 +74,7 @@ Verify Installation
 
    import neoruntime_ipc_sdk
    print(neoruntime_ipc_sdk.__version__)
-   # Output: 0.4.0
+   # Output: 0.8.1
 
 Development Environment
 -----------------------
@@ -117,8 +112,8 @@ Or build your own image:
 .. code-block:: dockerfile
 
    FROM python:3.10-slim
-   COPY neoruntime_ipc_sdk-0.4.0-py3-none-any.whl /tmp/
-   RUN python -m pip install --no-cache-dir /tmp/neoruntime_ipc_sdk-0.4.0-py3-none-any.whl
+   COPY neoruntime_ipc_sdk-0.8.1-py3-none-any.whl /tmp/
+   RUN python -m pip install --no-cache-dir /tmp/neoruntime_ipc_sdk-0.8.1-py3-none-any.whl
    WORKDIR /app
    COPY app.py .
    CMD ["python3", "app.py"]

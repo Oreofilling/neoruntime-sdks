@@ -9,6 +9,9 @@
    平台守护进程通信，因此*运行*代码需要设备。没有设备时，本页与
    API 参考仍能让你看清 SDK 的全貌。
 
+还没有设备？从 :doc:`device-onboarding` 开始：那里讲怎么买到
+NE503、首次开机怎么登录。
+
 路径总览
 --------
 
@@ -31,7 +34,7 @@
    * - 3. 拿来用
      - ~1 小时
      - 读短小可跑的示例，从骨架起自己的 app
-     - examples 阶梯（01–05）+ ``templates/basic``
+     - examples 阶梯（01–07）+ ``templates/basic``
    * - 4. 交付
      - 一天起
      - 打 ``.neoapp`` 包、重启策略、自己的网页
@@ -80,9 +83,11 @@
 
 先走 `examples 阶梯
 <https://github.com/camthink-ai/neoruntime-apps/blob/main/examples/README.md>`_：
-五个编号递进的最小应用——01 hello-app（免设备可跑）到 05
-live-detection（活循环 + 自建 MJPEG 网页）——每级只引入一个新
-概念，每级自带离线测试，05 正是教学 demo 站 1 的独立 app 版。
+七个编号递进的最小应用——01 hello-app（免设备可跑）到 07
+platform-overlay（``annotate_result`` 平台画框、应用零像素），其中
+05 live-detection 是活循环 + 自建 MJPEG 网页、06 event-bridge 是
+事件总线——每级只引入一个新概念，每级自带离线测试，05 正是教学
+demo 站 1 的独立 app 版。
 更大的完整示例（``object-detection``、``people-counting``、
 ``person-detection``）可作进阶参考。然后从 `basic 模板
 <https://github.com/camthink-ai/neoruntime-apps/tree/main/templates/basic>`_

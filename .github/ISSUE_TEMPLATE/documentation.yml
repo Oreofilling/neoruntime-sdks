@@ -1,0 +1,28 @@
+name: Documentation issue
+description: A doc page, learning-path stage, or doc example is wrong, unclear, or missing
+labels: ["documentation"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - wrong / outdated content
+        - unclear explanation
+        - missing topic (gap)
+        - broken link
+    validations:
+      required: true
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      placeholder: "e.g. learning-path stage 3, quickstart, api/events"
+    validations:
+      required: true
+  - type: textarea
+    id: detail
+    attributes:
+      label: What should change?
+    validations:
+      required: true

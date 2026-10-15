@@ -4,6 +4,8 @@ Python SDK for NeoRuntime EdgeCam AI Platform
 
 中文接口使用手册：[SDK_API_ZH.md](SDK_API_ZH.md)
 
+No device yet? The [device onboarding](https://camthink-ai.github.io/neoruntime-sdks/python/en/device-onboarding.html) page in the docs covers buying an NE503 and first-time login.
+
 ## Installation
 
 Install from PyPI:
@@ -742,22 +744,21 @@ Do not commit files from `dist/`; publish them as release artifacts instead.
 
 ### Automated Wheel Builds
 
-In the public `neoruntime-sdks` repository, GitHub Actions builds a wheel for
-pull requests, pushes to `main`, and manual workflow runs. The wheel is uploaded
-as a workflow artifact named `python-sdk-wheel`.
+In the public `neoruntime-sdks` repository, GitHub Actions builds and tests
+the wheel and sdist for pull requests, pushes to `main`, and manual workflow
+runs, uploading them as a workflow artifact named `python-sdk-dist`.
 
-To create or update a GitHub Release, either push a version tag or run the
-workflow manually with release publishing enabled:
+Pushing a `v*` tag (or running the workflow manually with publishing enabled)
+creates a GitHub Release with the distributions attached and publishes to
+TestPyPI and then PyPI:
 
 ```bash
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.8.1
+git push origin v0.8.1
 ```
 
-The release tag version must match the package version in `setup.py`.
-
-PyPI packages are not published yet. Until they are available, use source
-installs, local wheels, or GitHub Release artifacts.
+The release tag version must match the package version in `setup.py` and
+`neoruntime_ipc_sdk/__init__.py`.
 
 ## License
 

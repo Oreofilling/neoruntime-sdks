@@ -21,10 +21,17 @@ SDK 依赖以下 Python 包：
 安装方法
 --------
 
+从 PyPI 安装
+~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   python -m pip install neoruntime-ipc-sdk
+
 从源码安装
 ~~~~~~~~~~
 
-SDK 暂未发布到 PyPI。当前请从公开仓库源码安装：
+从公开仓库源码安装：
 
 .. code-block:: bash
 
@@ -51,24 +58,12 @@ SDK 暂未发布到 PyPI。当前请从公开仓库源码安装：
 GitHub Actions Wheel Artifact
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-公开仓库会通过 GitHub Actions 构建 Python wheel。进入
-``Actions`` -> ``Build Python SDK wheel``，可在成功运行中下载
-``python-sdk-wheel`` artifact。
+公开仓库会通过 GitHub Actions 构建并测试 wheel 和 sdist。进入
+``Actions`` -> ``Build SDK release artifacts``，可在成功运行中下载
+``python-sdk-dist`` artifact。
 
-维护者也可以推送匹配版本的 tag，或手动运行 workflow 并开启 release
-发布选项，生成 GitHub Release。
-
-计划中的发布渠道
-~~~~~~~~~~~~~~~~
-
-PyPI 和 tarball 包目前尚未发布。在正式公告前，不要使用
-``pip install neoruntime-ipc-sdk`` 或 tarball URL。
-
-后续启用 PyPI 发布后，安装方式会是：
-
-.. code-block:: bash
-
-   python -m pip install neoruntime-ipc-sdk
+维护者推送 ``v*`` tag（或手动运行 workflow 并开启发布选项）会生成
+GitHub Release，并把 wheel 和 sdist 相继发布到 TestPyPI 与 PyPI。
 
 验证安装
 --------
@@ -77,7 +72,7 @@ PyPI 和 tarball 包目前尚未发布。在正式公告前，不要使用
 
    import neoruntime_ipc_sdk
    print(neoruntime_ipc_sdk.__version__)
-   # 输出: 0.4.0
+   # 输出: 0.8.1
 
 开发环境安装
 ------------
@@ -115,8 +110,8 @@ Docker 环境
 .. code-block:: dockerfile
 
    FROM python:3.10-slim
-   COPY neoruntime_ipc_sdk-0.4.0-py3-none-any.whl /tmp/
-   RUN python -m pip install --no-cache-dir /tmp/neoruntime_ipc_sdk-0.4.0-py3-none-any.whl
+   COPY neoruntime_ipc_sdk-0.8.1-py3-none-any.whl /tmp/
+   RUN python -m pip install --no-cache-dir /tmp/neoruntime_ipc_sdk-0.8.1-py3-none-any.whl
    WORKDIR /app
    COPY app.py .
    CMD ["python3", "app.py"]

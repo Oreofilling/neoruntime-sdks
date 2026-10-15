@@ -1,0 +1,28 @@
+name: Bug report
+description: The SDK misbehaves or its docs do not match reality
+labels: ["bug"]
+body:
+  - type: input
+    id: sdk-version
+    attributes:
+      label: neoruntime-ipc-sdk version
+      placeholder: python -c "import neoruntime_ipc_sdk as s; print(s.__version__)"
+    validations:
+      required: true
+  - type: dropdown
+    id: language
+    attributes:
+      label: Which SDK
+      options:
+        - Python (neoruntime-ipc-sdk)
+        - C++ (sdks/cpp)
+        - docs / examples
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Minimal code, what you expected, what happened instead. Include the traceback and `python -c "import neoruntime_ipc_sdk as s; s.diagnostics()"` output if it runs.
+    validations:
+      required: true

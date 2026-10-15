@@ -1,6 +1,22 @@
 Changelog
 =========
 
+v0.8.1 (2026-10-15)
+-------------------
+
+Improvements
+~~~~~~~~~~~~
+
+- ``register_model()`` tests now register detection models by ``model_type``, aligned with the runtime's postprocess-linking behavior
+
+Documentation
+~~~~~~~~~~~~~
+
+- New bilingual "learning path" page: an onboarding route organized into five stages (first run, see it live, take and reuse, ship, reference), pointing each stage at the quickstart, the teaching demo, the examples ladder, and the app image guide
+- README gains Overlay / StreamPipeline / Audio / DSP API overview sections plus a teaching-demo section, reconciled symbol-by-symbol against the 0.8.0 facade
+- Learning-path stage 3 cross-links the numbered ladder (01-07) in the apps repository's ``examples/``; rung 05 is the standalone-app version of teaching-demo station 1
+- New bilingual "device onboarding" page: from buying an NE503 to your first login — the factory static address ``10.0.0.1/24``, default credentials, SSH and the web terminal, and multicast discovery — linked from the learning path as its stage 0
+
 v0.8.0 (2026-09-16)
 -------------------
 

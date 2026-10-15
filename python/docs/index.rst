@@ -95,6 +95,7 @@ AI 推理
    :maxdepth: 2
    :caption: 用户指南
 
+   device-onboarding
    learning-path
    installation
    quickstart
