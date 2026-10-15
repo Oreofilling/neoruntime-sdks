@@ -37,7 +37,7 @@ The path
    * - 3. Adopt
      - ~1 h
      - Read short runnable examples, start your app from the skeleton
-     - examples ladder (01-05) + ``templates/basic``
+     - examples ladder (01-07) + ``templates/basic``
    * - 4. Ship
      - day+
      - Package a ``.neoapp``, restart policy, your own web page
@@ -88,10 +88,13 @@ Stage 3 — Adopt the patterns (~1 hour)
 
 Work through the `examples ladder
 <https://github.com/camthink-ai/neoruntime-apps/blob/main/examples/README.md>`_
-first: five numbered minimal apps, 01 hello-app (runs without a device)
-through 05 live-detection (live loop + your own MJPEG page), each rung
-adding exactly one new idea and carrying its own offline tests — rung 05
-is teaching-demo station 1 as a standalone app. The larger complete
+first: seven numbered minimal apps, 01 hello-app (runs without a device)
+through 07 platform-overlay (``annotate_result`` — the platform draws
+the boxes, zero pixels in your app), with 05 live-detection covering the
+live loop plus your own MJPEG page and 06 event-bridge bridging results
+onto the event bus — each rung adds exactly one new idea and carries its
+own offline tests, and rung 05 is teaching-demo station 1 as a
+standalone app. The larger complete
 examples (``object-detection``, ``people-counting``,
 ``person-detection``) make good follow-up reading. Then start your own
 app from the `basic template
