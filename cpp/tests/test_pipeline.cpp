@@ -37,7 +37,7 @@
 
 using namespace neoruntime_ipc_sdk;
 
-namespace pb = aipc::inference;
+namespace pbns = aipc::inference;  // not `pb`: modern protobuf owns the top-level pb namespace
 
 namespace {
 
@@ -61,7 +61,7 @@ bool mats_equal(const cv::Mat& a, const cv::Mat& b) {
 }
 
 // The surface the pipeline touches, scripted per test (python FakeClient).
-struct FakeInference final : public pb::InferenceService::Service {
+struct FakeInference final : public pbns::InferenceService::Service {
     struct InferCall {
         std::string model_id;
         std::vector<int> shape;
@@ -77,16 +77,16 @@ struct FakeInference final : public pb::InferenceService::Service {
 
     std::string model_id;  // GetModelInfo: empty response = unknown model
     std::vector<int> input_shape;
-    pb::DataType input_dtype = pb::UINT8;
+    pbns::DataType input_dtype = pbns::UINT8;
     std::string input_layout = "NHWC";
 
-    grpc::Status Infer(grpc::ServerContext*, const pb::InferRequest* req,
-                       pb::InferResponse* resp) override {
+    grpc::Status Infer(grpc::ServerContext*, const pbns::InferRequest* req,
+                       pbns::InferResponse* resp) override {
         InferCall call;
         call.model_id = req->model_id();
         call.timeout_ms = req->timeout_ms();
         if (req->inputs_size() > 0) {
-            const pb::Tensor& t = req->inputs(0);
+            const pbns::Tensor& t = req->inputs(0);
             for (int d : t.shape()) call.shape.push_back(d);
             call.buffer_id = t.buffer_id();
             call.has_data = !t.data().empty();
@@ -96,18 +96,18 @@ struct FakeInference final : public pb::InferenceService::Service {
         resp->mutable_status()->set_success(true);
         if (emit_raw) {
             const cv::Mat head = test_head();
-            pb::Tensor* t = resp->add_outputs();
+            pbns::Tensor* t = resp->add_outputs();
             t->add_shape(head.rows);
             t->add_shape(head.cols);
-            t->set_dtype(pb::FLOAT32);
+            t->set_dtype(pbns::FLOAT32);
             t->set_data(head.data, head.total() * head.elemSize());
         }
         if (emit_detection) {
-            pb::Detection* det = resp->mutable_post_result()->add_detections();
+            pbns::Detection* det = resp->mutable_post_result()->add_detections();
             det->set_label("person");
             det->set_confidence(0.8f);
             det->set_class_id(7);
-            pb::BBox* bb = det->mutable_bbox();
+            pbns::BBox* bb = det->mutable_bbox();
             bb->set_x(1);
             bb->set_y(2);
             bb->set_w(3);
@@ -116,13 +116,13 @@ struct FakeInference final : public pb::InferenceService::Service {
         return grpc::Status::OK;
     }
 
-    grpc::Status GetModelInfo(grpc::ServerContext*, const pb::ModelInfo* req,
-                              pb::ModelInfo* resp) override {
+    grpc::Status GetModelInfo(grpc::ServerContext*, const pbns::ModelInfo* req,
+                              pbns::ModelInfo* resp) override {
         if (model_id.empty() || req->model_id() != model_id) return grpc::Status::OK;
         resp->set_model_id(model_id);
         resp->set_model_path("x.hef");
         resp->set_version("1");
-        pb::TensorSpec* in = resp->add_inputs();
+        pbns::TensorSpec* in = resp->add_inputs();
         for (int d : input_shape) in->add_shape(d);
         in->set_dtype(input_dtype);
         in->set_name("in");
@@ -310,7 +310,7 @@ TEST(FromModel, WiresDerivedPreprocessor) {
     rt.svc.emit_raw = true;
     rt.svc.model_id = "m";
     rt.svc.input_shape = {1, 640, 640, 3};
-    rt.svc.input_dtype = pb::UINT8;
+    rt.svc.input_dtype = pbns::UINT8;
     rt.svc.input_layout = "NHWC";
     InferencePipeline pipe = InferencePipeline::from_model("m", rt.client(), person_post());
     ASSERT_TRUE(pipe.preprocessor.has_value());
@@ -336,7 +336,7 @@ TEST(FromModel, Nv12ModelAutoPassthroughFeedsInferTheRef) {
     rt.svc.emit_raw = true;
     rt.svc.model_id = "m";
     rt.svc.input_shape = {1, 384, 640, 1};
-    rt.svc.input_dtype = pb::UINT8;
+    rt.svc.input_dtype = pbns::UINT8;
     rt.svc.input_layout = "NV12";
     InferencePipeline pipe = InferencePipeline::from_model("m", rt.client(), person_post());
     ASSERT_TRUE(pipe.preprocessor.has_value());

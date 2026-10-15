@@ -15,11 +15,11 @@
 
 using namespace neoruntime_ipc_sdk;
 namespace codec = detail::overlay_codec;
-namespace pb = aipc::camera;
+namespace pbns = aipc::camera;  // not `pb`: modern protobuf owns the top-level pb namespace
 
 TEST(OverlayStrict, PlainConfigSendsNeitherStrictField) {
     OverlayConfig c;  // defaults: enabled, labels on, strict fields nullopt
-    pb::AiOverlayConfig cfg = codec::ai_overlay_config(c);
+    pbns::AiOverlayConfig cfg = codec::ai_overlay_config(c);
     EXPECT_FALSE(cfg.has_strict_frame_lock());
     EXPECT_FALSE(cfg.has_strict_wait_cap_ms());
     // Non-strict fields are plain scalars — always present on the wire.
@@ -30,7 +30,7 @@ TEST(OverlayStrict, PlainConfigSendsNeitherStrictField) {
 TEST(OverlayStrict, OptInSetsLockOnly) {
     OverlayConfig c;
     c.strict_frame_lock = true;
-    pb::AiOverlayConfig cfg = codec::ai_overlay_config(c);
+    pbns::AiOverlayConfig cfg = codec::ai_overlay_config(c);
     ASSERT_TRUE(cfg.has_strict_frame_lock());
     EXPECT_TRUE(cfg.strict_frame_lock());
     EXPECT_FALSE(cfg.has_strict_wait_cap_ms());
@@ -41,7 +41,7 @@ TEST(OverlayStrict, ExplicitFalseIsSent) {
     // yaml alone" value.
     OverlayConfig c;
     c.strict_frame_lock = false;
-    pb::AiOverlayConfig cfg = codec::ai_overlay_config(c);
+    pbns::AiOverlayConfig cfg = codec::ai_overlay_config(c);
     ASSERT_TRUE(cfg.has_strict_frame_lock());
     EXPECT_FALSE(cfg.strict_frame_lock());
 }
@@ -50,7 +50,7 @@ TEST(OverlayStrict, CapZeroIsSent) {
     // 0 = derive cap from stream fps; a real value, not "unset".
     OverlayConfig c;
     c.strict_wait_cap_ms = 0;
-    pb::AiOverlayConfig cfg = codec::ai_overlay_config(c);
+    pbns::AiOverlayConfig cfg = codec::ai_overlay_config(c);
     ASSERT_TRUE(cfg.has_strict_wait_cap_ms());
     EXPECT_EQ(cfg.strict_wait_cap_ms(), 0u);
     EXPECT_FALSE(cfg.has_strict_frame_lock());
@@ -60,7 +60,7 @@ TEST(OverlayStrict, BothStrictFieldsTogether) {
     OverlayConfig c;
     c.strict_frame_lock = true;
     c.strict_wait_cap_ms = 66;
-    pb::AiOverlayConfig cfg = codec::ai_overlay_config(c);
+    pbns::AiOverlayConfig cfg = codec::ai_overlay_config(c);
     EXPECT_TRUE(cfg.has_strict_frame_lock());
     EXPECT_TRUE(cfg.has_strict_wait_cap_ms());
     EXPECT_EQ(cfg.strict_wait_cap_ms(), 66u);

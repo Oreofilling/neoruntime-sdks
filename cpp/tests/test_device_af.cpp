@@ -16,10 +16,10 @@
 
 using namespace neoruntime_ipc_sdk;
 namespace codec = detail::device_codec;
-namespace pb = aipc::device;
+namespace pbns = aipc::device;  // not `pb`: modern protobuf owns the top-level pb namespace
 
 TEST(AfJobFrom, CarriesAcceptJobIdMessage) {
-    pb::AfJobResponse resp;
+    pbns::AfJobResponse resp;
     resp.set_accepted(true);
     resp.set_job_id(42);
     resp.set_message("af started");
@@ -28,7 +28,7 @@ TEST(AfJobFrom, CarriesAcceptJobIdMessage) {
     EXPECT_EQ(job.job_id, 42ull);
     EXPECT_EQ(job.message, "af started");
 
-    pb::AfJobResponse rejected;
+    pbns::AfJobResponse rejected;
     rejected.set_accepted(false);
     rejected.set_job_id(0);
     rejected.set_message("lens busy");
@@ -39,7 +39,7 @@ TEST(AfJobFrom, CarriesAcceptJobIdMessage) {
 }
 
 TEST(AfStatusFrom, MapsAllEighteenFields) {
-    pb::AfStatusResponse r;
+    pbns::AfStatusResponse r;
     r.set_job_id(7);
     r.set_operation("oneshot");
     r.set_state("running");
@@ -80,7 +80,7 @@ TEST(AfStatusFrom, MapsAllEighteenFields) {
 }
 
 TEST(AfMeasurementFrom, CarriesSeries) {
-    pb::AfMeasurementResponse r;
+    pbns::AfMeasurementResponse r;
     r.add_focus_energy(10);
     r.add_focus_energy(20);
     r.add_focus_energy(30);
@@ -95,7 +95,7 @@ TEST(AfMeasurementFrom, CarriesSeries) {
 
 TEST(AfWindowsRequest, MapsEnabledWindowsStream) {
     std::vector<AfWindow> wins{{10, 20, 100, 80}, {200, 300, 50, 60}};
-    pb::SetAfWindowsRequest req = codec::af_windows_request(true, wins, "main");
+    pbns::SetAfWindowsRequest req = codec::af_windows_request(true, wins, "main");
     EXPECT_TRUE(req.enabled());
     EXPECT_EQ(req.stream_id(), "main");
     ASSERT_EQ(req.windows_size(), 2);

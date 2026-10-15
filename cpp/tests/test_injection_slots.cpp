@@ -41,7 +41,7 @@
 #include "detail/dsp_wire.hpp"
 #include "detail/injection_logic.hpp"
 
-namespace pb = aipc::camera;
+namespace pbns = aipc::camera;  // not `pb`: modern protobuf owns the top-level pb namespace
 namespace wire = neoruntime_ipc_sdk::detail::dsp_wire;
 namespace logic = neoruntime_ipc_sdk::detail::injection_logic;
 using neoruntime_ipc_sdk::CameraClient;
@@ -275,26 +275,26 @@ struct FakeDspDaemon {
 // GetInjectionStatus snapshots and PushFrame results; records every
 // PushFrame / PushFrameStream request and SubmitDspJob (the dsp_unimplemented
 // toggle drives convert_hw's CPU-fallback leg).
-struct FakeCameraControl : pb::CameraControl::Service {
+struct FakeCameraControl : pbns::CameraControl::Service {
     std::mutex mu;
-    std::vector<pb::StreamStatusInfo> streams;
-    std::deque<pb::InjectionStatusResponse> statuses;
-    pb::InjectionStatusResponse status_default;
-    std::deque<pb::PushFrameResponse> push_results;
-    pb::PushFrameResponse push_result_default;
-    std::vector<pb::PushFrameRequest> pushes;         // unary PushFrame
-    std::vector<pb::PushFrameRequest> stream_pushes;  // PushFrameStream
-    std::vector<pb::DspJobRequest> dsp_jobs;
+    std::vector<pbns::StreamStatusInfo> streams;
+    std::deque<pbns::InjectionStatusResponse> statuses;
+    pbns::InjectionStatusResponse status_default;
+    std::deque<pbns::PushFrameResponse> push_results;
+    pbns::PushFrameResponse push_result_default;
+    std::vector<pbns::PushFrameRequest> pushes;         // unary PushFrame
+    std::vector<pbns::PushFrameRequest> stream_pushes;  // PushFrameStream
+    std::vector<pbns::DspJobRequest> dsp_jobs;
     bool dsp_unimplemented = false;
 
-    grpc::Status GetStreamStatus(grpc::ServerContext*, const pb::GetStreamStatusRequest*,
-                                 pb::GetStreamStatusResponse* resp) override {
+    grpc::Status GetStreamStatus(grpc::ServerContext*, const pbns::GetStreamStatusRequest*,
+                                 pbns::GetStreamStatusResponse* resp) override {
         std::lock_guard<std::mutex> g(mu);
         for (const auto& s : streams) resp->add_streams()->CopyFrom(s);
         return grpc::Status::OK;
     }
-    grpc::Status PushFrame(grpc::ServerContext*, const pb::PushFrameRequest* req,
-                           pb::PushFrameResponse* resp) override {
+    grpc::Status PushFrame(grpc::ServerContext*, const pbns::PushFrameRequest* req,
+                           pbns::PushFrameResponse* resp) override {
         std::lock_guard<std::mutex> g(mu);
         pushes.push_back(*req);
         if (!push_results.empty()) {
@@ -306,9 +306,9 @@ struct FakeCameraControl : pb::CameraControl::Service {
         return grpc::Status::OK;
     }
     grpc::Status PushFrameStream(
-        grpc::ServerContext*, grpc::ServerReader<pb::PushFrameRequest>* reader,
-        pb::PushFrameResponse* resp) override {
-        pb::PushFrameRequest r;
+        grpc::ServerContext*, grpc::ServerReader<pbns::PushFrameRequest>* reader,
+        pbns::PushFrameResponse* resp) override {
+        pbns::PushFrameRequest r;
         while (reader->Read(&r)) {
             std::lock_guard<std::mutex> g(mu);
             stream_pushes.push_back(r);
@@ -322,8 +322,8 @@ struct FakeCameraControl : pb::CameraControl::Service {
         }
         return grpc::Status::OK;
     }
-    grpc::Status GetInjectionStatus(grpc::ServerContext*, const pb::Empty*,
-                                    pb::InjectionStatusResponse* resp) override {
+    grpc::Status GetInjectionStatus(grpc::ServerContext*, const pbns::Empty*,
+                                    pbns::InjectionStatusResponse* resp) override {
         std::lock_guard<std::mutex> g(mu);
         if (!statuses.empty()) {
             *resp = std::move(statuses.front());
@@ -333,8 +333,8 @@ struct FakeCameraControl : pb::CameraControl::Service {
         }
         return grpc::Status::OK;
     }
-    grpc::Status SubmitDspJob(grpc::ServerContext*, const pb::DspJobRequest* req,
-                              pb::DspJobResponse* resp) override {
+    grpc::Status SubmitDspJob(grpc::ServerContext*, const pbns::DspJobRequest* req,
+                              pbns::DspJobResponse* resp) override {
         std::lock_guard<std::mutex> g(mu);
         dsp_jobs.push_back(*req);
         if (dsp_unimplemented)
@@ -376,7 +376,7 @@ struct FakeStack {
 
 void add_stream(FakeCameraControl& svc, const std::string& id, int w, int h,
                 bool encoder = true) {
-    pb::StreamStatusInfo s;
+    pbns::StreamStatusInfo s;
     s.set_stream_id(id);
     s.set_status("active");
     s.set_has_encoder(encoder);
@@ -388,7 +388,7 @@ void add_stream(FakeCameraControl& svc, const std::string& id, int w, int h,
 
 void queue_status(FakeCameraControl& svc, bool reports,
                   std::initializer_list<std::uint64_t> busy) {
-    pb::InjectionStatusResponse r;
+    pbns::InjectionStatusResponse r;
     r.set_success(true);
     r.set_reports_in_flight_buffers(reports);
     for (std::uint64_t id : busy) r.add_in_flight_buffer_ids(id);
@@ -397,7 +397,7 @@ void queue_status(FakeCameraControl& svc, bool reports,
 }
 
 void queue_push_result(FakeCameraControl& svc, std::initializer_list<std::uint64_t> busy) {
-    pb::PushFrameResponse r;
+    pbns::PushFrameResponse r;
     r.set_success(true);
     for (std::uint64_t id : busy) r.add_in_flight_buffer_ids(id);
     std::lock_guard<std::mutex> g(svc.mu);
@@ -582,12 +582,12 @@ TEST(FramePublisherPublish, LegacyRotationAndRequestShape) {
         ASSERT_EQ(st.cam_svc.pushes.size(), 3u);
         const std::uint64_t want[3] = {id0, id1, id0};  // blind depth-2 rotation
         for (int i = 0; i < 3; ++i) {
-            const pb::PushFrameRequest& r = st.cam_svc.pushes[i];
+            const pbns::PushFrameRequest& r = st.cam_svc.pushes[i];
             EXPECT_EQ(r.buffer_id(), want[i]) << "push " << i;
             EXPECT_EQ(r.width(), 640u);
             EXPECT_EQ(r.height(), 480u);
             EXPECT_EQ(r.stride(), 640u);
-            EXPECT_EQ(r.mode(), pb::INJECT_REPLACE);
+            EXPECT_EQ(r.mode(), pbns::INJECT_REPLACE);
             EXPECT_EQ(r.pts_ns(), static_cast<std::uint64_t>(11 * (i + 1)));
             EXPECT_EQ(r.dest_x(), 0u);
             EXPECT_EQ(r.dest_y(), 0u);
@@ -603,7 +603,7 @@ TEST(FramePublisherPublish, LegacyRotationAndRequestShape) {
     {
         std::lock_guard<std::mutex> g(st.cam_svc.mu);
         ASSERT_EQ(st.cam_svc.pushes.size(), 4u);
-        const pb::PushFrameRequest& r = st.cam_svc.pushes[3];
+        const pbns::PushFrameRequest& r = st.cam_svc.pushes[3];
         EXPECT_EQ(r.buffer_id(), 0u);
         EXPECT_TRUE(r.end_of_stream());
         EXPECT_EQ(r.session_id(), "sess-1");
@@ -842,18 +842,18 @@ TEST(FramePublisherPublish, PublishStreamRequestShape) {
     const std::uint64_t want_ids[3] = {0x100, 0x101, 0x102};  // lease: distinct slots
     const std::uint64_t want_pts[3] = {7, 8, 0};              // missing pts pad 0
     for (int i = 0; i < 3; ++i) {
-        const pb::PushFrameRequest& r = st.cam_svc.stream_pushes[i];
+        const pbns::PushFrameRequest& r = st.cam_svc.stream_pushes[i];
         EXPECT_EQ(r.buffer_id(), want_ids[i]) << "frame " << i;
         EXPECT_EQ(r.pts_ns(), want_pts[i]) << "frame " << i;
         EXPECT_EQ(r.width(), 640u);
         EXPECT_EQ(r.height(), 480u);
         EXPECT_EQ(r.stride(), 640u);
-        EXPECT_EQ(r.mode(), pb::INJECT_REPLACE);
+        EXPECT_EQ(r.mode(), pbns::INJECT_REPLACE);
         EXPECT_EQ(r.stream_id(), "sub");
         EXPECT_EQ(r.session_id(), "stream-s");
         EXPECT_FALSE(r.end_of_stream());
     }
-    const pb::PushFrameRequest& eos = st.cam_svc.stream_pushes[3];
+    const pbns::PushFrameRequest& eos = st.cam_svc.stream_pushes[3];
     EXPECT_EQ(eos.buffer_id(), 0u);
     EXPECT_TRUE(eos.end_of_stream());
     EXPECT_EQ(eos.session_id(), "stream-s");
@@ -912,12 +912,12 @@ TEST(FramePublisherPublish, ArgbOverlayRidesSharedImportRing) {
         std::lock_guard<std::mutex> g(st.cam_svc.mu);
         ASSERT_EQ(st.cam_svc.pushes.size(), 2u);
         for (int i = 0; i < 2; ++i) {
-            const pb::PushFrameRequest& r = st.cam_svc.pushes[i];
+            const pbns::PushFrameRequest& r = st.cam_svc.pushes[i];
             EXPECT_EQ(r.buffer_id(), 0x9000 + static_cast<std::uint64_t>(i + 1));
             EXPECT_EQ(r.width(), 480u);
             EXPECT_EQ(r.height(), 270u);
             EXPECT_EQ(r.stride(), 480u * 4u);  // ARGB32 byte stride
-            EXPECT_EQ(r.mode(), pb::INJECT_OVERLAY);
+            EXPECT_EQ(r.mode(), pbns::INJECT_OVERLAY);
             EXPECT_EQ(r.stream_id(), "main");
         }
     }
@@ -952,17 +952,17 @@ TEST(FramePublisherPublishRgb, HardwareConvertChain) {
         std::lock_guard<std::mutex> g(st.cam_svc.mu);
         ASSERT_EQ(st.cam_svc.dsp_jobs.size(), 2u);
         for (int i = 0; i < 2; ++i) {
-            const pb::DspJobRequest& j = st.cam_svc.dsp_jobs[i];
-            EXPECT_EQ(j.op(), pb::DSP_OP_CONVERT_FORMAT) << "job " << i;
+            const pbns::DspJobRequest& j = st.cam_svc.dsp_jobs[i];
+            EXPECT_EQ(j.op(), pbns::DSP_OP_CONVERT_FORMAT) << "job " << i;
             EXPECT_EQ(j.src_buffer_id(), rgb_id) << "job " << i;  // rgb staging id
             ASSERT_EQ(j.dst_buffer_ids_size(), 1);
             EXPECT_EQ(j.dst_buffer_ids(0), stage_id) << "job " << i;  // nv12 stage id
         }
         ASSERT_EQ(st.cam_svc.pushes.size(), 2u);
         for (int i = 0; i < 2; ++i) {
-            const pb::PushFrameRequest& r = st.cam_svc.pushes[i];
+            const pbns::PushFrameRequest& r = st.cam_svc.pushes[i];
             EXPECT_EQ(r.buffer_id(), stage_id) << "push " << i;
-            EXPECT_EQ(r.mode(), pb::INJECT_REPLACE);
+            EXPECT_EQ(r.mode(), pbns::INJECT_REPLACE);
             EXPECT_EQ(r.width(), 640u);
             EXPECT_EQ(r.height(), 480u);
             EXPECT_EQ(r.stride(), 640u);

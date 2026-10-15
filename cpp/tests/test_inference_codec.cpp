@@ -20,7 +20,7 @@
 
 using namespace neoruntime_ipc_sdk;
 namespace codec = detail::inference_codec;
-namespace pb = aipc::inference;
+namespace pbns = aipc::inference;  // not `pb`: modern protobuf owns the top-level pb namespace
 
 // ---- tensor_spec roundtrip (layout included) ---------------------------------
 TEST(TensorSpecCodec, RoundTripWithLayout) {
@@ -30,7 +30,7 @@ TEST(TensorSpecCodec, RoundTripWithLayout) {
     spec.name = "images";
     spec.layout = "NCHW";
 
-    pb::TensorSpec ps;
+    pbns::TensorSpec ps;
     codec::tensor_spec_to_proto(spec, &ps);
     ASSERT_EQ(ps.shape_size(), 4);
     EXPECT_EQ(ps.shape(0), 1);
@@ -51,7 +51,7 @@ TEST(TensorSpecCodec, EmptyLayoutStaysUnset) {
     spec.dtype = DataType::Uint8;
     spec.name = "input";
     // layout "" -> not written; parses back as "".
-    pb::TensorSpec ps;
+    pbns::TensorSpec ps;
     codec::tensor_spec_to_proto(spec, &ps);
     EXPECT_EQ(ps.layout(), "");
     EXPECT_EQ(codec::tensor_spec_from_proto(ps).layout, "");
@@ -59,7 +59,7 @@ TEST(TensorSpecCodec, EmptyLayoutStaysUnset) {
 
 // ---- model_info (owner_id / transient / batch_size) ---------------------------
 TEST(ModelInfoCodec, MapsOwnershipFields) {
-    pb::ModelInfo m;
+    pbns::ModelInfo m;
     m.set_model_id("yolo");
     m.set_model_path("/models/yolo.hef");
     m.set_version("1.2.3");
@@ -97,7 +97,7 @@ TEST(ModelInfoCodec, MapsOwnershipFields) {
     // batch_size 0 — the proto3 default rides through, exactly like Python's
     // plain `batch_size=response.batch_size` read (the dataclass's in-place
     // default of 1 only applies to hand-constructed ModelInfos).
-    const ModelInfo bare = codec::model_info_from_proto(pb::ModelInfo{});
+    const ModelInfo bare = codec::model_info_from_proto(pbns::ModelInfo{});
     EXPECT_EQ(bare.owner_id, "");
     EXPECT_FALSE(bare.transient);
     EXPECT_EQ(bare.batch_size, 0u);
@@ -105,8 +105,8 @@ TEST(ModelInfoCodec, MapsOwnershipFields) {
 
 // ---- fill_post_result: all seven sections -------------------------------------
 namespace {
-pb::PostResult sample_post_result() {
-    pb::PostResult pr;
+pbns::PostResult sample_post_result() {
+    pbns::PostResult pr;
     auto* det = pr.add_detections();
     det->set_label("person");
     det->set_confidence(0.87f);
@@ -213,13 +213,13 @@ TEST(PostResultCodec, ToMaskDecodesRle) {
 
 // ---- parse_infer_response -------------------------------------------------------
 TEST(ParseInferResponse, StructuredAndRawOutputs) {
-    pb::InferResponse resp;
+    pbns::InferResponse resp;
     resp.mutable_status()->set_success(true);
     *resp.mutable_post_result() = sample_post_result();
-    pb::Tensor* t = resp.add_outputs();
+    pbns::Tensor* t = resp.add_outputs();
     t->add_shape(2);
     t->add_shape(3);
-    t->set_dtype(pb::FLOAT32);
+    t->set_dtype(pbns::FLOAT32);
     const float vals[6] = {0, 1, 2, 3, 4, 5};
     t->set_data(vals, sizeof(vals));
     resp.set_infer_time_us(15000);
@@ -241,7 +241,7 @@ TEST(ParseInferResponse, StructuredAndRawOutputs) {
 }
 
 TEST(ParseInferResponse, FailedStatusLandsInStatusMessage) {
-    pb::InferResponse resp;
+    pbns::InferResponse resp;
     resp.mutable_status()->set_success(false);
     resp.mutable_status()->set_message("npu busy");
     const InferenceResult r = codec::parse_infer_response(resp);
@@ -251,7 +251,7 @@ TEST(ParseInferResponse, FailedStatusLandsInStatusMessage) {
 
 // ---- parse_stream_response (identity + skew) ------------------------------------
 TEST(ParseStreamResponse, CarriesIdentityAndSkew) {
-    pb::StreamInferResponse resp;
+    pbns::StreamInferResponse resp;
     resp.set_frame_sequence(4242);
     resp.set_timestamp_ns(1690000012345678901ull);
     resp.set_skew_us(18750);
@@ -268,7 +268,7 @@ TEST(ParseStreamResponse, CarriesIdentityAndSkew) {
 TEST(ParseStreamResponse, NegativeSkewRidesRaw) {
     // int64 on the wire: 0/negative ride through untouched (the >0 EMA gate
     // lives in the health layer, not the codec).
-    pb::StreamInferResponse resp;
+    pbns::StreamInferResponse resp;
     resp.set_skew_us(-5);
     const InferenceResult r = codec::parse_stream_response(resp);
     EXPECT_EQ(r.skew_us, -5);
@@ -276,19 +276,19 @@ TEST(ParseStreamResponse, NegativeSkewRidesRaw) {
 
 // ---- buffer_ref_tensor ------------------------------------------------------------
 TEST(BufferRefTensor, Nv12GeometryByIdOnly) {
-    const pb::Tensor t = codec::buffer_ref_tensor(0xDEADBEEFull, 3840, 2160);
+    const pbns::Tensor t = codec::buffer_ref_tensor(0xDEADBEEFull, 3840, 2160);
     EXPECT_EQ(t.buffer_id(), 0xDEADBEEFull);
     ASSERT_EQ(t.shape_size(), 2);
     EXPECT_EQ(t.shape(0), 3240);  // 2160 * 3 / 2 (NV12 luma+chroma height)
     EXPECT_EQ(t.shape(1), 3840);
-    EXPECT_EQ(t.dtype(), pb::UINT8);
+    EXPECT_EQ(t.dtype(), pbns::UINT8);
     EXPECT_TRUE(t.data().empty());   // no pixel bytes cross the wire
     EXPECT_EQ(t.dma_fd(), 0);        // mutually exclusive with data/dma_fd
 }
 
 // ---- stream_infer_request ----------------------------------------------------------
 TEST(StreamInferRequest, SetsAllFiveFields) {
-    const pb::StreamInferRequest req =
+    const pbns::StreamInferRequest req =
         codec::stream_infer_request("cam0_main", "yolo", 5, "s-1", true);
     EXPECT_EQ(req.model_id(), "yolo");
     EXPECT_EQ(req.stream_id(), "cam0_main");
@@ -299,7 +299,7 @@ TEST(StreamInferRequest, SetsAllFiveFields) {
 
 // ---- per-model stats (skew aggregates) ----------------------------------------------
 TEST(InferenceStatsCodec, SkewAggregates) {
-    pb::InferenceStats s;
+    pbns::InferenceStats s;
     s.set_model_id("yolo");
     s.set_total_inferences(480);
     s.set_total_errors(2);
@@ -323,12 +323,12 @@ TEST(InferenceStatsCodec, SkewAggregates) {
 // ---- mat <-> tensor dtype roundtrips (tensor_io, via the codec header) ---------------
 TEST(TensorIo, BgrMatRoundTrip) {
     cv::Mat img(4, 6, CV_8UC3, cv::Scalar(10, 20, 30));
-    const pb::Tensor t = detail::mat_to_tensor(img);
+    const pbns::Tensor t = detail::mat_to_tensor(img);
     ASSERT_EQ(t.shape_size(), 3);
     EXPECT_EQ(t.shape(0), 4);
     EXPECT_EQ(t.shape(1), 6);
     EXPECT_EQ(t.shape(2), 3);
-    EXPECT_EQ(t.dtype(), pb::UINT8);
+    EXPECT_EQ(t.dtype(), pbns::UINT8);
     const cv::Mat back = detail::tensor_to_mat(t);
     ASSERT_EQ(back.type(), img.type());
     ASSERT_EQ(back.size(), img.size());
@@ -343,9 +343,9 @@ TEST(TensorIo, Float32SingleChannelRoundTrip) {
     cv::Mat img(3, 5, CV_32F);
     for (int r = 0; r < img.rows; ++r)
         for (int c = 0; c < img.cols; ++c) img.at<float>(r, c) = r * 10 + c;
-    const pb::Tensor t = detail::mat_to_tensor(img);
+    const pbns::Tensor t = detail::mat_to_tensor(img);
     ASSERT_EQ(t.shape_size(), 2);
-    EXPECT_EQ(t.dtype(), pb::FLOAT32);
+    EXPECT_EQ(t.dtype(), pbns::FLOAT32);
     const cv::Mat back = detail::tensor_to_mat(t);
     ASSERT_EQ(back.size(), img.size());
     for (int r = 0; r < img.rows; ++r)

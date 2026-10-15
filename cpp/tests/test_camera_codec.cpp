@@ -20,7 +20,7 @@
 
 using namespace neoruntime_ipc_sdk;
 namespace codec = detail::camera_codec;
-namespace pb = aipc::camera;
+namespace pbns = aipc::camera;  // not `pb`: modern protobuf owns the top-level pb namespace
 
 // ---- pip_dest ------------------------------------------------------------------
 TEST(PipDest, CornersAndEvenAlignment) {
@@ -52,8 +52,8 @@ TEST(PipDest, RejectsBadArguments) {
 
 // ---- inject mode / push_frame_request ---------------------------------------------
 TEST(InjectMode, MapsAndRejects) {
-    EXPECT_EQ(codec::inject_mode_from_string("replace"), pb::INJECT_REPLACE);
-    EXPECT_EQ(codec::inject_mode_from_string("overlay"), pb::INJECT_OVERLAY);
+    EXPECT_EQ(codec::inject_mode_from_string("replace"), pbns::INJECT_REPLACE);
+    EXPECT_EQ(codec::inject_mode_from_string("overlay"), pbns::INJECT_OVERLAY);
     EXPECT_THROW(codec::inject_mode_from_string("bogus"), std::invalid_argument);
     EXPECT_THROW(codec::inject_mode_from_string(""), std::invalid_argument);
 }
@@ -71,12 +71,12 @@ TEST(PushFrameRequest, CarriesEveryField) {
     spec.stream_id = "main";
     spec.end_of_stream = false;
     spec.session_id = "s-1";
-    pb::PushFrameRequest req = codec::push_frame_request(spec);
+    pbns::PushFrameRequest req = codec::push_frame_request(spec);
     EXPECT_EQ(req.buffer_id(), 42u);
     EXPECT_EQ(req.width(), 480u);
     EXPECT_EQ(req.height(), 270u);
     EXPECT_EQ(req.stride(), 512u);
-    EXPECT_EQ(req.mode(), pb::INJECT_OVERLAY);
+    EXPECT_EQ(req.mode(), pbns::INJECT_OVERLAY);
     EXPECT_EQ(req.pts_ns(), 1234567890ull);
     EXPECT_EQ(req.dest_x(), 64u);
     EXPECT_EQ(req.dest_y(), 66u);
@@ -89,7 +89,7 @@ TEST(PushFrameRequest, CarriesEveryField) {
 }
 
 TEST(InjectionConverters, ResultAndStatus) {
-    pb::PushFrameResponse resp;
+    pbns::PushFrameResponse resp;
     resp.set_success(true);
     resp.set_message("ok");
     resp.set_error_code(0);
@@ -105,10 +105,10 @@ TEST(InjectionConverters, ResultAndStatus) {
     EXPECT_EQ(r.session_id, "s-1");
     EXPECT_EQ(r.in_flight_buffer_ids, (std::vector<std::uint64_t>{11, 12}));
 
-    pb::InjectionStatusResponse st;
+    pbns::InjectionStatusResponse st;
     st.set_success(true);
     st.set_active(true);
-    st.set_mode(pb::INJECT_OVERLAY);
+    st.set_mode(pbns::INJECT_OVERLAY);
     st.set_frames_injected(100);
     st.set_frames_dropped(2);
     st.set_queue_depth(1);
@@ -125,13 +125,13 @@ TEST(InjectionConverters, ResultAndStatus) {
     EXPECT_EQ(s.in_flight_buffer_ids, (std::vector<std::uint64_t>{5}));
 
     // Default (unset) enum maps back to "replace" — proto default is 0.
-    pb::InjectionStatusResponse st2;
+    pbns::InjectionStatusResponse st2;
     EXPECT_EQ(codec::injection_status_from(st2).mode, "replace");
 }
 
 // ---- infrared / presets --------------------------------------------------------------
 TEST(InfraredStatus, MapsAllFields) {
-    pb::InfraredStatusResponse resp;
+    pbns::InfraredStatusResponse resp;
     resp.set_mode("infrared");
     resp.set_transition("night");
     resp.set_output_source("profile");
@@ -175,7 +175,7 @@ TEST(InfraredStatus, MapsAllFields) {
 }
 
 TEST(IrPresets, MapsList) {
-    pb::IrPresetListResponse resp;
+    pbns::IrPresetListResponse resp;
     auto* a = resp.add_presets();
     a->set_name("day");
     a->set_zoom_ratio(1.0f);
@@ -197,7 +197,7 @@ TEST(IrPresets, MapsList) {
 
 // ---- stream status (28 wire fields -> 25-field struct) --------------------------------
 TEST(StreamStatus, MapsExtendedFields) {
-    pb::StreamStatusInfo s;
+    pbns::StreamStatusInfo s;
     s.set_stream_id("main");
     s.set_status("active");
     s.set_has_encoder(true);
@@ -276,7 +276,7 @@ TEST(PrivacyMask, RoundTrip) {
     r2.points_y = {0.0f, 0.2f};
     settings.regions = {r1, r2};
 
-    pb::PrivacyMaskConfig cfg = codec::privacy_mask_config_from(settings);
+    pbns::PrivacyMaskConfig cfg = codec::privacy_mask_config_from(settings);
     PrivacyMaskSettings back = codec::privacy_mask_from(cfg);
     EXPECT_EQ(back.color, settings.color);
     EXPECT_EQ(back.blur_radius, settings.blur_radius);
@@ -292,7 +292,7 @@ TEST(PrivacyMask, RoundTrip) {
 
 TEST(PrivacyMask, PartialMergePreservesUntouched) {
     // Current device state: color 1, blur 4, enabled, one region, dpm off.
-    pb::PrivacyMaskConfig current;
+    pbns::PrivacyMaskConfig current;
     current.set_color(1);
     current.set_blur_radius(4);
     current.set_enabled(true);
@@ -308,7 +308,7 @@ TEST(PrivacyMask, PartialMergePreservesUntouched) {
     current.set_dpm_color(9);
 
     // Partial: only blur + dpm_labels. Regions not given -> preserved.
-    pb::PrivacyMaskConfig merged = codec::merged_privacy_mask(
+    pbns::PrivacyMaskConfig merged = codec::merged_privacy_mask(
         current, std::nullopt, 8, std::nullopt, std::nullopt, std::nullopt,
         std::optional<std::string>{"person"}, std::nullopt, std::nullopt);
     EXPECT_EQ(merged.color(), 1u);           // untouched
@@ -324,7 +324,7 @@ TEST(PrivacyMask, PartialMergePreservesUntouched) {
     only.id = "new";
     only.points_x = {0.0f, 1.0f};
     only.points_y = {0.0f, 1.0f};
-    pb::PrivacyMaskConfig replaced =
+    pbns::PrivacyMaskConfig replaced =
         codec::merged_privacy_mask(current, std::nullopt, std::nullopt, std::nullopt,
                                    std::optional<std::vector<PrivacyMaskRegion>>{{only}},
                                    std::nullopt, std::nullopt, std::nullopt, std::nullopt);

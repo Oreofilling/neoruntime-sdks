@@ -29,7 +29,7 @@
 
 #include "detail/dsp_dispatch.hpp"
 
-namespace pb = aipc::inference;
+namespace pbns = aipc::inference;  // not `pb`: modern protobuf owns the top-level pb namespace
 using namespace neoruntime_ipc_sdk;
 
 namespace {
@@ -76,17 +76,17 @@ std::string thrown_message(Fn&& fn) {
 
 struct FakeModel {
     std::vector<int> shape;
-    pb::DataType dtype = pb::UINT8;
+    pbns::DataType dtype = pbns::UINT8;
     std::string layout;
 };
 
-struct FakeInference final : pb::InferenceService::Service {
-    grpc::Status GetModelInfo(grpc::ServerContext*, const pb::ModelInfo* req,
-                              pb::ModelInfo* resp) override {
+struct FakeInference final : pbns::InferenceService::Service {
+    grpc::Status GetModelInfo(grpc::ServerContext*, const pbns::ModelInfo* req,
+                              pbns::ModelInfo* resp) override {
         const auto it = models.find(req->model_id());
         if (it == models.end()) return grpc::Status::OK;  // empty id → nullopt
         resp->set_model_id(it->first);
-        pb::TensorSpec* inp = resp->add_inputs();
+        pbns::TensorSpec* inp = resp->add_inputs();
         for (int v : it->second.shape) inp->add_shape(v);
         inp->set_dtype(it->second.dtype);
         inp->set_name("in");
@@ -281,7 +281,7 @@ TEST(Call, NchwLayout) {
 
 namespace {
 
-FakeModel nhwc_model() { return FakeModel{{1, 640, 640, 3}, pb::UINT8, ""}; }
+FakeModel nhwc_model() { return FakeModel{{1, 640, 640, 3}, pbns::UINT8, ""}; }
 
 }  // namespace
 
@@ -298,7 +298,7 @@ TEST(FromModel, DerivesNhwcUint8) {
 
 TEST(FromModel, DerivesNchwFromShape) {
     FakeRuntime rt;
-    rt.with("m", FakeModel{{1, 3, 416, 416}, pb::FLOAT32, ""});
+    rt.with("m", FakeModel{{1, 3, 416, 416}, pbns::FLOAT32, ""});
     ASSERT_NE(rt.start("nchw"), nullptr);
     InferenceClient client(rt.endpoint);
     Preprocessor pre = Preprocessor::from_model(client, "m");
@@ -440,7 +440,7 @@ namespace {
 // configure + start in place: FakeRuntime has a user dtor (no implicit
 // move), so it cannot be returned by value
 void start_nv12_layout(FakeRuntime& rt, const char* tag,
-                       pb::DataType dtype = pb::UINT8) {
+                       pbns::DataType dtype = pbns::UINT8) {
     rt.with("m", FakeModel{{1, 384, 640, 1}, dtype, "NV12"});
     rt.start(tag);
 }
@@ -491,7 +491,7 @@ TEST(Nv12Passthrough, FromModelNoAutoEnableForRgb) {
 TEST(Nv12Passthrough, FromModelNoAutoEnableForFloatDtype) {
     // float implies normalize=true, which passthrough cannot serve
     FakeRuntime rt;
-    start_nv12_layout(rt, "float", pb::FLOAT32);
+    start_nv12_layout(rt, "float", pbns::FLOAT32);
     InferenceClient client(rt.endpoint);
     Preprocessor pre = Preprocessor::from_model(client, "m");
     EXPECT_FALSE(pre.nv12_passthrough);
