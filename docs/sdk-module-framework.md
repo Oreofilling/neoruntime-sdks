@@ -1,9 +1,8 @@
 # SDK Modular Framework
 
-Status: current `main` working tree, Python SDK `0.7.4`. The C++ SDK (last
-in-tree version `0.2.0`) is temporarily withdrawn from `main`; the last
-revision carrying `cpp/` is tagged `cpp-sdk-last`. C++ entries below describe
-that revision.
+Status: current `main` working tree, Python SDK `0.8.1`, C++ SDK `1.0.0`
+(rebuilt in-tree; architecture and public interfaces mirror the Python SDK).
+C++ entries below describe the `cpp/` tree in `main`.
 
 This document organizes the current NeoRuntime SDK repository into module
 boundaries, runtime dependencies, and extension rules. It is meant for SDK
@@ -112,18 +111,18 @@ These modules are thin, typed wrappers over platform daemon APIs.
 
 | Capability | Python module | C++ header | Daemon | Notes |
 | --- | --- | --- | --- | --- |
-| AI inference | `inference.py`, `inference_types.py`, `inference_codec.py`, `inference_genai.py` | `inference.hpp` | `ai-runtime` | Model registration, `infer`, `infer_async`, `infer_batch`, stream inference, stats, GenAI |
-| Camera control | `camera.py`, `camera_types.py` | `camera.hpp` | `camera-daemon` | ISP, transform, encoder, RTSP, OSD, profiles, hardware status |
-| Device control | `device.py` | `device.hpp` | `device-control` | Lights, IR/IRCUT, PTZ, zoom/focus, GPIO, RS485, Wiegand, device events |
+| AI inference | `inference.py`, `inference_types.py`, `inference_codec.py`, `inference_genai.py` | `inference.hpp`, `inference_types.hpp` | `ai-runtime` | Model registration, `infer`, `infer_async`, `infer_batch`, stream inference with health (latency/skew EMA, drop counters, consecutive-failure limit), stats, GenAI |
+| Camera control | `camera.py`, `camera_types.py` | `camera.hpp`, `camera_types.hpp` | `camera-daemon` | ISP, transform, encoder, RTSP, OSD, profiles, hardware status, privacy masks, IR presets, pipeline reconfigure, frame injection |
+| Device control | `device.py` | `device.hpp` | `device-control` | Lights, IR/IRCUT, PTZ, zoom/focus, GPIO, RS485, Wiegand, device events, autofocus suite |
 | Event bus | `events.py` | `events.hpp` | `event-bus` | Publish, subscribe, topic metadata, stats |
 | App management | `app.py` | `app.hpp` | `app-manager` | App install/start/stop/uninstall, stats, logs, web URL registration |
 | Audio control | `audio.py` | `audio.hpp` | audio service/control plane | Capture/playback device and status control |
 | Audio stream | `audio_stream.py` | `audio_stream.hpp` | raw UDS publisher | PCM/AAC frame stream |
-| Overlay | `overlay.py` | `overlay.hpp` | camera/control overlay path | Overlay settings and detection result projection |
-| Plugins | `plugin.py` | `plugin.hpp` | app/plugin discovery | Local plugin endpoints and gRPC server registration |
+| Overlay | `overlay.py` | `overlay.hpp` | camera/control overlay path | Overlay settings, detection result projection, zone polygons, session/frame binding |
+| Plugins | `plugin.py` | `plugin.hpp` | app/plugin discovery | Deprecated in both SDKs (marker only) |
 
-The C++ surface currently mirrors the daemon-client core. Python additionally
-ships a larger app toolkit and DSP/acceleration helpers.
+Both surfaces mirror the daemon-client core; the C++ tree additionally ships
+the DSP domain, frame injection, and the inference tool layer (see 3.5).
 
 ### 3.4 Media And Data Layer
 
@@ -131,12 +130,11 @@ Media modules model frames, packets, pixel formats, and buffer lifetime.
 
 | Module | Role |
 | --- | --- |
-| `frame.py` | `Frame`, `FrameHandle`, `PixelFormat`, raw pixel materialization, keep-fd lifetime |
-| `media.py` | Backward-compatible exports for frame and stream clients |
-| `fd_client.py` | Raw frame client using UDS + `SCM_RIGHTS` dma-buf fd passing |
-| `encoded.py` | Encoded H.264/H.265 packet stream client |
-| `audio_stream.py` | Audio frame wire decoder and stream client |
-| `cpp/include/neoruntime_ipc_sdk/media.hpp` | C++ `Frame`, `FdMediaClient`, `EncodedStreamClient` |
+| `frame.py` / `frame.hpp` | `Frame`, `FrameHandle`, `PixelFormat`, raw pixel materialization, keep-fd lifetime |
+| `media.py` / `media.hpp` | Backward-compatible exports for frame and stream clients (C++ facade over `frame.hpp`/`fd_client.hpp`/`encoded.hpp`) |
+| `fd_client.py` / `fd_client.hpp` | Raw frame client using UDS + `SCM_RIGHTS` dma-buf fd passing |
+| `encoded.py` / `encoded.hpp` | Encoded H.264/H.265 packet stream client |
+| `audio_stream.py` / `audio_stream.hpp` | Audio frame wire decoder and stream client |
 
 The important ownership rule is: if an app requests `keep_fd=True`, it must
 close or release the retained `FrameHandle`. That handle is also the zero-copy
@@ -147,15 +145,19 @@ bridge into DSP hardware jobs.
 These modules are higher-level building blocks for app authors. They are not
 all one-to-one daemon wrappers.
 
-| Module | Role | Hardware path |
-| --- | --- | --- |
-| `color.py` | NV12/RGB/BGR conversion and resize helpers | CPU by default |
-| `draw.py` | Draw boxes, detections, polygons, text, RGBA overlay rendering | CPU/PIL/numpy |
-| `postprocess.py` | NMS helper | CPU |
-| `recording.py` | MPEG-TS/HLS writer and preroll buffer | CPU/file output |
-| `web.py` | MJPEG stream/server helpers | CPU/network helper |
-| `dsp.py`, `dsp_wire.py`, `dsp_format.py` | DSP resize/crop/multi-crop/convert/blend/JPEG client plus fallback logic | camera-daemon DSP service |
-| `accel.py` | Capability router for hardware-first/software-only/hardware-only policies | Delegates to DSP or software legs |
+| Module | Python | C++ | Hardware path |
+| --- | --- | --- | --- |
+| `color` | `color.py` | `color.hpp` | CPU by default (cvtColor) |
+| `draw` | `draw.py` | `draw.hpp` | CPU/PIL vs CPU/OpenCV |
+| `postprocess` | `postprocess.py` | `postprocess.hpp` (NMS + YoloV5/V8 decode) | CPU |
+| `preprocess` | `preprocess.py` | `preprocess.hpp` (letterbox from model specs) | CPU |
+| `pipeline` / `stream_pipeline` / `runner` | `pipeline.py`, `stream_pipeline.py`, `runner.py` | `pipeline.hpp`, `stream_pipeline.hpp`, `runner.hpp` | client-side vs platform-scheduled |
+| `recording` | `recording.py` | not mirrored (app-supplied muxer) | CPU/file output |
+| `web` | `web.py` | not mirrored (app-supplied MJPEG server) | CPU/network helper |
+| `dsp` (+wire/format) | `dsp.py`, `dsp_wire.py`, `dsp_format.py` | `dsp.hpp`, `src/detail/dsp_wire.hpp`, `src/detail/dsp_format.hpp` | camera-daemon DSP service |
+| `injection` | `injection.py` | `injection.hpp` (`FramePublisher`) | camera-daemon frame injection |
+| `accel` | `accel.py` | `accel.hpp` (`AccelRouter`) | Delegates to DSP or software legs |
+| `diagnostics` | — | `diagnostics.hpp` | n/a |
 
 The SDK ships loose components, not a fixed pipeline. Apps compose frame input,
 inference, post-processing, overlay, events, recording, and web serving as
@@ -180,8 +182,12 @@ neoruntime_ipc_sdk
   AccelRouter            hardware/software route policy and degradation health
   draw/color/postprocess app-side image utilities
   recording/web          app-side streaming and recording utilities
-  PluginDiscovery        local plugin endpoints
+  PluginDiscovery        local plugin endpoints (deprecated)
 ```
+
+The C++ tree mirrors the same shape under `neoruntime_ipc_sdk::` — one header
+per module in `cpp/include/neoruntime_ipc_sdk/` (see `cpp/README.md` for the
+full matrix), minus `recording`/`web` by design.
 
 ## 5. Inference Module Notes
 
@@ -212,8 +218,11 @@ Use this rule of thumb:
 | Daemon clients | Broad coverage | Broad coverage |
 | Raw frame and encoded streams | Yes | Yes |
 | Audio stream | Yes | Yes |
-| App toolkit draw/color/recording/web | Yes | Limited/not mirrored |
-| DSP offload and capability router | Yes | Not currently exposed as public C++ modules |
+| DSP offload, injection, accel router | Yes | Yes (`dsp.hpp`, `injection.hpp`, `accel.hpp`) |
+| Inference tool layer (preprocess/postprocess/pipelines/runner) | Yes | Yes |
+| draw/color | Yes | Yes (OpenCV legs) |
+| recording (TS/HLS), web (MJPEG) | Yes | Not mirrored by design (app-supplied) |
+| Plugins | Deprecated | Deprecated marker only |
 | Proto generation | Generated files committed | Generated during CMake build |
 | Package format | Wheel + sdist | Installable tarball with headers/library/CMake files |
 
@@ -245,20 +254,20 @@ For hardware acceleration APIs, make fallback behavior explicit:
 
 | Workflow/script | Purpose |
 | --- | --- |
-| `.github/workflows/wheel.yml` | Build/test Python, publish Python artifacts, build C++ release tarball on release tags |
-| `.github/workflows/cpp.yml` | C++ build/test validation |
+| `.github/workflows/wheel.yml` | Build/test Python, publish Python artifacts on `v*` tags |
+| `.github/workflows/cpp.yml` | C++ build/test validation and `cpp-v*` tag releases (arm64 tarball + GitHub Release) |
 | `.github/workflows/pages.yml` | Publish docs |
 | `.github/workflows/sync-platform-protos.yml` | Sync platform proto contracts and open PR |
 | `scripts/package_cpp_sdk.sh` | Build installed C++ layout and package tarball |
 | `scripts/sync_platform_protos.sh` | Copy platform protos and regenerate Python stubs |
 | `scripts/check_interface_drift.sh` | Validate SDK proto/generated stubs match platform |
 
-Current release contract:
+Current release contract (Python `v*` and C++ `cpp-v*` tags are independent release lines):
 
 | Language | Artifact |
 | --- | --- |
 | Python | `neoruntime_ipc_sdk-<version>-py3-none-any.whl` and source tarball |
-| C++ | `ne503-aipc-cpp-sdk-<version>-linux-arm64.tar.gz` |
+| C++ | `ne503-aipc-cpp-sdk-<cpp-version>-linux-arm64.tar.gz` on `cpp-v*` tags, versioned independently of Python |
 
 ## 9. Recommended User-Facing Mental Model
 

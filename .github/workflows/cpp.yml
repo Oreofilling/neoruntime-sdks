@@ -1,0 +1,308 @@
+name: C++ SDK
+
+# CI and release chain for the C++ mirror of neoruntime_ipc_sdk (see cpp/README.md).
+#
+#   native           — x86_64 build of the static lib + examples, then the
+#                      daemon-independent GoogleTest suite via ctest. Runs on
+#                      every push / PR / cpp-v* tag. This is the always-green gate.
+#   validate-version  — on cpp-v* tags (or manual publish): the tag must equal
+#                      the version declared in cpp/CMakeLists.txt, version.hpp
+#                      kVersion and cpp/vcpkg.json. Mirrors the wheel.yml gate.
+#   cross-compile    — aarch64 (NE503 device target) build of lib + examples.
+#                      Needs a full aarch64 gRPC/opencv dependency set (vcpkg
+#                      arm64 triplet or a Yocto sysroot), which is heavy, so on
+#                      branch pushes it stays OPT-IN via the NE503_ENABLE_AARCH64
+#                      repository variable. cpp-v* tags and manual packaging
+#                      always run it, and it builds the installable arm64
+#                      tarball via scripts/package_cpp_sdk.sh.
+#   release          — on cpp-v* tags (or manual publish): attaches the arm64
+#                      tarball to a GitHub Release. C++ releases use the cpp-v*
+#                      tag prefix and a version line independent of the Python
+#                      SDK (wheel.yml only matches v* tags).
+#
+# Faithfulness note: no job here is wired to report success it cannot achieve.
+# The native job builds and runs real tests; the aarch64 job only runs when its
+# dependency source is explicitly provisioned or a release asks for it.
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "cpp-v*"
+    paths:
+      - "cpp/**"
+      - "proto/**"
+      - ".github/workflows/cpp.yml"
+  pull_request:
+    paths:
+      - "cpp/**"
+      - "proto/**"
+      - ".github/workflows/cpp.yml"
+  workflow_dispatch:
+    inputs:
+      package_cpp:
+        description: Cross-compile aarch64 and upload the installable arm64 tarball as a workflow artifact.
+        required: false
+        type: boolean
+        default: false
+      publish_release:
+        description: Create or update a GitHub Release with the arm64 SDK tarball.
+        required: false
+        type: boolean
+        default: false
+      release_tag:
+        description: Release tag to publish. Defaults to cpp-v<cpp/CMakeLists.txt version>.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpp-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Build & test (x86_64)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up vcpkg
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> "$GITHUB_ENV"
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/vcpkg/archives
+          key: vcpkg-x64-${{ runner.os }}-${{ hashFiles('cpp/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-x64-${{ runner.os }}-
+
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build-x64
+          key: cmake-x64-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            cmake-x64-${{ runner.os }}-
+
+      - name: Configure (vcpkg manifest mode)
+        run: |
+          set -euo pipefail
+          cmake -S cpp -B build-x64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DNE503_REGEN_PROTOS=ON \
+            -DNE503_BUILD_EXAMPLES=ON \
+            -DNE503_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build-x64 -j --config Release
+
+      - name: Test
+        run: ctest --test-dir build-x64 --build-config Release --output-on-failure
+
+  validate-version:
+    name: Validate release version
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/cpp-v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, sys
+
+          cmake_txt = pathlib.Path("cpp/CMakeLists.txt").read_text(encoding="utf-8")
+          m = re.search(r'project\s*\(\s*ne503_aipc_sdk\s+VERSION\s+([0-9][0-9.]*)', cmake_txt)
+          if not m:
+              sys.exit("Could not find VERSION in cpp/CMakeLists.txt")
+          cmake_version = m.group(1)
+
+          hpp = pathlib.Path("cpp/include/neoruntime_ipc_sdk/version.hpp").read_text(encoding="utf-8")
+          h = re.search(r'kVersion\[\]\s*=\s*"([^"]+)"', hpp)
+          if not h:
+              sys.exit("Could not find kVersion in cpp/include/neoruntime_ipc_sdk/version.hpp")
+          hpp_version = h.group(1)
+          if hpp_version != cmake_version:
+              sys.exit(
+                  f"version.hpp kVersion {hpp_version} "
+                  f"does not match CMakeLists VERSION {cmake_version}"
+              )
+
+          vcpkg = json.loads(pathlib.Path("cpp/vcpkg.json").read_text(encoding="utf-8"))
+          vcpkg_version = vcpkg.get("version-string")
+          if vcpkg_version != cmake_version:
+              sys.exit(
+                  f"vcpkg.json version-string {vcpkg_version} "
+                  f"does not match CMakeLists VERSION {cmake_version}"
+              )
+
+          release_tag = os.environ.get("RELEASE_TAG", "").strip()
+          if not release_tag and os.environ.get("GITHUB_REF_TYPE") == "tag":
+              release_tag = os.environ["GITHUB_REF_NAME"]
+          if not release_tag:
+              release_tag = f"cpp-v{cmake_version}"
+          if not release_tag.startswith("cpp-v"):
+              release_tag = f"cpp-v{release_tag}"
+
+          tag_version = release_tag.removeprefix("cpp-v")
+          if cmake_version != tag_version:
+              sys.exit(
+                  f"Release tag version {tag_version} does not match C++ SDK version {cmake_version}"
+              )
+          print(f"Release tag: {release_tag}")
+          PY
+
+  cross-compile:
+    name: Cross-compile (aarch64)
+    runs-on: ubuntu-24.04
+    # Opt-in on branch pushes: needs a provisioned aarch64 dependency source
+    # (vcpkg arm64 triplet built with the aarch64 cross-toolchain, or a Yocto
+    # sysroot). cpp-v* release tags and manual packaging always run it.
+    if: startsWith(github.ref, 'refs/tags/cpp-v') || vars.NE503_ENABLE_AARCH64 == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.package_cpp || inputs.publish_release))
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install aarch64 cross-toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Set up vcpkg
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> "$GITHUB_ENV"
+
+      - name: Cache vcpkg binary cache (arm64)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/vcpkg/archives
+          key: vcpkg-arm64-${{ hashFiles('cpp/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-arm64-
+
+      - name: Configure (aarch64 toolchain + vcpkg arm64 triplet)
+        run: |
+          set -euo pipefail
+          cmake -S cpp -B build-arm64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$PWD/cpp/cmake/aarch64-toolchain.cmake" \
+            -DVCPKG_TARGET_TRIPLET=arm64-linux \
+            -DNE503_REGEN_PROTOS=ON \
+            -DNE503_BUILD_EXAMPLES=ON \
+            -DNE503_BUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build-arm64 -j
+
+      - name: Verify ELF architecture
+        run: |
+          set -euo pipefail
+          file build-arm64/examples/person_detection | tee /dev/stderr | grep -q 'ARM aarch64'
+          file build-arm64/libne503_aipc_sdk.a | grep -q 'archive'
+
+      - name: Package arm64 installable tarball
+        run: |
+          set -euo pipefail
+          PACKAGE_ARCH=arm64 \
+          CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$PWD/cpp/cmake/aarch64-toolchain.cmake -DVCPKG_TARGET_TRIPLET=arm64-linux" \
+            scripts/package_cpp_sdk.sh
+
+      - name: Verify package architecture
+        run: |
+          set -euo pipefail
+          file build-cpp-package/stage/ne503-aipc-cpp-sdk-*/bin/person_detection | tee /dev/stderr | grep -q 'ARM aarch64'
+
+      - name: Upload arm64 SDK tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-sdk-dist-arm64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs:
+      - native
+      - validate-version
+      - cross-compile
+    if: startsWith(github.ref, 'refs/tags/cpp-v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download arm64 SDK tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: cpp-sdk-dist-arm64
+          path: dist
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          tarball="$(ls dist/ne503-aipc-cpp-sdk-*.tar.gz | head -1)"
+          version="$(basename "$tarball" | sed -E 's/^ne503-aipc-cpp-sdk-([^-]+)-.*/\1/')"
+
+          tag_name="$GITHUB_REF_NAME"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            tag_name="$RELEASE_TAG"
+            if [ -z "$tag_name" ]; then
+              tag_name="cpp-v$version"
+            fi
+          fi
+          case "$tag_name" in
+            cpp-v*) ;;
+            *) tag_name="cpp-v$tag_name" ;;
+          esac
+
+          if [ "${tag_name#cpp-v}" != "$version" ]; then
+            echo "Release tag $tag_name does not match tarball version $version" >&2
+            exit 1
+          fi
+
+          mirror="$(sed -n 's/.*kMirroredPythonSdk\[\] = "\([^"]*\)".*/\1/p' cpp/include/neoruntime_ipc_sdk/version.hpp | head -1)"
+
+          if gh release view "$tag_name" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag_name" "$tarball" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$tag_name" "$tarball" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "C++ SDK $version" \
+              --notes "C++ SDK release $tag_name.
+
+          - Installable aarch64 (NE503) package: \`$tarball\`. Unpack it, point your CMake at the prefix and use \`find_package(ne503_aipc_sdk $version REQUIRED)\`.
+          - The C++ version line is independent of the Python SDK; this release mirrors the Python SDK $mirror API surface (see \`cpp/include/neoruntime_ipc_sdk/version.hpp\`).
+          - Built against the platform protos and firmware contract of this tag; see \`cpp/CHANGELOG.md\` for the dependency contract.
+          - Building from source requires the repository root \`proto/\` (protoc + grpc_cpp_plugin regenerate the stubs)."
+          fi

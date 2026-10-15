@@ -1,0 +1,15 @@
+# NE503 AIPC C++ SDK — vcpkg manifest mode build artifacts
+proto_gen/
+build/
+build-*/
+out/
+.cache/
+compile_commands.json
+
+# vcpkg
+vcpkg_installed/
+
+# IDE
+.vscode/
+.idea/
+*.user

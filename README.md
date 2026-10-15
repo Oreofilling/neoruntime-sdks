@@ -2,19 +2,21 @@
 
 SDKs for building applications on the NeoRuntime edge AI platform.
 
-This repository publishes the Python SDK and shared protocol definitions for
-NeoRuntime applications. The C++ SDK is temporarily unavailable; the last
-revision that carries it is tagged `cpp-sdk-last`.
+This repository publishes the Python SDK, the C++ SDK and shared protocol
+definitions for NeoRuntime applications.
 
 ## Contents
 
 - `proto/` - source protocol definitions copied from the platform repository
 - `python/` - Python SDK package, examples, tests, and Sphinx documentation
+- `cpp/` - C++ SDK mirror of the Python SDK (clients, transports, tests,
+  examples)
 - `docs/sdk-module-framework.md` - current cross-language SDK module map and
   extension rules
 - `.github/workflows/pages.yml` - GitHub Pages documentation publishing
 - `.github/workflows/sync-platform-protos.yml` - platform proto synchronization
-- `.github/workflows/wheel.yml` - SDK release artifact publishing
+- `.github/workflows/wheel.yml` - Python SDK release artifact publishing
+- `.github/workflows/cpp.yml` - C++ SDK CI and `cpp-v*` release publishing
 
 ## Documentation
 
@@ -125,12 +127,18 @@ aipc-cli app start sdk-teaching-demo
 
 ## C++ SDK
 
-The C++ SDK is temporarily withdrawn from this repository. To restore or
-inspect it locally, check out the `cpp-sdk-last` tag:
+`cpp/` is a native C++17 mirror of the Python SDK for on-device development —
+the same daemon clients over gRPC-on-UDS and raw-UDS transports, with a
+daemon-independent GoogleTest suite. See [cpp/README.md](cpp/README.md) for
+the client surface, build instructions (native and aarch64 cross-compile) and
+examples.
 
-```bash
-git checkout cpp-sdk-last -- cpp
-```
+C++ releases are tagged with the `cpp-v*` prefix and versioned independently
+of the Python SDK (the version line tracks the mirrored Python API surface —
+see `cpp/include/neoruntime_ipc_sdk/version.hpp`). A release attaches the
+installable aarch64 (NE503) package:
+
+- `ne503-aipc-cpp-sdk-<version>-linux-arm64.tar.gz`
 
 ## Protocol Sync
 
