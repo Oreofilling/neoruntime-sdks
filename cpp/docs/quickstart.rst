@@ -70,7 +70,7 @@ CMake 包文件与预编译示例）：
 连接冒烟
 --------
 
-``connectivity_smoke`` 示例对设备上全部守护进程做**只读**往返查询
+``connectivity_smoke`` 示例对设备上全部守护进程做 **只读** 往返查询
 （不改任何状态，随时可安全运行）：
 
 .. code-block:: console
@@ -140,3 +140,14 @@ CMake 包文件与预编译示例）：
 更完整的例子（区域布防 + 硬件 overlay + 结果循环）见仓库
 ``cpp/examples/stream_pipeline.cpp``；全部示例清单见
 `cpp/README.md <https://github.com/camthink-ai/neoruntime-sdks/blob/main/cpp/README.md#examples>`_。
+
+下一步
+------
+
+.. tip::
+
+   冒烟与第一个程序跑通后，按 :doc:`learning-path` 的阶段推进——事件
+   与设备 → 推理流 → 像素与硬件加速。每个模块的完整用法（含真实代码
+   示例）见手册章节 :doc:`api/inference` / :doc:`api/media` /
+   :doc:`api/overlay-dsp` / :doc:`api/pipeline` /
+   :doc:`api/device-events`。

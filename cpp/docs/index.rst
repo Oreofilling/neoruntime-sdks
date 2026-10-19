@@ -2,15 +2,21 @@ NeoRuntime Platform C++ SDK 文档
 ==================================
 
 欢迎使用 NeoRuntime C++ SDK！这是 NeoRuntime 边缘 AI 相机平台（NE503）
-的 C++17 客户端开发包——Python SDK（``neoruntime_ipc_sdk``）的**完整 API
-镜像**：同一套平台能力、同一套传输协议，只是把 numpy 换成了 OpenCV
-``cv::Mat``。
+的 C++17 客户端开发包——Python SDK（``neoruntime_ipc_sdk``）的
+**完整 API 镜像**：同一套平台能力、同一套传输协议，只是把 numpy 换成了
+OpenCV ``cv::Mat``。
 
 .. only:: html
 
    .. image:: https://img.shields.io/badge/cpp-0.8.0-blue.svg
       :target: https://github.com/camthink-ai/neoruntime-sdks/releases/tag/cpp-v0.8.0
       :alt: C++ SDK Version
+   .. image:: https://img.shields.io/badge/tests-375-brightgreen.svg
+      :target: https://github.com/camthink-ai/neoruntime-sdks/actions/workflows/cpp.yml
+      :alt: Tests
+   .. image:: https://img.shields.io/badge/license-MIT-green.svg
+      :target: https://github.com/camthink-ai/neoruntime-sdks/blob/main/LICENSE
+      :alt: License
 
 概述
 ----
@@ -35,6 +41,16 @@ Socket 与平台守护进程通信：
 
 - 第一次上手？从 :doc:`quickstart` 开始：装包（或源码构建）→ 连接
   冒烟 → 第一个推理程序。
+- 想按阶段推进？:doc:`learning-path` 给出从连通到硬件加速的五阶段
+  路线，每步对应仓库里一个可编译示例。
+- 逐模块的用法手册（带真实代码示例）：
+
+  - :doc:`api/inference` —— 推理：单次 / 批量 / 流式 / 注册 / GenAI
+  - :doc:`api/media` —— 零拷贝取流、编码流、音频流
+  - :doc:`api/overlay-dsp` —— 硬件 overlay 与 DSP 作业（零读回链）
+  - :doc:`api/pipeline` —— StreamPipeline / InferencePipeline / Runner
+  - :doc:`api/device-events` —— 设备控制与事件总线
+
 - 想知道每个头文件负责什么？看 :doc:`modules` 模块总览。
 - 从 Python SDK 迁移过来？:doc:`python-diff` 给出逐项对照。
 - 版本线与发布节奏见 :doc:`versioning`。
@@ -45,10 +61,21 @@ Socket 与平台守护进程通信：
    :maxdepth: 2
    :caption: 用户指南
 
+   learning-path
    quickstart
    modules
    python-diff
    versioning
+
+.. toctree::
+   :maxdepth: 2
+   :caption: 模块手册
+
+   api/inference
+   api/media
+   api/overlay-dsp
+   api/pipeline
+   api/device-events
 
 索引和表格
 ----------

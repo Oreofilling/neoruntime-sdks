@@ -12,7 +12,7 @@ C++ SDK 与 Python SDK **各自独立演进**：
 - ``version.hpp`` 的 ``kMirroredPythonSdk`` 记录镜像来源的确切 Python
   版本（0.8.0 对应 ``kMirroredPythonSdk = "0.8.1"``）
 - Python 的 ``v*`` tag（触发 wheel.yml → PyPI）与 C++ 的 ``cpp-v*``
-  tag（触发 cpp.yml → arm64 tarball）**永不互相触发**对方的发布链
+  tag（触发 cpp.yml → arm64 tarball）两条发布链 **永不互相触发**
 - 里程碑可以同天双 tag、两份 release notes 互指，但不锁号
 
 发布链

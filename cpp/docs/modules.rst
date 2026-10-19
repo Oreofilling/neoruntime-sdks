@@ -1,7 +1,7 @@
 模块总览
 ========
 
-公共头文件全部在 ``cpp/include/neoruntime_ipc_sdk/`` 下，公共面**不含
+公共头文件全部在 ``cpp/include/neoruntime_ipc_sdk/`` 下，公共面 **不含
 proto** （所有 ``*.pb.h`` 都留在 ``src/``），共享值类型在 ``types.hpp``，
 端点与环境配置在 ``config.hpp``。
 
@@ -100,14 +100,21 @@ SDK 与平台守护进程之间共三种传输，行为与 Python SDK 逐位对�
 
 - **UDS 上的 gRPC** —— 推理、设备、相机、应用、事件、overlay、DSP
   作业面。消息上限 64 MiB。
-- **Raw UDS + ``SCM_RIGHTS`` fd 传递** —— ``FdMediaClient`` （视频
+- **Raw UDS + SCM_RIGHTS fd 传递** —— ``FdMediaClient`` （视频
   plane）与 DSP 缓冲面（``DspClient`` 同时保持一条 gRPC 和一条 UDS
   连接）。
 - **Raw UDS + 长度前缀** —— ``EncodedStreamClient``、
   ``AudioStreamClient``。
 
+.. tip::
+
+   上表的高频模块有带代码示例的专页：推理 → :doc:`api/inference`，
+   取流 / 编码 / 音频 → :doc:`api/media`，overlay / DSP →
+   :doc:`api/overlay-dsp`，流水线 → :doc:`api/pipeline`，设备 /
+   事件 → :doc:`api/device-events`。
+
 暂缺范围
 --------
 
-相较 Python 0.8.1，C++ 侧**暂不提供**：web（MJPEG）、录制（TS/HLS）、
+相较 Python 0.8.1，C++ 侧 **暂不提供**：web（MJPEG）、录制（TS/HLS）、
 插件系统——这几块自行实现（自带 HTTP 服务器 / 封装器）。
