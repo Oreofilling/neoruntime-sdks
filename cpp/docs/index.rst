@@ -43,13 +43,16 @@ Socket 与平台守护进程通信：
   冒烟 → 第一个推理程序。
 - 想按阶段推进？:doc:`learning-path` 给出从连通到硬件加速的五阶段
   路线，每步对应仓库里一个可编译示例。
-- 逐模块的用法手册（带真实代码示例）：
+- 逐模块的用法手册（接口一览 + 真实代码示例，与 Python 手册同名对齐）：
 
-  - :doc:`api/inference` —— 推理：单次 / 批量 / 流式 / 注册 / GenAI
-  - :doc:`api/media` —— 零拷贝取流、编码流、音频流
-  - :doc:`api/overlay-dsp` —— 硬件 overlay 与 DSP 作业（零读回链）
-  - :doc:`api/pipeline` —— StreamPipeline / InferencePipeline / Runner
-  - :doc:`api/device-events` —— 设备控制与事件总线
+  - :doc:`api/inference` —— AI 推理：单次 / 批量 / 流式 / 注册 / GenAI
+  - :doc:`api/media` —— 视频流：零拷贝取帧、编码流、音频流
+  - :doc:`api/overlay` —— AI 叠加层：硬件 overlay
+  - :doc:`api/dsp` —— DSP 硬件加速：作业面与零读回链
+  - :doc:`api/pipeline` —— 整管线：StreamPipeline / InferencePipeline /
+    Runner
+  - :doc:`api/events` —— 事件总线：发布 / 订阅 / 通配符 / 持久事件
+  - :doc:`api/device` —— 设备控制：灯光 / 云台 / 镜头 / GPIO / RS485
 
 - 想知道每个头文件负责什么？看 :doc:`modules` 模块总览。
 - 从 Python SDK 迁移过来？:doc:`python-diff` 给出逐项对照。
@@ -73,9 +76,11 @@ Socket 与平台守护进程通信：
 
    api/inference
    api/media
-   api/overlay-dsp
+   api/overlay
+   api/dsp
    api/pipeline
-   api/device-events
+   api/events
+   api/device
 
 索引和表格
 ----------

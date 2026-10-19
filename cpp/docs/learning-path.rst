@@ -29,7 +29,7 @@
   看别的应用 / 系统在发什么；
 - ``DeviceClient`` 点灯、读镜头与整机状态。
 - 对应示例：``event_subscriber.cpp`` （事件驱动点灯）。
-- 手册： :doc:`api/device-events`。
+- 手册： :doc:`api/events` 与 :doc:`api/device`。
 
 第三阶段：推理流（一天）
 ------------------------
@@ -53,7 +53,8 @@
   ``DspClient`` 把缩放 / JPEG 编码推给 DSP，玩 ``buffer_id`` 零读回链。
 - 对应示例：``stream_pipeline.cpp`` / ``video_processor.cpp`` /
   ``dsp_resize.cpp``。
-- 手册： :doc:`api/pipeline` / :doc:`api/media` / :doc:`api/overlay-dsp`。
+- 手册： :doc:`api/pipeline` / :doc:`api/media` / :doc:`api/overlay`
+  / :doc:`api/dsp`。
 
 第五阶段：全模块漫游与部署（持续）
 ----------------------------------

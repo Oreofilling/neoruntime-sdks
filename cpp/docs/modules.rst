@@ -108,10 +108,11 @@ SDK 与平台守护进程之间共三种传输，行为与 Python SDK 逐位对�
 
 .. tip::
 
-   上表的高频模块有带代码示例的专页：推理 → :doc:`api/inference`，
-   取流 / 编码 / 音频 → :doc:`api/media`，overlay / DSP →
-   :doc:`api/overlay-dsp`，流水线 → :doc:`api/pipeline`，设备 /
-   事件 → :doc:`api/device-events`。
+   上表的高频模块有带代码示例的专页（与 Python 手册同名对齐）：推理 →
+   :doc:`api/inference`，取流 / 编码 / 音频 → :doc:`api/media`，
+   overlay → :doc:`api/overlay`，DSP → :doc:`api/dsp`，流水线 →
+   :doc:`api/pipeline`，事件 → :doc:`api/events`，设备 →
+   :doc:`api/device`。
 
 暂缺范围
 --------

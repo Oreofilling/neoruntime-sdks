@@ -1,10 +1,41 @@
-设备控制与事件总线：DeviceClient / EventClient
-===============================================
+事件总线 API
+============
 
-``device.hpp`` 管执行器与传感器，``events.hpp`` 是跨应用 / 跨系统的
-发布订阅总线。
+头文件 ``events.hpp`` 。跨应用 / 跨系统的发布订阅总线：JSON 载荷
+（ ``nlohmann::json`` ）、通配符主题（ ``+`` 单层、 ``#`` 多层）、
+持久事件与批量发布。
 
-事件总线
+接口一览
+--------
+
+``EventClient`` 公开面：
+
+- ``connect()`` / ``close()`` / ``connected()`` —— 连接管理
+- ``publish(topic, payload, persistent=false, ttl_ms=nullopt,
+  metadata={})`` —— 发布 JSON 事件，返回 event_id；
+  ``persistent=true`` 配合 ``ttl_ms`` 让事件在总线内持久，离线消费者
+  补得回
+- ``publish_batch(events, persistent=false)`` —— ``{topic, payload}``
+  对的向量，一次流式 RPC
+- ``subscribe(topic, filters={}, queue_size=100, drop_old=true)`` ——
+  拉取订阅，返回 ``EventStream``
+- ``on_event(topic, cb, filters={})`` —— 回调订阅（后台分离线程）
+- ``unsubscribe(topic)`` —— 退订
+- ``list_topics()`` / ``get_topic_info(topic)`` —— 主题清单 / 详情
+  （ ``TopicInfo`` ：订阅数、累计消息、最后消息时间）
+- ``get_stats()`` / ``get_topic_stats(topic)`` —— 系统级
+  （ ``SystemStats`` ）与单主题（ ``EventStats`` ：published /
+  delivered / dropped 与平均时延）
+
+``EventStream`` 只有一个拉取口： ``next()`` 出 ``std::optional<Event>``
+，流结束返回空。
+
+值类型 ``Event`` ： ``topic`` / ``payload`` / ``source`` / ``event_id``
+/ ``timestamp_ns`` / ``metadata`` （ ``source`` 与时间戳留空时自动填
+APP_ID / 当前时刻）。完整参数文档见
+`Doxygen 参考 <../../en/index.html>`_。
+
+使用示例
 --------
 
 发布：JSON 载荷用 ``nlohmann::json``；``persistent=true`` 让事件在
@@ -52,28 +83,8 @@
 （``SystemStats`` 含 per-topic 的 published / delivered / dropped 与
 平均时延）。
 
-设备控制
---------
-
-.. code-block:: cpp
-
-   neoruntime_ipc_sdk::DeviceClient device;
-
-   device.set_white_light(100);   // 0 关；告警联动灯的常见写法
-   // ... 无人在画面后延时关灯
-   device.set_white_light(0);
-
-   auto status = device.get_device_status();   // 整机状态
-   auto lens   = device.get_lens_status();     // soc_temp_c、
-   // zoom_pos / focus_pos 与镜头上下限对照
-
-``DeviceClient`` 还覆盖：红外 / IRCUT、云台、变焦 / 对焦、GPIO、
-RS485、Wiegand，以及自动对焦套件（``AfJob`` / ``AfStatus`` /
-``AfMeasurement``）。
-
 .. tip::
 
    事件 + 设备联动是平台的惯用组合——参考
-   ``examples/event_subscriber.cpp`` （收到 person 检测事件即点灯）
-   与 ``examples/perimeter_guard.cpp`` （越线告警 + 5 秒冷却 + 10 秒
-   后自动关灯，完整可编译）。
+   ``examples/event_subscriber.cpp`` （收到 person 检测事件即点灯）；
+   设备侧执行器见 :doc:`device`。

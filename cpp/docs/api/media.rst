@@ -1,11 +1,65 @@
-取流与媒体：FdMediaClient / EncodedStreamClient / AudioStreamClient
-====================================================================
+视频流 API
+==========
 
-零拷贝取帧走 ``fd_client.hpp`` （``media.hpp`` 门面），编码流走
-``encoded.hpp``，音频采集流走 ``audio_stream.hpp``。
+三个客户端一条主线： ``fd_client.hpp`` （ ``media.hpp`` 门面）零拷贝取
+视频帧， ``encoded.hpp`` 拉 H.264 / H.265 编码流， ``audio_stream.hpp``
+拉音频采集流。
+
+接口一览
+--------
+
+``FdMediaClient`` 公开面：
+
+- ``close()`` —— 关闭连接并归还全部 keep-fd 帧
+- ``get_frame(stream_id, timeout_ms=5000, keep_fd=false)`` —— 单帧
+  快照，返回 ``std::optional<Frame>``
+- ``subscribe(stream_id, skip_frames=1, keep_fd=false, reconnect=true)``
+  —— 拉流订阅，返回 ``FdMediaStream``
+- ``on_frame(stream_id, cb, skip_frames=1, keep_fd=false)`` —— 后台
+  线程回调版，返回 ``std::thread``
+- ``retained_frames()`` —— 当前持有的 keep-fd 帧数
+- ``get_encoded_stream(stream_id="main", socket_dir="")`` —— 取编码流
+  客户端句柄
+- ``list_streams()`` —— 活动管线流 id 列表
+- ``get_rtsp_url(stream_id="main", host, port=8554)`` —— RTSP 拉流
+  地址
+
+``FdMediaStream`` 只有一个拉取口： ``next()`` 出 ``std::optional<Frame>``
+，断流有界自动重连，重试耗尽后返回空。
+
+``EncodedStreamClient`` （从 ``get_encoded_stream`` 取得）：
+
+- ``connect()`` / ``close()`` / ``connected()`` —— 连接管理（不主动
+  connect 时首个读取会懒连接）
+- ``get_frame(timeout_ms=5000)`` —— 单包，超时 / EOF 返回
+  ``std::nullopt``
+- ``subscribe(reconnect=true)`` —— 拉取流，返回 ``EncodedStream``
+  （ ``next()`` 逐包出 ``EncodedFrame`` ）
+- ``on_frame(cb, reconnect=true)`` —— 后台线程回调版
+- ``seq_stats()`` —— V3 序号观测：缺口 / 重启计数
+  （ ``EncodedSeqStats`` ）
+
+``EncodedFrame`` 携带 ``codec`` / ``flags`` / ``pts_ns`` / ``dts_ns`` /
+``width`` / ``height`` / ``data`` / ``seq`` 与便捷方法 ``codec_name()``
+/ ``is_keyframe()`` 。
+
+``AudioStreamClient`` 公开面：
+
+- ``get_frame(timeout_ms=5000)`` —— 拉一帧 ``AudioFrame``
+- ``next_frame(reconnect=true)`` —— 拉取流（有界自动重连）
+- ``close()`` —— 关闭
+
+``AudioFrame`` 携带 ``sample_rate`` / ``channels`` / ``bits_per_sample``
+/ ``pts_ns`` / ``dts_ns`` / ``data`` 与 ``codec_name()`` （pcm / aac /
+g711a / g711u）、 ``duration_ms()`` 。
+
+完整参数文档见 `Doxygen 参考 <../../en/index.html>`_。
+
+使用示例
+--------
 
 零拷贝视频帧
-------------
+~~~~~~~~~~~~
 
 ``FdMediaClient`` 说 FdPublisher UDS 协议：每帧是 80 字节
 ``FdPubFrameMsg`` + 最多 3 个 DMA-BUF fd 经 ``SCM_RIGHTS`` 传来。默认
@@ -44,7 +98,7 @@ JPEG 编码：
    会立即归还 daemon，不占缓冲池。
 
 keep-fd 与缓冲池纪律
---------------------
+~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: cpp
 
@@ -60,7 +114,7 @@ keep-fd 与缓冲池纪律
    ``release()``，退出前调用 ``media.close()`` 归还全部。
 
 编码流与音频流
---------------
+~~~~~~~~~~~~~~
 
 编码流客户端从 ``FdMediaClient`` 拿句柄，V3 序号自带缺口 / 重启计数：
 

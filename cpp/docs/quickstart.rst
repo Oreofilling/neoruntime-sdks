@@ -147,7 +147,7 @@ CMake 包文件与预编译示例）：
 .. tip::
 
    冒烟与第一个程序跑通后，按 :doc:`learning-path` 的阶段推进——事件
-   与设备 → 推理流 → 像素与硬件加速。每个模块的完整用法（含真实代码
-   示例）见手册章节 :doc:`api/inference` / :doc:`api/media` /
-   :doc:`api/overlay-dsp` / :doc:`api/pipeline` /
-   :doc:`api/device-events`。
+   与设备 → 推理流 → 像素与硬件加速。每个模块的接口一览与完整用法
+   （含真实代码示例）见手册章节 :doc:`api/inference` /
+   :doc:`api/media` / :doc:`api/overlay` / :doc:`api/dsp` /
+   :doc:`api/pipeline` / :doc:`api/events` / :doc:`api/device`。
