@@ -6,6 +6,13 @@ on:
       - main
     tags:
       - "v*"
+    paths:
+      - "python/**"
+      - "proto/**"
+      - "scripts/build_sdk_wheel.sh"
+      - ".github/workflows/wheel.yml"
+      - "!python/docs/**"
+      - "!python/**/*.md"
   pull_request:
   workflow_dispatch:
     inputs:
