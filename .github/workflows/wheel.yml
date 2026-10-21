@@ -13,6 +13,7 @@ on:
       - ".github/workflows/wheel.yml"
       - "!python/docs/**"
       - "!python/**/*.md"
+      - "python/README.md"
   pull_request:
   workflow_dispatch:
     inputs:
@@ -41,7 +42,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: python-sdk-${{ github.ref }}
+  group: python-sdk-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -76,6 +77,7 @@ jobs:
                   if (path === '.github/workflows/wheel.yml') return true;
                   if (path.startsWith('proto/')) return true;
                   if (path === 'scripts/build_sdk_wheel.sh') return true;
+                  if (path === 'python/README.md') return true;
                   if (!path.startsWith('python/')) return false;
                   return !(path.endsWith('.md') || path.startsWith('python/docs/'));
                 });
@@ -209,7 +211,7 @@ jobs:
             python/dist/*.whl
             python/dist/*.tar.gz
           if-no-files-found: error
-          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 1 || 7 }}
+          retention-days: 30
 
   release:
     needs:
