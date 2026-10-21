@@ -210,11 +210,17 @@ jobs:
 
   cross-compile:
     name: Cross-compile (aarch64)
+    needs: changes
     runs-on: ubuntu-24.04
     # Opt-in on branch pushes: needs a provisioned aarch64 dependency source
     # (vcpkg arm64 triplet built with the aarch64 cross-toolchain, or a Yocto
     # sysroot). cpp-v* release tags and manual packaging always run it.
-    if: startsWith(github.ref, 'refs/tags/cpp-v') || vars.NE503_ENABLE_AARCH64 == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.package_cpp || inputs.publish_release))
+    if: >-
+      startsWith(github.ref, 'refs/tags/cpp-v') ||
+      (vars.NE503_ENABLE_AARCH64 == 'true' &&
+        (github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true')) ||
+      (github.event_name == 'workflow_dispatch' &&
+        (inputs.package_cpp || inputs.publish_release))
 
     steps:
       - name: Checkout
